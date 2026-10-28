@@ -1,0 +1,6 @@
+{
+  "name": "Baobab Distribution",
+  "description": "Système de Distribution et Gestion Commerciale - Baobab Distribution Mali",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
