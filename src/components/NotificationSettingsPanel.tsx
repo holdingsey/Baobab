@@ -13,7 +13,9 @@ import {
 import { UserSession } from './LoginScreen';
 import {
   NOTIFICATION_CATEGORY_LABELS,
-  PushPreferences,
+  NotificationCategoryKey,
+  NotificationPreferences,
+  DEFAULT_NOTIFICATION_TYPES,
   getPushSupportInfo,
   getActivePushSubscription,
   requestAndSubscribePush,
@@ -29,15 +31,6 @@ interface NotificationSettingsPanelProps {
   isModal?: boolean;
 }
 
-const DEFAULT_PREFS: PushPreferences = {
-  enabled: true,
-  chargements: true,
-  versements: true,
-  pdvs: true,
-  peremption: true,
-  cadeaux: true,
-};
-
 export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps> = ({
   currentUser,
   onClose,
@@ -46,9 +39,12 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
   const [supportInfo, setSupportInfo] = useState(() => getPushSupportInfo());
   const [hasLocalSubscription, setHasLocalSubscription] = useState(false);
   const [devices, setDevices] = useState<
-    Array<{ id: string; device_label: string; updated_at: string; created_at: string }>
+    Array<{ id: string; endpoint?: string; deviceLabel?: string; device_label?: string; updatedAt?: string; updated_at?: string; created_at?: string }>
   >([]);
-  const [preferences, setPreferences] = useState<PushPreferences>(DEFAULT_PREFS);
+  const [preferences, setPreferences] = useState<NotificationPreferences>({
+    enabled: true,
+    types: { ...DEFAULT_NOTIFICATION_TYPES },
+  });
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<'toggle' | 'test' | 'prefs' | null>(null);
   const [feedback, setFeedback] = useState<{
@@ -121,17 +117,18 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
     }
   };
 
-  const handleToggleCategory = async (
-    key: keyof Omit<PushPreferences, 'enabled'>
-  ) => {
+  const handleToggleCategory = async (key: NotificationCategoryKey) => {
     setFeedback(null);
-    const nextValue = !preferences[key];
-    const optimistic: PushPreferences = { ...preferences, [key]: nextValue };
+    const nextTypes = {
+      ...preferences.types,
+      [key]: !preferences.types[key],
+    };
+    const optimistic: NotificationPreferences = { ...preferences, types: nextTypes };
     setPreferences(optimistic);
     setBusyAction('prefs');
     try {
       const saved = await updateUserPushPreferences(currentUser.id, currentUser.role, {
-        [key]: nextValue,
+        types: nextTypes,
       });
       if (saved) {
         setPreferences(saved);
@@ -323,16 +320,11 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {(
-            Object.keys(NOTIFICATION_CATEGORY_LABELS) as Array<
-              keyof Omit<PushPreferences, 'enabled'>
-            >
-          ).map((key) => {
-            const item = NOTIFICATION_CATEGORY_LABELS[key];
-            const checked = Boolean(preferences[key]);
+          {NOTIFICATION_CATEGORY_LABELS.map((item) => {
+            const checked = Boolean(preferences.types?.[item.key]);
             return (
               <label
-                key={key}
+                key={item.key}
                 className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition ${
                   checked
                     ? 'bg-teal-50/40 dark:bg-teal-950/25 border-[#008DA9]/40'
@@ -342,7 +334,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
                 <input
                   type="checkbox"
                   checked={checked}
-                  onChange={() => handleToggleCategory(key)}
+                  onChange={() => handleToggleCategory(item.key)}
                   className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#008DA9] focus:ring-[#008DA9] cursor-pointer"
                 />
                 <div className="min-w-0">
@@ -373,7 +365,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
                 key={d.id}
                 className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-semibold"
               >
-                {d.device_label}
+                {d.device_label || d.deviceLabel || 'Appareil'}
               </span>
             ))}
           </div>

@@ -10,6 +10,8 @@ export interface NotificationPreferences {
   types: Record<NotificationCategoryKey, boolean>;
 }
 
+export type PushPreferences = NotificationPreferences;
+
 export const DEFAULT_NOTIFICATION_TYPES: Record<NotificationCategoryKey, boolean> = {
   chargements: true,
   versements: true,
@@ -235,18 +237,22 @@ export async function requestAndSubscribePush(
   userRole: string
 ): Promise<{
   success: boolean;
+  ok: boolean;
   permission: NotificationPermission | 'unsupported';
   message: string;
+  error?: string;
   preferences?: NotificationPreferences;
 }> {
   const support = getPushSupportInfo();
   if (!support.supported) {
     return {
       success: false,
+      ok: false,
       permission: support.permission,
       message:
         support.reason ||
         'Les notifications système ne sont pas prises en charge sur ce navigateur ou cet appareil.',
+      error: support.reason,
     };
   }
 
@@ -259,9 +265,11 @@ export async function requestAndSubscribePush(
   if (permission !== 'granted') {
     return {
       success: false,
+      ok: false,
       permission,
       message:
         'Les notifications sont refusées dans votre navigateur. Consultez la marche à suivre ci-dessous pour les réactiver dans les réglages du navigateur et du téléphone.',
+      error: 'Permission refusée',
     };
   }
 
@@ -271,8 +279,10 @@ export async function requestAndSubscribePush(
     if (!token) {
       return {
         success: false,
+        ok: false,
         permission,
         message: 'Impossible de vérifier votre session utilisateur.',
+        error: 'Session non authentifiée',
       };
     }
 
@@ -282,8 +292,10 @@ export async function requestAndSubscribePush(
     if (!keyRes.ok || !keyData.publicKey) {
       return {
         success: false,
+        ok: false,
         permission,
         message: 'Clé publique VAPID indisponible sur le serveur.',
+        error: 'Clé VAPID manquante',
       };
     }
 
@@ -292,8 +304,10 @@ export async function requestAndSubscribePush(
     if (!reg || !reg.pushManager) {
       return {
         success: false,
+        ok: false,
         permission,
         message: 'Le Service Worker n\'est pas prêt sur cet appareil.',
+        error: 'Service worker non prêt',
       };
     }
 
@@ -322,8 +336,10 @@ export async function requestAndSubscribePush(
     if (!subRes.ok || !subData.success) {
       return {
         success: false,
+        ok: false,
         permission,
         message: subData.error || 'Erreur lors de l\'enregistrement de l\'abonnement.',
+        error: subData.error || 'Erreur lors de l\'enregistrement',
       };
     }
 
@@ -335,6 +351,7 @@ export async function requestAndSubscribePush(
 
     return {
       success: true,
+      ok: true,
       permission: 'granted',
       message: subData.message || 'Notifications système activées sur cet appareil.',
       preferences: subData.preferences,
@@ -343,8 +360,10 @@ export async function requestAndSubscribePush(
     const errMsg = err instanceof Error ? err.message : 'Erreur technique';
     return {
       success: false,
+      ok: false,
       permission: Notification.permission,
       message: `Impossible d'activer l'abonnement push (${errMsg}).`,
+      error: errMsg,
     };
   }
 }
@@ -352,7 +371,7 @@ export async function requestAndSubscribePush(
 export async function unsubscribePushDevice(
   userId: string,
   userRole: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; ok: boolean; message: string; error?: string }> {
   try {
     const token = await ensureUserAuthToken(userId, userRole);
     const sub = await getActivePushSubscription();
@@ -380,12 +399,15 @@ export async function unsubscribePushDevice(
     localStorage.removeItem(`baobab_push_enabled_${userId}`);
     return {
       success: true,
+      ok: true,
       message: 'Notifications système désactivées sur cet appareil.',
     };
   } catch {
     return {
       success: false,
+      ok: false,
       message: 'Erreur lors de la désactivation des notifications.',
+      error: 'Erreur réseau',
     };
   }
 }
@@ -448,11 +470,11 @@ export async function updateUserPushPreferences(
 export async function triggerTestPushNotification(
   userId: string,
   userRole: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; ok: boolean; message: string; error?: string }> {
   try {
     const token = await ensureUserAuthToken(userId, userRole);
     if (!token) {
-      return { success: false, message: 'Session utilisateur non authentifiée.' };
+      return { success: false, ok: false, message: 'Session utilisateur non authentifiée.', error: 'Session non authentifiée' };
     }
     const res = await fetch('/api/push/test', {
       method: 'POST',
@@ -462,16 +484,21 @@ export async function triggerTestPushNotification(
       },
     });
     const data = await res.json();
+    const isOk = Boolean(res.ok && data.success && data.sentCount > 0);
     return {
-      success: Boolean(res.ok && data.success && data.sentCount > 0),
+      success: isOk,
+      ok: isOk,
       message:
         data.message ||
         (res.ok ? 'Notification de test envoyée.' : 'Erreur lors de l\'envoi du test.'),
+      error: isOk ? undefined : data.message,
     };
   } catch {
     return {
       success: false,
+      ok: false,
       message: 'Erreur réseau lors de l\'envoi de la notification de test.',
+      error: 'Erreur réseau',
     };
   }
 }

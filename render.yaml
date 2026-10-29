@@ -1,9 +1,10 @@
 services:
   - type: web
     name: baobab-distribution
-    env: node
+    env: static
     buildCommand: npm install && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NODE_ENV
-        value: production
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
