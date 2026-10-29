@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "tsx server.ts",
     "build": "vite build",
-    "start": "node --import tsx server.ts",
+    "start": "NODE_ENV=production node --import tsx server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
@@ -27,7 +27,9 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
+    "tsx": "^4.21.0",
     "vite": "^8.3.0",
+    "vite-plugin-pwa": "^2.0.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
@@ -38,8 +40,6 @@
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
-    "vite-plugin-pwa": "^2.0.0"
+    "typescript": "^7.0.2"
   }
 }

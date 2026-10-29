@@ -3,9 +3,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
-import express from 'express';
 import { defineConfig } from 'vite';
-import { apiRouter } from './src/server/api.ts';
 
 export default defineConfig(() => {
   return {
@@ -47,7 +45,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
         },
         workbox: {
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
@@ -86,24 +84,6 @@ export default defineConfig(() => {
           ],
         },
       }),
-      {
-        name: 'express-api-middleware',
-        configureServer(server) {
-          const app = express();
-          app.use(express.json({ limit: '10mb' }));
-          app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-          app.get('/.well-known/assetlinks.json', (_req, res) => {
-            res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.sendFile(path.resolve(__dirname, 'public', '.well-known', 'assetlinks.json'));
-          });
-          app.use('/api', apiRouter);
-          app.post('/bons/:id/reveler', (req, res, next) => {
-            req.url = `/bons/${req.params.id}/reveler`;
-            apiRouter(req, res, next);
-          });
-          server.middlewares.use(app);
-        },
-      },
     ],
     resolve: {
       alias: {
