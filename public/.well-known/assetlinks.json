@@ -3,9 +3,9 @@
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "ml.baobab.distribution",
+      "package_name": "com.onrender.baobab_distribution.twa",
       "sha256_cert_fingerprints": [
-        "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
+        "EE:70:ED:98:8A:23:C0:B6:F0:E1:3D:D6:62:EE:80:41:5E:AD:F7:3F:8C:8F:4D:20:0C:FC:8C:FE:9F:07:3E:21"
       ]
     }
   }
