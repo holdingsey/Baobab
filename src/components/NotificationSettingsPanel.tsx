@@ -55,12 +55,15 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
   const refreshState = useCallback(async () => {
     setLoading(true);
     setSupportInfo(getPushSupportInfo());
-    const sub = await getActivePushSubscription();
+    const sub = await getActivePushSubscription(currentUser.id);
     setHasLocalSubscription(Boolean(sub));
     const status = await fetchUserPushStatus(currentUser.id, currentUser.role);
     if (status) {
       setPreferences(status.preferences);
       setDevices(status.devices || []);
+      if (status.devices && status.devices.length > 0) {
+        setHasLocalSubscription(true);
+      }
     }
     setLoading(false);
   }, [currentUser.id, currentUser.role]);
@@ -72,7 +75,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
   const isEffectiveActive =
     supportInfo.supported &&
     supportInfo.permission === 'granted' &&
-    hasLocalSubscription &&
+    (hasLocalSubscription || devices.length > 0) &&
     preferences.enabled;
 
   const handleToggleMain = async () => {
@@ -250,14 +253,14 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
       )}
 
       {/* Activer / Désactiver + Tester */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-extrabold text-slate-900 dark:text-white">
-              Statut sur cet appareil :
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2">
+            <span className="text-sm font-extrabold text-slate-900 dark:text-white whitespace-nowrap">
+              Statut sur cet appareil&nbsp;:
             </span>
             <span
-              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold ${
+              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold shrink-0 ${
                 isEffectiveActive
                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
                   : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
@@ -266,28 +269,28 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
               {isEffectiveActive ? 'Activées' : 'Désactivées'}
             </span>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
             Recevez les alertes même lorsque l'application Baobab Distribution est fermée.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={handleToggleMain}
             disabled={busyAction !== null || !supportInfo.supported}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer disabled:opacity-50 ${
+            className={`w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-extrabold transition cursor-pointer disabled:opacity-50 ${
               isEffectiveActive
                 ? 'bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-100'
                 : 'bg-[#008DA9] hover:bg-[#00748C] text-white shadow-xs'
             }`}
           >
             {busyAction === 'toggle' ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
             ) : isEffectiveActive ? (
-              <BellOff className="w-3.5 h-3.5" />
+              <BellOff className="w-3.5 h-3.5 shrink-0" />
             ) : (
-              <Bell className="w-3.5 h-3.5" />
+              <Bell className="w-3.5 h-3.5 shrink-0" />
             )}
             <span>
               {isEffectiveActive ? 'Désactiver les notifications' : 'Activer les notifications'}
@@ -298,12 +301,12 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
             type="button"
             onClick={handleSendTest}
             disabled={busyAction !== null || !supportInfo.supported}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-50 hover:bg-teal-100 text-[#008DA9] dark:bg-teal-950/60 dark:hover:bg-teal-900/60 dark:text-cyan-300 border border-[#008DA9]/30 transition cursor-pointer disabled:opacity-50"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-extrabold bg-teal-50 hover:bg-teal-100 text-[#008DA9] dark:bg-teal-950/60 dark:hover:bg-teal-900/60 dark:text-cyan-300 border border-[#008DA9]/30 transition cursor-pointer disabled:opacity-50"
           >
             {busyAction === 'test' ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
             ) : (
-              <Send className="w-3.5 h-3.5" />
+              <Send className="w-3.5 h-3.5 shrink-0" />
             )}
             <span>Envoyer une notification de test</span>
           </button>

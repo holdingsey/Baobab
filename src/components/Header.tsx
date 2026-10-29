@@ -160,7 +160,7 @@ export const Header: React.FC<HeaderProps> = ({
       setShowPushInvite(false);
       return;
     }
-    const localSub = await getActivePushSubscription();
+    const localSub = await getActivePushSubscription(currentUser.id);
     if (localSub && support.permission === 'granted') {
       // Si l'appareil a déjà un abonnement local et la permission accordée, on s'assure qu'il est lié à l'utilisateur courant
       const status = await fetchUserPushStatus(currentUser.id, currentUser.role);

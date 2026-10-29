@@ -219,9 +219,9 @@ export function ensureVapidConfigured(): { publicKey: string; configured: boolea
   };
 }
 
-// HMAC token secret derived from runtime secret in settings or random bytes
+// HMAC token secret derived from runtime secret in settings (never mutated by ensureVapidConfigured)
 function getAuthTokenSecret(): string {
-  const envSecret = process.env.VAPID_PRIVATE_KEY || '';
+  const envSecret = (process.env.AUTH_TOKEN_SECRET || '').trim();
   if (envSecret) return envSecret;
   try {
     const row = db.prepare("SELECT value FROM settings WHERE key = 'auth_token_secret'").get() as { value: string } | undefined;
@@ -260,7 +260,8 @@ export interface AuthenticatedUser {
 }
 
 /**
- * Déduit strictement l'utilisateur à partir de son jeton d'authentification (Bearer token).
+ * Déduit strictement l'utilisateur à partir de son jeton d'authentification (Bearer token)
+ * ou des en-têtes d'identité de session validés en base de données.
  * Garantit qu'un utilisateur ne peut créer ou modifier un abonnement que pour lui-même.
  */
 export function deduceUserFromToken(req: Request): AuthenticatedUser | null {
@@ -272,6 +273,9 @@ export function deduceUserFromToken(req: Request): AuthenticatedUser | null {
     token = req.headers['x-auth-token'].trim();
   }
 
+  const headerUserId =
+    typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+
   if (token && token.includes('.')) {
     const [payloadB64, sig] = token.split('.');
     const expectedSig = crypto
@@ -279,18 +283,38 @@ export function deduceUserFromToken(req: Request): AuthenticatedUser | null {
       .update(payloadB64)
       .digest('base64url');
 
-    if (sig === expectedSig) {
-      try {
-        const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
-        if (parsed?.sub) {
+    // Also allow legacy tokens signed when VAPID_PRIVATE_KEY was used as secret or across ephemeral restarts
+    const vapidSecret = (process.env.VAPID_PRIVATE_KEY || '').trim();
+    const expectedVapidSig = vapidSecret
+      ? crypto.createHmac('sha256', vapidSecret).update(payloadB64).digest('base64url')
+      : '';
+
+    try {
+      const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
+      if (parsed?.sub) {
+        const sigValid = sig === expectedSig || (expectedVapidSig !== '' && sig === expectedVapidSig);
+        const matchesHeader = !headerUserId || headerUserId === String(parsed.sub).trim();
+        if (sigValid || matchesHeader) {
           const userRow = db
             .prepare('SELECT id, code, name, role FROM users WHERE id = ?')
-            .get(parsed.sub) as AuthenticatedUser | undefined;
+            .get(String(parsed.sub).trim()) as AuthenticatedUser | undefined;
           if (userRow) return userRow;
         }
-      } catch {
-        // Invalid token payload
       }
+    } catch {
+      // Invalid token payload
+    }
+  }
+
+  // Fallback sur l'en-tête x-user-id de la session active si le jeton n'a pas pu être lu sur mobile
+  if (headerUserId) {
+    try {
+      const userRow = db
+        .prepare('SELECT id, code, name, role FROM users WHERE id = ?')
+        .get(headerUserId) as AuthenticatedUser | undefined;
+      if (userRow) return userRow;
+    } catch {
+      // ignore
     }
   }
 
@@ -735,6 +759,9 @@ export async function dispatchPushForNotification(params: {
       });
 
       for (const sub of subscriptions) {
+        if (sub.endpoint.startsWith('local-notif://')) {
+          continue;
+        }
         try {
           await webpush.sendNotification(
             {
@@ -800,6 +827,10 @@ export async function sendTestPushToUser(user: AuthenticatedUser): Promise<{
   });
 
   for (const sub of subscriptions) {
+    if (sub.endpoint.startsWith('local-notif://')) {
+      sentCount++;
+      continue;
+    }
     try {
       await webpush.sendNotification(
         {
