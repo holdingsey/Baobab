@@ -401,8 +401,10 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
     const prod = vendorStockItems.find((p) => p.productId === productId);
     if (!prod) return;
     setIsAddingLine(true);
-    setCurrentLineProductId(prod.productId);
-    setCurrentLineQty((prev) => Math.max(1, Math.min(prev || 10, prod.stock_depot)));
+    if (currentLineProductId !== prod.productId) {
+      setCurrentLineProductId(prod.productId);
+      setCurrentLineQty(Math.max(1, Math.min(10, prod.stock_depot)));
+    }
   };
 
   const handleValidateProductChoice = () => {
@@ -471,7 +473,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
 
     if (validatedLines.length === 0) {
       setRequestError(
-        'Veuillez sélectionner au moins un produit et cliquer sur "Valider ce choix" avant d\'envoyer votre demande de stock.'
+        'Veuillez sélectionner au moins un produit, saisir la quantité et cliquer sur "Valider" avant d\'envoyer votre demande de stock.'
       );
       return;
     }
@@ -1290,7 +1292,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                 </div>
               )}
 
-              {/* Line Builder by Category */}
+              {/* Line Builder by Category (Quantité + Valider directement dans le bloc du produit sélectionné) */}
               {isAddingLine ? (
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-teal-500/40 space-y-4">
                   <div className="flex items-center justify-between">
@@ -1307,89 +1309,112 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                       Aucun autre produit disponible dans cette catégorie. Changez de catégorie ci-dessus.
                     </p>
                   ) : (
-                    <>
-                      {/* Visual Product Cards showing Category + Current Vendor Stock + Depot Stock */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
-                        {availableProductsForRequest.map((p) => {
-                          const isSelected = p.productId === currentLineProductId;
-                          return (
-                            <button
-                              key={p.productId}
-                              type="button"
-                              onClick={() => handleSelectProductInBuilder(p.productId)}
-                              className={`text-left p-3 rounded-xl border transition flex flex-col justify-between gap-1.5 cursor-pointer ${
-                                isSelected
-                                  ? 'border-teal-600 bg-teal-50/90 dark:bg-teal-950/60 ring-2 ring-teal-500/30'
-                                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-400'
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300 mb-1">
-                                    {p.gamme}
-                                  </span>
-                                  <p className="text-xs font-black text-slate-900 dark:text-white leading-tight">
-                                    {p.name}
-                                  </p>
-                                </div>
-                                <span
-                                  className={`w-4 h-4 rounded-full flex items-center justify-center border shrink-0 mt-0.5 ${
-                                    isSelected
-                                      ? 'border-teal-600 bg-teal-600 text-white'
-                                      : 'border-slate-300 dark:border-slate-600'
-                                  }`}
-                                >
-                                  {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-slate-800">
-                                <span className="text-slate-600 dark:text-slate-300">
-                                  Mon stock :{' '}
-                                  <strong className="text-teal-700 dark:text-teal-400">
-                                    {p.theoreticalQty} ctn
-                                  </strong>
-                                </span>
-                                <span className="text-slate-500">
-                                  Dépôt : <strong>{p.stock_depot} ctn</strong>
-                                </span>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Quantity Input + Validate Choice Button */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                            Quantité demandée (en cartons) *
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={
-                              vendorStockItems.find((p) => p.productId === currentLineProductId)
-                                ?.stock_depot || 1000
-                            }
-                            value={currentLineQty}
-                            onChange={(e) => setCurrentLineQty(Number(e.target.value))}
-                            className="w-full px-3 py-2 text-sm font-black rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="flex items-end">
-                          <button
-                            type="button"
-                            onClick={handleValidateProductChoice}
-                            className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-96 overflow-y-auto pr-1">
+                      {availableProductsForRequest.map((p) => {
+                        const isSelected = p.productId === currentLineProductId;
+                        return (
+                          <div
+                            key={p.productId}
+                            onClick={() => handleSelectProductInBuilder(p.productId)}
+                            className={`text-left p-3 rounded-xl border transition flex flex-col justify-between gap-1.5 ${
+                              isSelected
+                                ? 'border-2 border-teal-600 bg-teal-50/90 dark:bg-teal-950/60 shadow-xs'
+                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-400 cursor-pointer'
+                            }`}
                           >
-                            <Check className="w-4 h-4" />
-                            <span>Valider ce choix</span>
-                          </button>
-                        </div>
-                      </div>
-                    </>
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300 mb-1">
+                                  {p.gamme}
+                                </span>
+                                <p className="text-xs font-black text-slate-900 dark:text-white leading-tight">
+                                  {p.name}
+                                </p>
+                              </div>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                  isSelected
+                                    ? 'bg-teal-600 text-white'
+                                    : 'text-teal-700 dark:text-teal-400 underline'
+                                }`}
+                              >
+                                {isSelected ? 'Sélectionné' : 'Choisir'}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-slate-800">
+                              <span className="text-slate-600 dark:text-slate-300">
+                                Mon stock :{' '}
+                                <strong className="text-teal-700 dark:text-teal-400">
+                                  {p.theoreticalQty} ctn
+                                </strong>
+                              </span>
+                              <span className="text-slate-500">
+                                Dépôt : <strong>{p.stock_depot} ctn</strong>
+                              </span>
+                            </div>
+
+                            {isSelected && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className="mt-2 pt-2.5 border-t border-teal-500/30 space-y-2.5"
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between text-[11px] mb-1">
+                                    <label className="font-bold text-slate-700 dark:text-slate-200">
+                                      Quantité (Max {p.stock_depot} ctn) :
+                                    </label>
+                                    <span className="font-black text-teal-700 dark:text-teal-300">
+                                      {(Math.max(0, Number(currentLineQty) || 0) * p.price_box).toLocaleString('fr-FR')} FCFA
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCurrentLineQty((q) => Math.max(1, (Number(q) || 1) - 1))}
+                                      className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                    >
+                                      -
+                                    </button>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={p.stock_depot}
+                                      value={currentLineQty}
+                                      onChange={(e) => {
+                                        const val = parseInt(e.target.value, 10);
+                                        if (Number.isNaN(val)) {
+                                          setCurrentLineQty(0);
+                                        } else {
+                                          setCurrentLineQty(Math.min(p.stock_depot, Math.max(0, val)));
+                                        }
+                                      }}
+                                      className="w-full h-9 px-3 text-sm font-black text-center rounded-lg border-2 border-teal-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setCurrentLineQty((q) => Math.min(p.stock_depot, (Number(q) || 0) + 1))}
+                                      className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={handleValidateProductChoice}
+                                  className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 active:scale-[0.99] text-white font-black text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                                >
+                                  <Check className="w-4 h-4 stroke-[2.5]" />
+                                  <span>Valider</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               ) : (

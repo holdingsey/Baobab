@@ -21,7 +21,7 @@ import {
   Eye,
   Send,
 } from 'lucide-react';
-import { InvoiceData } from './PrintableDocument';
+import { InvoiceData, InvoiceItem } from './PrintableDocument';
 import { UserSession } from './LoginScreen';
 import { buildMiniThermalReceiptDoc, getThermalTicketNumber } from './VentesView';
 import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
@@ -218,6 +218,41 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
     const totalTtc = subtotalHt + tvaAmount;
     const invoiceNum = sale.invoice_number || String(sale.number || '').replace(/^VTE-/, 'FAC-');
 
+    // Parse items safely whether string, array, or null
+    let rawItems: any[] = [];
+    if (typeof sale.items === 'string') {
+      try {
+        rawItems = JSON.parse(sale.items);
+      } catch {
+        rawItems = [];
+      }
+    } else if (Array.isArray(sale.items)) {
+      rawItems = sale.items;
+    }
+
+    const items: InvoiceItem[] =
+      rawItems.length > 0
+        ? rawItems.map((it: any) => ({
+            code: it.code || 'ART-GEN',
+            name: it.name || 'Produit Baobab',
+            qty: Number(it.qtyBoxes ?? it.qty ?? it.quantity ?? 1),
+            price: Number(it.unitPrice ?? it.price ?? 0),
+            total: Number(
+              it.total ??
+                Number(it.qtyBoxes ?? it.qty ?? it.quantity ?? 1) *
+                  Number(it.unitPrice ?? it.price ?? 0)
+            ),
+          }))
+        : [
+            {
+              code: 'PROD-DIST',
+              name: `Vente de marchandises - ${sale.pdv_name || 'PDV Partenaire'}`,
+              qty: 1,
+              price: subtotalHt,
+              total: subtotalHt,
+            },
+          ];
+
     return {
       id: sale.id,
       number: invoiceNum,
@@ -225,16 +260,16 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       saleTime: sale.sale_time || '10:30',
       type: 'facture',
       date: sale.date,
-      clientName: `${sale.pdv_name} (${sale.pdv_neighborhood})`,
+      clientName: `${sale.pdv_name || 'PDV Client'} (${sale.pdv_neighborhood || 'Bamako'})`,
       clientPhone: sale.pdv_phone || '+223 76 00 00 00',
-      vendorName: sale.vendor_name,
-      vendorCode: sale.vendor_code,
-      vendorTeam: sale.vendor_team,
+      vendorName: sale.vendor_name || 'Vendeur Baobab',
+      vendorCode: sale.vendor_code || 'BAO-VND',
+      vendorTeam: sale.vendor_team || 'Zone Commerciale Bamako',
       vendorPhone: sale.vendor_phone || '+223 75 44 22 11',
-      pdvName: sale.pdv_name,
-      pdvCode: sale.pdv_code,
-      pdvNeighborhood: sale.pdv_neighborhood,
-      pdvManager: sale.pdv_manager,
+      pdvName: sale.pdv_name || 'PDV Client',
+      pdvCode: sale.pdv_code || '',
+      pdvNeighborhood: sale.pdv_neighborhood || 'Bamako',
+      pdvManager: sale.pdv_manager || '',
       pdvPhone: sale.pdv_phone || '+223 76 00 00 00',
       versementRef: versementRef || sale.versement_reference,
       withTva,
@@ -242,16 +277,10 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       tvaRate: withTva ? 18 : 0,
       tvaAmount,
       totalTtc,
-      items: (sale.items || []).map((it: any) => ({
-        code: it.code,
-        name: it.name,
-        qty: it.qtyBoxes,
-        price: it.unitPrice,
-        total: it.total,
-      })),
+      items,
       total: totalTtc,
-      paymentMethod: sale.payment_type || 'Comptant',
-      cashierName: `${sale.vendor_name} (${sale.vendor_code})`,
+      paymentMethod: sale.payment_type || 'Comptant (Versement)',
+      cashierName: `${sale.vendor_name || 'Vendeur'} (${sale.vendor_code || 'BAO-VND'})`,
       status: withTva ? 'Facturée TTC (TVA 18%)' : 'Facturée HT (Sans TVA)',
     };
   };
@@ -292,6 +321,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   const [isSubmittingRectification, setIsSubmittingRectification] = useState(false);
   const [resolvingRectificationId, setResolvingRectificationId] = useState<string | null>(null);
   const [comptaFeedbackBanner, setComptaFeedbackBanner] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+  const [invoicingModalView, setInvoicingModalView] = useState<'cards' | 'table'>('cards');
 
   // Comptable: Create Invoice for Vendor modal state
   const [showCreateInvoiceModal, setShowCreateInvoiceModal] = useState(false);
@@ -2318,176 +2348,403 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                         Aucune vente PDV enregistrée pour ce vendeur.
                       </div>
                     ) : (
-                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-xs text-left">
-                            <thead>
-                              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase font-bold text-[10px]">
-                                <th className="py-3 px-3.5">Facture / Vente</th>
-                                <th className="py-3 px-3.5">Date &amp; Heure</th>
-                                <th className="py-3 px-3.5">Au nom du Vendeur</th>
-                                <th className="py-3 px-3.5">PDV Acheteur</th>
-                                <th className="py-3 px-3.5 text-center">Option TVA 18%</th>
-                                <th className="py-3 px-3.5 text-right">Montant HT</th>
-                                <th className="py-3 px-3.5 text-right">Total Facture</th>
-                                <th className="py-3 px-3.5 text-center">Facture à part</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                              {vendorSalesList.map((s) => {
-                                const withTva = isTvaEnabledForSale(s);
-                                const subtotalHt = Number(s.total_amount || 0);
-                                const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
-                                const totalTtc = subtotalHt + tvaAmount;
-                                const invNumber = s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-');
+                      <>
+                        {/* Sélecteur de vue : Cartes vs Tableau */}
+                        <div className="flex items-center justify-between gap-2 pb-1 flex-wrap">
+                          <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                            Ventes PDV à facturer ({vendorSalesList.length}) :
+                          </div>
+                          <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-300 dark:border-slate-700">
+                            <button
+                              type="button"
+                              onClick={() => setInvoicingModalView('cards')}
+                              className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                                invoicingModalView === 'cards'
+                                  ? 'bg-[#008DA9] text-white shadow-xs'
+                                  : 'text-slate-600 dark:text-slate-300'
+                              }`}
+                            >
+                              Vue Cartes (Mobile)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setInvoicingModalView('table')}
+                              className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                                invoicingModalView === 'table'
+                                  ? 'bg-[#008DA9] text-white shadow-xs'
+                                  : 'text-slate-600 dark:text-slate-300'
+                              }`}
+                            >
+                              Vue Tableau Défilant
+                            </button>
+                          </div>
+                        </div>
 
-                                return (
-                                  <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                                    <td className="py-3 px-3.5">
-                                      <div className="font-mono font-bold text-slate-900 dark:text-white">
+                        {invoicingModalView === 'cards' ? (
+                          /* VUE MOBILE & CARTES : LECTURE PARFAITE SANS DÉBORDEMENT NI RETOUR À LA LIGNE TRONQUÉ */
+                          <div className="space-y-3">
+                          {vendorSalesList.map((s) => {
+                            const withTva = isTvaEnabledForSale(s);
+                            const subtotalHt = Number(s.total_amount || 0);
+                            const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
+                            const totalTtc = subtotalHt + tvaAmount;
+                            const invNumber = s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-');
+
+                            return (
+                              <div
+                                key={s.id}
+                                className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 shadow-xs space-y-3"
+                              >
+                                {/* Entête carte : Réf Facture & Date/Heure */}
+                                <div className="flex items-start justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-mono font-black text-sm text-slate-900 dark:text-white">
                                         {invNumber}
-                                      </div>
-                                      <div className="font-mono text-[10px] text-[#008DA9]">
-                                        Vente : {s.number}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 px-3.5 text-slate-600 dark:text-slate-300">
-                                      <div className="font-semibold">{s.date}</div>
-                                      <div className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                                        <Clock className="w-3 h-3 text-[#008DA9]" />
-                                        <span>{s.sale_time || '10:30'}</span>
-                                      </div>
-                                    </td>
-                                    <td className="py-3 px-3.5">
-                                      <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                                        <User className="w-3 h-3 text-[#008DA9]" />
-                                        <span>{s.vendor_name}</span>
-                                      </div>
-                                      <div className="font-mono text-[10px] text-teal-600">
-                                        {s.vendor_code}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 px-3.5">
-                                      <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                                        <Store className="w-3 h-3 text-emerald-600" />
-                                        <span>{s.pdv_name}</span>
-                                      </div>
-                                      <div className="text-[10px] text-slate-500">
-                                        {s.pdv_code ? `${s.pdv_code} • ` : ''}{s.pdv_neighborhood}
-                                        {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 px-3.5 text-center">
-                                      {isComptable ? (
-                                        <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleSaleTva(s.id, false)}
-                                            className={`px-2 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                              !withTva
-                                                ? 'bg-[#008DA9] text-white shadow-xs'
-                                                : 'text-slate-600 dark:text-slate-300'
-                                            }`}
-                                          >
-                                            Sans TVA (0%)
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleSaleTva(s.id, true)}
-                                            className={`px-2 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                              withTva
-                                                ? 'bg-amber-500 text-slate-950 shadow-xs'
-                                                : 'text-slate-600 dark:text-slate-300'
-                                            }`}
-                                          >
-                                            + TVA 18%
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                                          <Lock className="w-3 h-3" />
-                                          <span>{Boolean(s.with_tva) ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td className="py-3 px-3.5 text-right font-semibold text-slate-700 dark:text-slate-300">
-                                      {subtotalHt.toLocaleString('fr-FR')} FCFA
-                                    </td>
-                                    <td className="py-3 px-3.5 text-right">
-                                      <div className="font-black text-slate-900 dark:text-white">
-                                        {totalTtc.toLocaleString('fr-FR')} FCFA
-                                      </div>
-                                      {withTva ? (
-                                        <div className="text-[10px] font-bold text-amber-600">
-                                          TVA 18% : +{tvaAmount.toLocaleString('fr-FR')} FCFA
-                                        </div>
-                                      ) : (
-                                        <div className="text-[10px] text-slate-400">
-                                          HT (Sans TVA)
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="py-3 px-3.5 text-center">
-                                      {isComptable ? (
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#008DA9]/15 text-[#008DA9] border border-[#008DA9]/30">
+                                        Facture A4
+                                      </span>
+                                    </div>
+                                    <div className="font-mono text-xs text-slate-500 mt-0.5">
+                                      Vente : <strong>{s.number}</strong>
+                                    </div>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                                      {s.date}
+                                    </div>
+                                    <div className="text-[11px] font-mono text-slate-400 flex items-center justify-end gap-1 mt-0.5">
+                                      <Clock className="w-3 h-3 text-[#008DA9]" />
+                                      <span>{s.sale_time || '10:30'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Infos Vendeur & PDV Acheteur */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
+                                      Au nom du Vendeur
+                                    </span>
+                                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                                      <User className="w-3.5 h-3.5 text-[#008DA9]" />
+                                      <span>{s.vendor_name}</span>
+                                    </div>
+                                    <span className="font-mono text-[11px] text-teal-600 block mt-0.5">
+                                      {s.vendor_code}
+                                    </span>
+                                  </div>
+
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
+                                      PDV Acheteur (Client)
+                                    </span>
+                                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                                      <Store className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>{s.pdv_name}</span>
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                                      {s.pdv_code ? `${s.pdv_code} • ` : ''}{s.pdv_neighborhood || 'Bamako'}
+                                      {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Option TVA 18% & Montants */}
+                                <div className="space-y-2 pt-1">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                                      Régime TVA :
+                                    </span>
+                                    {isComptable ? (
+                                      <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
                                         <button
                                           type="button"
-                                          disabled={generatingSaleId === s.id}
-                                          onClick={() =>
-                                            handleGenerateAndOpenSaleInvoice(
-                                              s,
-                                              withTva,
-                                              selectedVersementForInvoicing
-                                            )
-                                          }
-                                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                                          onClick={() => toggleSaleTva(s.id, false)}
+                                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                                            !withTva
+                                              ? 'bg-[#008DA9] text-white shadow-xs'
+                                              : 'text-slate-600 dark:text-slate-300'
+                                          }`}
                                         >
-                                          <Printer className="w-3.5 h-3.5" />
-                                          <span>Générer la facture</span>
+                                          Sans TVA (0%)
                                         </button>
-                                      ) : s.invoice_generated ? (
-                                        <div className="flex items-center justify-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleSaleTva(s.id, true)}
+                                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                                            withTva
+                                              ? 'bg-amber-500 text-slate-950 shadow-xs'
+                                              : 'text-slate-600 dark:text-slate-300'
+                                          }`}
+                                        >
+                                          + TVA 18%
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-600 dark:text-slate-300">
+                                        <Lock className="w-3 h-3" />
+                                        <span>{Boolean(s.with_tva) ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700/60 space-y-1 text-xs">
+                                    <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                                      <span>Montant HT :</span>
+                                      <span className="font-semibold">{subtotalHt.toLocaleString('fr-FR')} FCFA</span>
+                                    </div>
+                                    {withTva ? (
+                                      <div className="flex justify-between text-amber-600 dark:text-amber-400 font-bold">
+                                        <span>TVA 18% :</span>
+                                        <span>+ {tvaAmount.toLocaleString('fr-FR')} FCFA</span>
+                                      </div>
+                                    ) : (
+                                      <div className="flex justify-between text-slate-400">
+                                        <span>TVA :</span>
+                                        <span>0 FCFA (0%)</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between items-center pt-1.5 border-t border-slate-200 dark:border-slate-700 font-black text-sm text-slate-900 dark:text-white">
+                                      <span>Total Facture :</span>
+                                      <span className="text-[#008DA9]">{totalTtc.toLocaleString('fr-FR')} FCFA</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Action Facture A4 */}
+                                <div className="pt-1">
+                                  {isComptable ? (
+                                    <button
+                                      type="button"
+                                      disabled={generatingSaleId === s.id}
+                                      onClick={() =>
+                                        handleGenerateAndOpenSaleInvoice(
+                                          s,
+                                          withTva,
+                                          selectedVersementForInvoicing
+                                        )
+                                      }
+                                      className="w-full py-2.5 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                                    >
+                                      <Printer className="w-4 h-4" />
+                                      <span>Générer et Afficher la Facture A4</span>
+                                    </button>
+                                  ) : s.invoice_generated ? (
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onOpenDocument(
+                                            buildSaleInvoicePayload(
+                                              s,
+                                              Boolean(s.with_tva),
+                                              selectedVersementForInvoicing.reference
+                                            )
+                                          )
+                                        }
+                                        className="flex-1 py-2.5 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                                      >
+                                        <Printer className="w-4 h-4" />
+                                        <span>Afficher Facture A4</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedVersementForInvoicing(null);
+                                          openVendorRectificationModal(s);
+                                        }}
+                                        className="py-2.5 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer"
+                                      >
+                                        <AlertTriangle className="w-3.5 h-3.5" />
+                                        <span>Rectifier</span>
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="text-center py-2 text-xs font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-lg">
+                                      En attente de génération par le Comptable
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        /* VUE TABLEAU DÉFILANT : MIN-WIDTH 960px AVEC SCROLL FLUIDE SANS RETOUR À LA LIGNE */
+                        <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+                          <div className="overflow-x-auto w-full">
+                            <table className="w-full text-xs text-left min-w-[960px] whitespace-nowrap">
+                              <thead>
+                                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase font-bold text-[10px]">
+                                  <th className="py-3 px-3.5 whitespace-nowrap">Facture / Vente</th>
+                                  <th className="py-3 px-3.5 whitespace-nowrap">Date &amp; Heure</th>
+                                  <th className="py-3 px-3.5 whitespace-nowrap">Au nom du Vendeur</th>
+                                  <th className="py-3 px-3.5 whitespace-nowrap">PDV Acheteur</th>
+                                  <th className="py-3 px-3.5 text-center whitespace-nowrap">Option TVA 18%</th>
+                                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Montant HT</th>
+                                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total Facture</th>
+                                  <th className="py-3 px-3.5 text-center whitespace-nowrap">Facture A4 à part</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {vendorSalesList.map((s) => {
+                                  const withTva = isTvaEnabledForSale(s);
+                                  const subtotalHt = Number(s.total_amount || 0);
+                                  const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
+                                  const totalTtc = subtotalHt + tvaAmount;
+                                  const invNumber = s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-');
+
+                                  return (
+                                    <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                                      <td className="py-3 px-3.5 whitespace-nowrap">
+                                        <div className="font-mono font-bold text-slate-900 dark:text-white">
+                                          {invNumber}
+                                        </div>
+                                        <div className="font-mono text-[10px] text-[#008DA9]">
+                                          Vente : {s.number}
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                        <div className="font-semibold">{s.date}</div>
+                                        <div className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                                          <Clock className="w-3 h-3 text-[#008DA9]" />
+                                          <span>{s.sale_time || '10:30'}</span>
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-3.5 whitespace-nowrap">
+                                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                                          <User className="w-3 h-3 text-[#008DA9]" />
+                                          <span>{s.vendor_name}</span>
+                                        </div>
+                                        <div className="font-mono text-[10px] text-teal-600">
+                                          {s.vendor_code}
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-3.5 whitespace-nowrap">
+                                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                                          <Store className="w-3 h-3 text-emerald-600" />
+                                          <span>{s.pdv_name}</span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-500">
+                                          {s.pdv_code ? `${s.pdv_code} • ` : ''}{s.pdv_neighborhood}
+                                          {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                                        {isComptable ? (
+                                          <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleSaleTva(s.id, false)}
+                                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                                                !withTva
+                                                  ? 'bg-[#008DA9] text-white shadow-xs'
+                                                  : 'text-slate-600 dark:text-slate-300'
+                                              }`}
+                                            >
+                                              Sans TVA (0%)
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleSaleTva(s.id, true)}
+                                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                                                withTva
+                                                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                                                  : 'text-slate-600 dark:text-slate-300'
+                                              }`}
+                                            >
+                                              + TVA 18%
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                                            <Lock className="w-3 h-3" />
+                                            <span>{Boolean(s.with_tva) ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="py-3 px-3.5 text-right whitespace-nowrap font-semibold text-slate-700 dark:text-slate-300">
+                                        {subtotalHt.toLocaleString('fr-FR')} FCFA
+                                      </td>
+                                      <td className="py-3 px-3.5 text-right whitespace-nowrap">
+                                        <div className="font-black text-slate-900 dark:text-white">
+                                          {totalTtc.toLocaleString('fr-FR')} FCFA
+                                        </div>
+                                        {withTva ? (
+                                          <div className="text-[10px] font-bold text-amber-600">
+                                            TVA 18% : +{tvaAmount.toLocaleString('fr-FR')} FCFA
+                                          </div>
+                                        ) : (
+                                          <div className="text-[10px] text-slate-400">
+                                            HT (Sans TVA)
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                                        {isComptable ? (
                                           <button
                                             type="button"
+                                            disabled={generatingSaleId === s.id}
                                             onClick={() =>
-                                              onOpenDocument(
-                                                buildSaleInvoicePayload(
-                                                  s,
-                                                  Boolean(s.with_tva),
-                                                  selectedVersementForInvoicing.reference
-                                                )
+                                              handleGenerateAndOpenSaleInvoice(
+                                                s,
+                                                withTva,
+                                                selectedVersementForInvoicing
                                               )
                                             }
-                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer"
+                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
                                           >
                                             <Printer className="w-3.5 h-3.5" />
-                                            <span>Imprimer</span>
+                                            <span>Générer Facture A4</span>
                                           </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setSelectedVersementForInvoicing(null);
-                                              openVendorRectificationModal(s);
-                                            }}
-                                            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] cursor-pointer"
-                                          >
-                                            <AlertTriangle className="w-3 h-3" />
-                                            <span>Rectifier</span>
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <span className="text-[10px] font-semibold text-slate-400">
-                                          En attente du Comptable
-                                        </span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                                        ) : s.invoice_generated ? (
+                                          <div className="flex items-center justify-center gap-1">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                onOpenDocument(
+                                                  buildSaleInvoicePayload(
+                                                    s,
+                                                    Boolean(s.with_tva),
+                                                    selectedVersementForInvoicing.reference
+                                                  )
+                                                )
+                                              }
+                                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer"
+                                            >
+                                              <Printer className="w-3.5 h-3.5" />
+                                              <span>Voir A4</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedVersementForInvoicing(null);
+                                                openVendorRectificationModal(s);
+                                              }}
+                                              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] cursor-pointer"
+                                            >
+                                              <AlertTriangle className="w-3 h-3" />
+                                              <span>Rectifier</span>
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <span className="text-[10px] font-semibold text-slate-400">
+                                            En attente du Comptable
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </>
+                  )}
                   </>
                 );
               })()}

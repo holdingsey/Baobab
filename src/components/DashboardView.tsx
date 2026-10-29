@@ -21,7 +21,8 @@ import {
   ChevronDown,
   PlusCircle,
   FileSpreadsheet,
-  BarChart3
+  BarChart3,
+  X,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -171,7 +172,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* 
         ROLE-SPECIFIC BANNER (Le bandeau dépend du rôle, jamais celui du Vendeur par défaut)
       */}
-      <div className="rounded-3xl bg-[#008DA9] p-6 sm:p-8 text-white shadow-xl relative overflow-hidden border border-[#008DA9]">
+      <div className="rounded-3xl bg-[#008DA9] p-6 sm:p-8 text-white shadow-xl relative border border-[#008DA9]">
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-xl">
             {/* Role Badge */}
@@ -206,7 +207,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {isAdmin && (
               <>
                 <button
-                  onClick={() => onNavigateTab('pdvs')}
+                  onClick={() => onNavigateTab('validation-pdv')}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   <CheckSquare className="w-4 h-4 text-emerald-300" />
@@ -222,36 +223,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('chargements-lecture')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Chargements
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('compta')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('versements-lecture')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Versements
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('lots')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Lots
                 </button>
 
                 <button
                   onClick={() => onNavigateTab('utilisateurs')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Utilisateurs
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('compta')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('rapports')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Rapports
                 </button>
@@ -264,7 +265,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {isMagasinier && (
               <>
                 <button
-                  onClick={() => onNavigateTab('stocks')}
+                  onClick={() => onNavigateTab('chargements')}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   <Truck className="w-4 h-4 text-amber-300" />
@@ -278,36 +279,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('receptions')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Réceptions
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('retours')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Retours
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('inventaire')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Inventaire
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('lots')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Lots
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('stocks')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('bons-a-remettre')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Bons à remettre
                 </button>
@@ -320,7 +321,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {isComptable && (
               <>
                 <button
-                  onClick={() => onNavigateTab('compta')}
+                  onClick={() => onNavigateTab('versements')}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   <DollarSign className="w-4 h-4 text-cyan-300" />
@@ -334,29 +335,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('compta')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('soldes-vendeurs')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Soldes vendeurs
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('compta')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('factures')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Factures
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('compta')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('caisse')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Caisse du jour
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('compta')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('rapports')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Rapports
                 </button>
@@ -371,74 +372,172 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {isVendeur && (
               <>
                 <button
-                  onClick={() => onNavigateTab('ventes')}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-teal-900 hover:bg-teal-50 font-bold text-xs shadow-md transition"
+                  onClick={() => onNavigateTab('nouvelle-vente')}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-teal-900 hover:bg-teal-50 font-bold text-xs shadow-md transition cursor-pointer"
                 >
                   <PlusCircle className="w-4 h-4 text-teal-600" />
                   <span>Nouvelle vente</span>
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('ventes')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('mon-chargement')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Mon chargement
                 </button>
 
                 <button
-                  onClick={() => onNavigateTab('pdvs')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  onClick={() => onNavigateTab('nouveau-pdv')}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Nouveau PDV
                 </button>
 
                 <button
                   onClick={() => onNavigateTab('mon-stock')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Mon stock
                 </button>
 
                 <button
                   onClick={() => onNavigateTab('mon-solde')}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                 >
                   Mon solde
                 </button>
 
-                {/* Dropdown "Plus" for Vendeur */}
+                {/* Menu "Plus" pour Vendeur (100% visible, sans coupure sur mobile ou PC) */}
                 <div className="relative">
                   <button
+                    type="button"
                     onClick={() => setShowPlusMenu(!showPlusMenu)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 active:bg-white/30 text-white font-semibold text-xs border border-white/20 transition cursor-pointer"
                   >
                     <span>Plus</span>
-                    <ChevronDown className="w-3.5 h-3.5" />
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                        showPlusMenu ? 'rotate-180' : ''
+                      }`}
+                    />
                   </button>
 
                   {showPlusMenu && (
-                    <div className="absolute right-0 mt-2 w-44 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl z-30 p-1.5 text-xs text-slate-800 dark:text-slate-100">
-                      <button
-                        onClick={() => {
-                          setShowPlusMenu(false);
-                          setActivePlusModal('cadeaux');
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 font-medium"
-                      >
-                        <Gift className="w-4 h-4 text-teal-600" />
-                        <span>Mes cadeaux</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowPlusMenu(false);
-                          setActivePlusModal('tournee');
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 font-medium"
-                      >
-                        <Compass className="w-4 h-4 text-teal-600" />
-                        <span>Ma tournée</span>
-                      </button>
-                    </div>
+                    <>
+                      {/* Fond cliquable pour refermer le menu */}
+                      <div
+                        className="fixed inset-0 z-40 bg-black/40 sm:bg-transparent"
+                        onClick={() => setShowPlusMenu(false)}
+                      />
+
+                      {/* VUE MOBILE : TIROIR MODAL DU BAS (100% VISIBLE, AUCUN ÉLÉMENT COUPÉ) */}
+                      <div className="sm:hidden fixed inset-0 z-50 flex items-end justify-center p-3 pointer-events-none">
+                        <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-4 text-slate-800 dark:text-slate-100 space-y-3 pointer-events-auto">
+                          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#008DA9]" />
+                              <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                                Options Vendeur
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setShowPlusMenu(false)}
+                              className="p-1.5 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="space-y-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowPlusMenu(false);
+                                setActivePlusModal('cadeaux');
+                              }}
+                              className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-teal-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/60 flex items-center gap-3 transition cursor-pointer group"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-teal-100 dark:bg-teal-900/50 text-[#008DA9] dark:text-teal-300 flex items-center justify-center shrink-0 shadow-xs">
+                                <Gift className="w-5 h-5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-sm text-slate-900 dark:text-white">
+                                  Mes cadeaux &amp; Gratuités
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                  Échantillons promotionnels &amp; fidélité PDV
+                                </div>
+                              </div>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowPlusMenu(false);
+                                setActivePlusModal('tournee');
+                              }}
+                              className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-teal-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/60 flex items-center gap-3 transition cursor-pointer group"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-teal-100 dark:bg-teal-900/50 text-[#008DA9] dark:text-teal-300 flex items-center justify-center shrink-0 shadow-xs">
+                                <Compass className="w-5 h-5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-sm text-slate-900 dark:text-white">
+                                  Ma tournée de livraison
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                  Itinéraire recommandé &amp; points de vente
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowPlusMenu(false)}
+                            className="w-full py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs transition cursor-pointer text-center"
+                          >
+                            Fermer
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* VUE TABLETTE & PC : POPUP ANCRÉ SOUS LE BOUTON AVEC Z-INDEX ÉLEVÉ */}
+                      <div className="hidden sm:block absolute right-0 top-full mt-2 w-60 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-2 text-xs text-slate-800 dark:text-slate-100">
+                        <div className="px-2 py-1 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800 mb-1">
+                          Options Vendeur
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPlusMenu(false);
+                            setActivePlusModal('cadeaux');
+                          }}
+                          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 font-medium transition cursor-pointer text-slate-700 dark:text-slate-200"
+                        >
+                          <Gift className="w-4 h-4 text-[#008DA9]" />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-slate-900 dark:text-white">Mes cadeaux</div>
+                            <div className="text-[10px] text-slate-400">Gratuités &amp; fidélité PDV</div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPlusMenu(false);
+                            setActivePlusModal('tournee');
+                          }}
+                          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 font-medium transition cursor-pointer text-slate-700 dark:text-slate-200"
+                        >
+                          <Compass className="w-4 h-4 text-[#008DA9]" />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-slate-900 dark:text-white">Ma tournée</div>
+                            <div className="text-[10px] text-slate-400">Itinéraire recommandé</div>
+                          </div>
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               </>

@@ -405,26 +405,26 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <>
       <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
-        <div className="flex items-center justify-between gap-2 px-3 sm:px-5 lg:px-6 h-16">
+        <div className="flex items-center justify-between gap-2.5 px-3.5 sm:px-6 lg:px-6 h-[4.5rem] sm:h-20 lg:h-16">
           {/* Left: Mobile menu toggle + Header Logo */}
-          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
             <button
               onClick={onOpenMobileMenu}
-              className="p-2 -ml-1 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white lg:hidden cursor-pointer shrink-0"
+              className="p-2.5 -ml-1 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white lg:hidden cursor-pointer shrink-0"
               aria-label="Ouvrir le menu"
             >
-              <Menu className="w-5 h-5" />
+              <Menu className="w-6 h-6 sm:w-6 sm:h-6" />
             </button>
 
             {/* Logo visible on Mobile, Tablet and Desktop */}
             <div
               onClick={() => (onNavigateTab ? onNavigateTab('dashboard') : null)}
-              className="flex items-center gap-2 cursor-pointer select-none shrink-0"
+              className="flex items-center gap-2.5 cursor-pointer select-none shrink-0"
               title="Baobab Distribution - Accueil"
             >
               <BaobabLogo
                 variant="header"
-                size={32}
+                size={42}
                 logoUrl={logoUrl}
                 showTextOnPC={true}
               />
@@ -432,10 +432,10 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Center / Right: Quick Role Switcher + Notifications + PWA Install + Theme Toggle */}
-          <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 lg:gap-2.5 shrink-0">
             {/* Quick Role Switcher dropdown for quick testing */}
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 text-xs whitespace-nowrap shrink-0">
-              <Shield className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-2 lg:px-2.5 lg:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 text-xs sm:text-sm lg:text-xs whitespace-nowrap shrink-0">
+              <Shield className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
               <span className="hidden xl:inline text-slate-500 text-xs whitespace-nowrap">Rôle :</span>
               <select
                 value={currentUser.role}
@@ -463,8 +463,8 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Vendor Account Selector when role === 'Vendeur' */}
             {currentUser.role === 'Vendeur' && vendorUsers.length > 1 && onSwitchUser && (
-              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#008DA9]/10 border border-[#008DA9]/30 text-xs whitespace-nowrap shrink-0">
-                <User className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
+              <div className="hidden md:flex items-center gap-1.5 px-3 py-2 lg:px-2.5 lg:py-1.5 rounded-xl bg-[#008DA9]/10 border border-[#008DA9]/30 text-xs sm:text-sm lg:text-xs whitespace-nowrap shrink-0">
+                <User className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-[#008DA9] shrink-0" />
                 <select
                   value={currentUser.id}
                   onChange={(e) => {
@@ -492,13 +492,13 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'Réseau actif — Cliquer pour tester le mode Hors-Ligne (sans réseau)'
                   : 'Mode Hors-Ligne actif — Cliquer pour rétablir le réseau et synchroniser automatiquement'
               }
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center gap-1.5 px-3 py-2 lg:px-2.5 lg:py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer whitespace-nowrap shrink-0 ${
                 online
                   ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
                   : 'bg-amber-100 dark:bg-amber-950/60 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200'
               }`}
             >
-              {online ? <Wifi className="w-4 h-4 shrink-0" /> : <WifiOff className="w-4 h-4 shrink-0" />}
+              {online ? <Wifi className="w-4 h-4 sm:w-4.5 sm:h-4.5 lg:w-4 lg:h-4 shrink-0" /> : <WifiOff className="w-4 h-4 sm:w-4.5 sm:h-4.5 lg:w-4 lg:h-4 shrink-0" />}
               <span className="hidden sm:inline whitespace-nowrap">{online ? 'En ligne' : 'Hors-ligne'}</span>
               {pendingCount > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-black leading-none">
@@ -512,12 +512,12 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setShowNotifMenu(v => !v)}
-                className="relative p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition cursor-pointer"
+                className="relative p-2.5 lg:p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition cursor-pointer"
                 title="Notifications système"
               >
-                <Bell className="w-4 h-4" />
+                <Bell className="w-5 h-5 lg:w-4 lg:h-4" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[9px] font-black text-white shadow-xs">
+                  <span className="absolute top-1 right-1 flex h-4.5 w-4.5 lg:h-4 lg:w-4 items-center justify-center rounded-full bg-red-600 text-[10px] lg:text-[9px] font-black text-white shadow-xs">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
@@ -530,7 +530,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="fixed inset-0 z-40 bg-black/25 sm:bg-transparent"
                     onClick={() => setShowNotifMenu(false)}
                   />
-                  <div className="fixed left-2.5 right-2.5 top-[4.25rem] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-96 max-w-[calc(100vw-1.25rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-3 sm:p-3.5 text-xs">
+                  <div className="fixed left-2.5 right-2.5 top-[4.75rem] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-96 max-w-[calc(100vw-1.25rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-3 sm:p-3.5 text-xs">
                     <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
                       <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 min-w-0">
                         <Bell className="w-3.5 h-3.5 text-teal-600 shrink-0" />
@@ -664,18 +664,18 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onToggleTheme}
               title={theme === 'dark' ? 'Passer en thème clair' : 'Passer en thème sombre'}
-              className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition shrink-0 cursor-pointer"
+              className="p-2.5 lg:p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition shrink-0 cursor-pointer"
             >
               {theme === 'dark' ? (
-                <Sun className="w-4 h-4 text-amber-400" />
+                <Sun className="w-5 h-5 lg:w-4 lg:h-4 text-amber-400" />
               ) : (
-                <Moon className="w-4 h-4 text-slate-600" />
+                <Moon className="w-5 h-5 lg:w-4 lg:h-4 text-slate-600" />
               )}
             </button>
 
             {/* User Avatar badge */}
             <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800 shrink-0 whitespace-nowrap">
-              <div className="h-8 w-8 rounded-full bg-teal-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+              <div className="h-9 w-9 sm:h-10 sm:w-10 lg:h-8 lg:w-8 rounded-full bg-teal-600 text-white font-bold text-sm lg:text-xs flex items-center justify-center shrink-0">
                 {currentUser.name.charAt(0)}
               </div>
               <span className="hidden md:inline text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">

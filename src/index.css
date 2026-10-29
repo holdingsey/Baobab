@@ -79,32 +79,66 @@
   line-height: 1.3rem !important;
 }
 
-/* Optimisation globale des tableaux sur Mobile & Tablette pour éviter les débordements horizontaux */
+/* Optimisation globale des tableaux sur Mobile & Tablette : préserver le scroll horizontal et la lisibilité */
 @media (max-width: 1023px) {
   table {
-    width: 100%;
     border-collapse: collapse;
   }
 
-  table th,
-  table td {
-    padding-left: 0.45rem !important;
-    padding-right: 0.45rem !important;
-    padding-top: 0.55rem !important;
-    padding-bottom: 0.55rem !important;
-    font-size: 0.78rem !important;
-    line-height: 1.15rem !important;
-    overflow-wrap: anywhere;
-    word-break: normal;
-  }
-
-  table th {
-    font-size: 0.68rem !important;
-    letter-spacing: 0.02em !important;
-  }
-
-  table td.whitespace-nowrap,
-  table th.whitespace-nowrap {
-    white-space: normal !important;
+  /* Pour les tableaux standard non scrollables */
+  table:not([class*="min-w-"]) th,
+  table:not([class*="min-w-"]) td {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
   }
 }
+
+/* Empêche formellement tout écrasement ou découpage vertical lettre par lettre */
+.overflow-x-auto table,
+table[class*="min-w-"],
+table.whitespace-nowrap,
+table.whitespace-nowrap th,
+table.whitespace-nowrap td {
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+
+/* Styles de la feuille A4 (proportions certifiées 210mm x 297mm) */
+.a4-page-sheet {
+  background: white;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Styles d'impression officielle Format A4 */
+@page {
+  size: A4 portrait;
+  margin: 6mm 8mm;
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .print\:hidden {
+    display: none !important;
+  }
+
+  .a4-invoice-container,
+  .a4-page-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+}
+
+

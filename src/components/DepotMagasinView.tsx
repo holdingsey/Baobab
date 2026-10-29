@@ -534,11 +534,13 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
     const p = availableProductsForLine.find(prod => prod.id === productId);
     if (!p) return;
     setIsAddingLine(true);
-    setCurrentLineProductId(p.id);
-    setCurrentLineQty(prev => Math.max(1, Math.min(prev || 10, p.stock_depot)));
+    if (currentLineProductId !== p.id) {
+      setCurrentLineProductId(p.id);
+      setCurrentLineQty(Math.min(10, p.stock_depot));
+    }
   };
 
-  // Step 1: "Valider ce choix"
+  // Step 1: "Valider" directement dans le bloc du produit sélectionné
   const handleValidateCurrentChoice = () => {
     setLineBuilderError('');
     setChargementSuccessMsg('');
@@ -572,7 +574,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
       }
     ]);
 
-    // Current choice validated! Next line can now be added via "+ Ajouter un produit"
+    // Current choice validated! Next line can now be added via "+ Ajouter un produit" or by clicking another product
     setIsAddingLine(false);
     setCurrentLineProductId('');
   };
@@ -599,7 +601,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
     setLineBuilderError('');
     setChargementSuccessMsg('');
     if (validatedLines.length === 0) {
-      setLineBuilderError('Veuillez choisir un produit et cliquer sur "Valider ce choix" avant d\'envoyer la demande.');
+      setLineBuilderError('Veuillez sélectionner un produit, saisir la quantité et cliquer sur "Valider" avant d\'envoyer la demande.');
       return;
     }
     if (!desiredDate) {
@@ -1789,7 +1791,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     Nouvelle Demande de Chargement Camionnette (Dépôt-Vente)
                   </h2>
                   <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
-                    Sélectionnez un produit (via la liste déroulante ou en cliquant sur une fiche produit ci-dessous), indiquez le nombre de cartons, cliquez sur <strong>« Valider ce choix »</strong>, puis sur <strong>« + Ajouter un produit »</strong>.
+                    Cliquez sur un produit ci-dessous pour saisir directement le nombre de cartons et cliquez sur <strong>« Valider »</strong> juste en bas du produit.
                   </p>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-[#008DA9]/10 text-[#008DA9] dark:text-cyan-300 font-bold text-[11px] self-start sm:self-center">
@@ -1825,14 +1827,14 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   </div>
                 </div>
 
-                {/* 2. Catalogue & Liste des Produits Disponibles (Cartes interactives + Liste déroulante) */}
+                {/* 2. Catalogue & Liste des Produits Disponibles (Quantité + Valider directement dans le produit sélectionné) */}
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
                     <label className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider">
                       Catalogue des Produits Disponibles au Dépôt ({availableProductsForLine.length} disponibles) :
                     </label>
                     <span className="text-[11px] text-slate-500">
-                      Cliquez sur un produit ou utilisez la liste déroulante
+                      Touchez un produit pour indiquer la quantité et valider
                     </span>
                   </div>
 
@@ -1857,7 +1859,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                               : isOut
                               ? 'border-slate-200 bg-slate-100 dark:bg-slate-800/40 opacity-50 cursor-not-allowed'
                               : isCurrentlySelected
-                              ? 'border-2 border-[#008DA9] bg-[#008DA9]/5 dark:bg-[#008DA9]/15 shadow-xs cursor-pointer'
+                              ? 'border-2 border-[#008DA9] bg-[#008DA9]/5 dark:bg-[#008DA9]/15 shadow-sm'
                               : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-[#008DA9] cursor-pointer'
                           }`}
                         >
@@ -1893,89 +1895,82 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                               </span>
                             )}
                           </div>
+
+                          {/* Quantité + Bouton "Valider" directement dans le bloc du produit sélectionné */}
+                          {isCurrentlySelected && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-3 pt-2.5 border-t border-[#008DA9]/25 space-y-2.5"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between text-[10px] mb-1">
+                                  <label className="font-bold text-slate-700 dark:text-slate-200">
+                                    Quantité (Max {prod.stock_depot} ctn) :
+                                  </label>
+                                  <span className="font-bold text-[#008DA9] dark:text-cyan-300">
+                                    {(Math.max(0, Number(currentLineQty) || 0) * prod.price_box).toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentLineQty((q) => Math.max(1, (Number(q) || 1) - 1))}
+                                    className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max={prod.stock_depot}
+                                    value={currentLineQty}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value, 10);
+                                      if (Number.isNaN(val)) {
+                                        setCurrentLineQty(0);
+                                      } else {
+                                        setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
+                                      }
+                                    }}
+                                    className="w-full h-8 px-2 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-black text-xs text-center focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentLineQty((q) => Math.min(prod.stock_depot, (Number(q) || 0) + 1))}
+                                    className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={handleValidateCurrentChoice}
+                                className="w-full py-2 px-3 rounded-xl bg-[#008DA9] hover:bg-[#00748C] active:scale-[0.99] text-white font-black text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <Check className="w-4 h-4 stroke-[2.5]" />
+                                <span>Valider</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* 3. Constructeur ligne par ligne : Liste déroulante + Quantité + "Valider ce choix" */}
-                {isAddingLine ? (
-                  <div className="p-4 rounded-xl border-2 border-dashed border-[#008DA9]/60 bg-[#008DA9]/5 dark:bg-slate-800/60 space-y-3">
-                    <div className="font-bold text-slate-900 dark:text-white flex items-center justify-between text-xs">
-                      <span>Sélection du produit et de la quantité (Pas de doublon, quantité plafonnée au stock dépôt)</span>
-                      <span className="text-[11px] text-[#008DA9] font-semibold">Étape : Choisir puis valider</span>
-                    </div>
-
-                    {availableProductsForLine.length === 0 ? (
-                      <div className="text-slate-500 italic py-2 text-center">
-                        Tous les produits du catalogue ont été ajoutés à votre demande.
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                        {/* Liste déroulante des produits */}
-                        <div className="md:col-span-6">
-                          <label className="block text-[11px] text-slate-700 dark:text-slate-300 font-bold mb-1">
-                            Produit à charger (Liste déroulante)
-                          </label>
-                          <select
-                            value={currentLineProductId}
-                            onChange={(e) => handleSelectProductForLine(e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs shadow-2xs"
-                          >
-                            {availableProductsForLine.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name} ({p.code}) — {p.packaging} — {p.price_box.toLocaleString('fr-FR')} FCFA/ctn — Stock dépôt : {p.stock_depot} cartons
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Quantité en cartons */}
-                        <div className="md:col-span-3">
-                          <label className="block text-[11px] text-slate-700 dark:text-slate-300 font-bold mb-1">
-                            Cartons demandés (Max : {products.find((p) => p.id === currentLineProductId)?.stock_depot || 0} ctn)
-                          </label>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="number"
-                              min="1"
-                              max={products.find((p) => p.id === currentLineProductId)?.stock_depot || 1}
-                              value={currentLineQty}
-                              onChange={(e) => setCurrentLineQty(Number(e.target.value))}
-                              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-black text-xs text-center"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Bouton Valider ce choix */}
-                        <div className="md:col-span-3">
-                          <button
-                            type="button"
-                            onClick={handleValidateCurrentChoice}
-                            className="w-full py-2.5 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5"
-                          >
-                            <Check className="w-4 h-4" />
-                            <span>Valider ce choix</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  /* Bouton "+ Ajouter un produit" activé uniquement après validation du choix précédent */
+                {/* Bouton "+ Ajouter un produit" activé après validation si d'autres produits sont disponibles */}
+                {!isAddingLine && availableProductsForLine.length > 0 && (
                   <div className="pt-1">
                     <button
                       type="button"
                       onClick={handleStartNextLine}
-                      disabled={availableProductsForLine.length === 0}
-                      className="w-full py-3 rounded-xl border-2 border-dashed border-[#008DA9] text-[#008DA9] dark:text-cyan-300 hover:bg-[#008DA9]/5 font-bold flex items-center justify-center gap-2 transition disabled:opacity-50"
+                      className="w-full py-3 rounded-xl border-2 border-dashed border-[#008DA9] text-[#008DA9] dark:text-cyan-300 hover:bg-[#008DA9]/5 font-bold flex items-center justify-center gap-2 transition cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       <span>
-                        {availableProductsForLine.length > 0
-                          ? `+ Ajouter un produit (${availableProductsForLine.length} produit(s) restant(s) au catalogue)`
-                          : 'Tous les produits du catalogue sont déjà sélectionnés'}
+                        + Ajouter un produit ({availableProductsForLine.length} produit(s) restant(s) au catalogue)
                       </span>
                     </button>
                   </div>
@@ -1994,7 +1989,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
                   {validatedLines.length === 0 ? (
                     <div className="py-3 px-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-slate-400 text-center italic">
-                      Aucun produit validé pour l'instant. Sélectionnez un produit ci-dessus puis cliquez sur « Valider ce choix ».
+                      Aucun produit validé pour l'instant. Sélectionnez un produit ci-dessus, saisissez la quantité puis cliquez sur « Valider ».
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -3434,11 +3429,11 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 />
               </div>
 
-              {/* Interactive Product Catalog List */}
+              {/* Interactive Product Catalog List (Quantité + Valider directement dans le bloc du produit sélectionné) */}
               <div className="space-y-2">
-                <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between gap-2">
                   <span>Catalogue des produits disponibles au dépôt ({availableProductsForLine.length} disponibles) :</span>
-                  <span className="text-[10px] text-slate-500">Cliquez sur un produit ou utilisez la liste déroulante</span>
+                  <span className="text-[10px] text-slate-500 text-right">Touchez un produit pour saisir la quantité et valider</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {products.map((prod) => {
@@ -3460,7 +3455,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                             : isOut
                             ? 'border-slate-200 bg-slate-100 dark:bg-slate-800/40 opacity-50 cursor-not-allowed'
                             : isCurrentlySelected
-                            ? 'border-2 border-[#008DA9] bg-[#008DA9]/5 dark:bg-[#008DA9]/15 shadow-xs cursor-pointer'
+                            ? 'border-2 border-[#008DA9] bg-[#008DA9]/5 dark:bg-[#008DA9]/15 shadow-xs'
                             : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-[#008DA9] cursor-pointer'
                         }`}
                       >
@@ -3491,76 +3486,78 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                             </span>
                           )}
                         </div>
+
+                        {/* Saisie directe de la quantité + bouton "Valider" juste en bas dans le bloc du produit sélectionné */}
+                        {isCurrentlySelected && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-3 pt-2.5 border-t border-[#008DA9]/25 space-y-2.5"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between text-[11px] mb-1">
+                                <label className="font-bold text-slate-700 dark:text-slate-200">
+                                  Quantité en cartons (Max {prod.stock_depot}) :
+                                </label>
+                                <span className="font-black text-[#008DA9] dark:text-cyan-300">
+                                  {(Math.max(0, Number(currentLineQty) || 0) * prod.price_box).toLocaleString('fr-FR')} FCFA
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentLineQty((q) => Math.max(1, (Number(q) || 1) - 1))}
+                                  className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max={prod.stock_depot}
+                                  value={currentLineQty}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    if (Number.isNaN(val)) {
+                                      setCurrentLineQty(0);
+                                    } else {
+                                      setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
+                                    }
+                                  }}
+                                  className="w-full h-9 px-3 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-black text-sm text-center focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentLineQty((q) => Math.min(prod.stock_depot, (Number(q) || 0) + 1))}
+                                  className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleValidateCurrentChoice}
+                              className="w-full py-2.5 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] active:scale-[0.99] text-white font-black text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <Check className="w-4 h-4 stroke-[2.5]" />
+                              <span>Valider</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Line builder: Choisir, "Valider ce choix", puis "+ Ajouter un produit" seulement après validation */}
-              {isAddingLine ? (
-                <div className="p-3.5 rounded-xl border border-dashed border-[#008DA9] bg-[#008DA9]/5 dark:bg-teal-950/20 space-y-3">
-                  <div className="font-bold text-[#008DA9] dark:text-teal-300 flex items-center justify-between text-[11px]">
-                    <span>Ajout d'une ligne de chargement (Pas de doublon, quantité plafonnée au stock dépôt)</span>
-                  </div>
-
-                  {availableProductsForLine.length === 0 ? (
-                    <div className="text-slate-500 italic py-2 text-center">
-                      Tous les produits du catalogue ont été ajoutés à la sélection.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">Produit (Liste déroulante)</label>
-                          <select
-                            value={currentLineProductId}
-                            onChange={(e) => handleSelectProductForLine(e.target.value)}
-                            className="w-full px-2.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
-                          >
-                            {availableProductsForLine.map(p => (
-                              <option key={p.id} value={p.id}>
-                                {p.name} ({p.code}) — {p.price_box.toLocaleString('fr-FR')} FCFA/ctn — Stock: {p.stock_depot} ctn
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
-                            Cartons demandés (Max : {products.find(p => p.id === currentLineProductId)?.stock_depot || 0} ctn)
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            max={products.find(p => p.id === currentLineProductId)?.stock_depot || 1}
-                            value={currentLineQty}
-                            onChange={(e) => setCurrentLineQty(Number(e.target.value))}
-                            className="w-full px-2.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end pt-1">
-                        <button
-                          type="button"
-                          onClick={handleValidateCurrentChoice}
-                          className="px-4 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition"
-                        >
-                          Valider ce choix
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                /* Only AFTER validation of the current choice, "+ Ajouter un produit" is enabled */
+              {/* "+ Ajouter un produit" après validation si d'autres produits restent disponibles */}
+              {!isAddingLine && availableProductsForLine.length > 0 && (
                 <div className="pt-1">
                   <button
                     type="button"
                     onClick={handleStartNextLine}
-                    disabled={availableProductsForLine.length === 0}
-                    className="w-full py-2.5 rounded-xl border border-dashed border-[#008DA9] text-[#008DA9] dark:text-teal-300 hover:bg-[#008DA9]/5 dark:hover:bg-teal-950/40 font-bold flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+                    className="w-full py-2.5 rounded-xl border border-dashed border-[#008DA9] text-[#008DA9] dark:text-teal-300 hover:bg-[#008DA9]/5 dark:hover:bg-teal-950/40 font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     <span>+ Ajouter un produit</span>
@@ -3581,7 +3578,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
                 {validatedLines.length === 0 ? (
                   <div className="py-3 px-4 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-400 text-center italic">
-                    Aucun produit validé pour l'instant. Choisissez ci-dessus puis cliquez sur "Valider ce choix".
+                    Aucun produit validé pour l'instant. Sélectionnez un produit ci-dessus, indiquez la quantité puis cliquez sur "Valider".
                   </div>
                 ) : (
                   <div className="space-y-1.5">
