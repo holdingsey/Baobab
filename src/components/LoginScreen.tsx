@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Package, CreditCard, ShoppingBag, ArrowRight, UserCheck, KeyRound, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Package, CreditCard, ShoppingBag, ArrowRight, UserCheck, KeyRound, AlertCircle, ClipboardCheck, Briefcase } from 'lucide-react';
 import { BaobabLogo } from './BaobabLogo';
+import { FieldError, FORM_FIELD_CLASS } from './FormControls';
 
 export interface UserSession {
   id: string;
   code: string;
   name: string;
   email: string;
-  role: 'Administrateur' | 'Magasinier' | 'Comptable' | 'Vendeur';
+  role: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur';
   phone?: string;
   team?: string;
   must_change_password?: number;
@@ -114,15 +115,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                 </div>
               </div>
 
-              {errorMsg && (
-                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  {errorMsg}
-                </div>
-              )}
+              {errorMsg && <FieldError message={errorMsg} />}
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
                   Nouveau mot de passe
                 </label>
                 <input
@@ -131,12 +127,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Minimum 6 caractères"
                   required
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1d94b2]"
+                  className={FORM_FIELD_CLASS}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
                   Confirmer le mot de passe
                 </label>
                 <input
@@ -145,13 +141,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirmer à l'identique"
                   required
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1d94b2]"
+                  className={FORM_FIELD_CLASS}
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3 px-4 rounded-xl bg-[#1d94b2] hover:bg-[#167a94] text-white font-semibold text-sm transition shadow-md flex items-center justify-center gap-2"
+                className="w-full h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] font-bold text-[16px] transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>Enregistrer et se connecter</span>
                 <ArrowRight className="w-4 h-4" />
@@ -160,9 +156,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
           ) : (
             <>
               {/* Formulaire en haut */}
-              <form onSubmit={handleFormSubmit} className="mt-6 space-y-4">
+              <form onSubmit={handleFormSubmit} className="mt-6 space-y-[20px]">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
                     Adresse Email ({selectedUser.code})
                   </label>
                   <input
@@ -170,12 +166,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                     value={emailInput}
                     onChange={(e) => handleEmailChange(e.target.value)}
                     required
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1d94b2]"
+                    className={FORM_FIELD_CLASS}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
                     Mot de Passe
                   </label>
                   <input
@@ -183,13 +179,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     required
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1d94b2]"
+                    className={FORM_FIELD_CLASS}
                   />
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full mt-2 py-3 px-4 rounded-xl bg-[#1d94b2] hover:bg-[#167a94] active:scale-[0.99] text-white font-semibold text-sm transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full mt-2 h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:scale-[0.99] text-[var(--marque-texte-sur-plein)] font-bold text-[16px] transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <UserCheck className="w-4 h-4" />
                   <span>Se connecter ({selectedUser.name})</span>
@@ -206,7 +202,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                   {usersList.map((user) => {
                     const isSelected = selectedUser.id === user.id;
                     let Icon = ShieldCheck;
-                    if (user.role === 'Magasinier') Icon = Package;
+                    if (user.role === 'Directeur des opérations de vente') Icon = Briefcase;
+                    if (user.role === 'Sales Admin') Icon = ClipboardCheck;
+                    if (user.role === 'Gestionnaire grossiste') Icon = Package;
+                    if (user.role === 'Gestionnaire de stock' || user.role === 'Magasinier') Icon = Package;
                     if (user.role === 'Comptable') Icon = CreditCard;
                     if (user.role === 'Vendeur') Icon = ShoppingBag;
 
@@ -217,7 +216,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                         onClick={() => handleSelectUser(user)}
                         className={`w-full p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2.5 cursor-pointer ${
                           isSelected
-                            ? 'border-[#1d94b2] bg-[#1d94b2]/10 dark:bg-[#1d94b2]/20 dark:border-[#38bdf8] text-[#0f5366] dark:text-sky-200 shadow-xs'
+                            ? 'border-[var(--marque-fonce)] bg-[var(--marque-clair)] dark:border-[var(--marque-eclaircie)] text-[#0F172A] dark:text-[#F8FAFC] shadow-xs'
                             : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
@@ -225,8 +224,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                           <div
                             className={`p-1.5 rounded-lg shrink-0 ${
                               isSelected
-                                ? 'bg-[#1d94b2] text-white'
-                                : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                ? 'bg-[var(--marque-fonce)] text-white'
+                                : 'bg-slate-200 dark:bg-slate-700 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
                             }`}
                           >
                             <Icon className="w-3.5 h-3.5" />
@@ -234,18 +233,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                           <div className="overflow-hidden min-w-0">
                             <div className="text-xs font-bold truncate flex items-center gap-1.5">
                               <span>{user.name}</span>
-                              <span className="font-mono text-[10px] text-[#1d94b2] dark:text-sky-300 bg-[#1d94b2]/15 dark:bg-sky-900/60 px-1 rounded">
+                              <span className="font-mono text-[10px] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] bg-[var(--marque-clair)] px-1 rounded">
                                 {user.code}
                               </span>
                             </div>
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {user.role} {user.team ? `• ${user.team}` : ''}
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                              {user.role === 'Sales Admin'
+                                ? 'Sales Admin (Contrôleur)'
+                                : /directeur|op[eé]ration|dov/i.test(user.role || '')
+                                ? 'Directeur des opérations de vente (DOV)'
+                                : /grossiste/i.test(user.role || '') || user.code?.startsWith('BAO-GRS')
+                                ? 'Gestionnaire grossiste'
+                                : user.role === 'Magasinier'
+                                ? 'Gestionnaire de stock'
+                                : user.role} {user.team ? `• ${user.team}` : ''}
                             </div>
                           </div>
                         </div>
 
                         {user.must_change_password === 1 && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#92400E] text-white shrink-0">
                             MDP prov.
                           </span>
                         )}

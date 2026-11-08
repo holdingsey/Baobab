@@ -276,14 +276,17 @@ export function deduceUserFromToken(req: Request): AuthenticatedUser | null {
   const headerUserId =
     typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
 
-  if (token && token.includes('.')) {
+  if (token) {
+    if (!token.includes('.')) {
+      return null;
+    }
     const [payloadB64, sig] = token.split('.');
     const expectedSig = crypto
       .createHmac('sha256', getAuthTokenSecret())
       .update(payloadB64)
       .digest('base64url');
 
-    // Also allow legacy tokens signed when VAPID_PRIVATE_KEY was used as secret or across ephemeral restarts
+    // Also allow legacy tokens signed when VAPID_PRIVATE_KEY was used as secret
     const vapidSecret = (process.env.VAPID_PRIVATE_KEY || '').trim();
     const expectedVapidSig = vapidSecret
       ? crypto.createHmac('sha256', vapidSecret).update(payloadB64).digest('base64url')
@@ -293,8 +296,7 @@ export function deduceUserFromToken(req: Request): AuthenticatedUser | null {
       const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
       if (parsed?.sub) {
         const sigValid = sig === expectedSig || (expectedVapidSig !== '' && sig === expectedVapidSig);
-        const matchesHeader = !headerUserId || headerUserId === String(parsed.sub).trim();
-        if (sigValid || matchesHeader) {
+        if (sigValid) {
           const userRow = db
             .prepare('SELECT id, code, name, role FROM users WHERE id = ?')
             .get(String(parsed.sub).trim()) as AuthenticatedUser | undefined;
@@ -304,6 +306,7 @@ export function deduceUserFromToken(req: Request): AuthenticatedUser | null {
     } catch {
       // Invalid token payload
     }
+    return null;
   }
 
   // Fallback sur l'en-tête x-user-id de la session active si le jeton n'a pas pu être lu sur mobile
@@ -335,6 +338,19 @@ export function computeUnreadCountForUser(userId: string, userRole: string): num
           FROM notifications
           WHERE is_read = 0
             AND (role = 'Vendeur' OR role = 'ALL')
+            AND (target_user_id IS NULL OR target_user_id = '' OR target_user_id = ?)
+        `
+        )
+        .get(userId) as { count: number } | undefined;
+      return Number(row?.count || 0);
+    } else if (userRole === 'Gestionnaire de stock' || userRole === 'Magasinier') {
+      const row = db
+        .prepare(
+          `
+          SELECT COUNT(*) as count
+          FROM notifications
+          WHERE is_read = 0
+            AND (role IN ('Gestionnaire de stock', 'Magasinier') OR role = 'ALL')
             AND (target_user_id IS NULL OR target_user_id = '' OR target_user_id = ?)
         `
         )

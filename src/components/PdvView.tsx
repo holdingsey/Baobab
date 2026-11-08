@@ -22,6 +22,11 @@ import {
 } from 'lucide-react';
 import { OsmLeafletMap } from './OsmLeafletMap';
 import { getPdvStorefrontImageUrl } from '../utils/malianStorefrontImages';
+import { InfoTooltip } from './InfoTooltip';
+import { FormModal } from './FormModal';
+import { PhoneField, FieldError, FORM_FIELD_CLASS, FORM_LABEL_CLASS, FORM_ROW_CLASS } from './FormControls';
+import { DataTable } from './DataTable';
+import { ExportViewButton } from './ExtractionsView';
 
 interface PDVItem {
   id: string;
@@ -113,9 +118,19 @@ export const PdvView: React.FC<PdvViewProps> = ({
     setFilterStatus(initialFilter);
   }, [initialFilter]);
 
-  // Seul le Vendeur crée une demande de point de vente ; l'Administrateur ne crée jamais de PDV
+  // Le Vendeur et l'Administrateur peuvent créer un point de vente ; l'Administrateur et le Directeur des opérations de vente valident/rejettent les demandes
   const isAdmin = currentRole === 'Administrateur';
-  const canCreate = currentRole === 'Vendeur';
+  const isDirecteurOps = currentRole === 'Directeur des opérations de vente';
+  const canValidatePdv = isAdmin || isDirecteurOps;
+  const canCancelPdvInvoice = isDirecteurOps || isAdmin || currentRole === 'Sales Admin';
+  const canCreate = currentRole === 'Vendeur' || isAdmin;
+
+  // Modal pour consulter et annuler les factures du client d'un PDV
+  const [selectedPdvForInvoices, setSelectedPdvForInvoices] = useState<PDVItem | null>(null);
+  const [cancellingInvoiceSale, setCancellingInvoiceSale] = useState<any | null>(null);
+  const [cancelInvoiceReason, setCancelInvoiceReason] = useState('Erreur de facturation / annulation demandée par le client PDV');
+  const [isCancellingInvoice, setIsCancellingInvoice] = useState(false);
+  const [cancelInvoiceFeedback, setCancelInvoiceFeedback] = useState<string | null>(null);
 
   // New PDV modal state (Vendeur only)
   const [showCreateModal, setShowCreateModal] = useState(canCreate && initialOpenCreate);
@@ -653,7 +668,7 @@ export const PdvView: React.FC<PdvViewProps> = ({
   };
 
   const handleUpdateStatus = async (pdvId: string, newStatus: 'valide' | 'rejete' | 'en_attente', reason?: string) => {
-    if (!isAdmin) return;
+    if (!canValidatePdv) return;
     setUpdatingId(pdvId);
 
     try {
@@ -680,7 +695,38 @@ export const PdvView: React.FC<PdvViewProps> = ({
   const handleConfirmReject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!rejectingPdv) return;
-    await handleUpdateStatus(rejectingPdv.id, 'rejete', rejectionReason.trim() || "Demande rejetée par l'Administrateur");
+    await handleUpdateStatus(
+      rejectingPdv.id,
+      'rejete',
+      rejectionReason.trim() ||
+        (isDirecteurOps
+          ? 'Demande rejetée par le Directeur des opérations de vente'
+          : "Demande rejetée par l'Administrateur")
+    );
+  };
+
+  const handleConfirmCancelPdvInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancellingInvoiceSale || !cancelInvoiceReason.trim()) return;
+    setIsCancellingInvoice(true);
+    try {
+      const res = await fetch(`/api/sales/${cancellingInvoiceSale.id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-role': currentRole,
+        },
+        body: JSON.stringify({ cancel_reason: cancelInvoiceReason.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCancelInvoiceFeedback(data.message || 'Facture client PDV annulée avec succès.');
+        setCancellingInvoiceSale(null);
+        onRefreshPdvs();
+      }
+    } finally {
+      setIsCancellingInvoice(false);
+    }
   };
 
   const toggleCardMap = (pdvId: string) => {
@@ -758,14 +804,33 @@ export const PdvView: React.FC<PdvViewProps> = ({
               {pdvsZeroSalesCount} avec 0 ventes
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {isAdmin
-              ? "Validation ou rejet des demandes de création de points de vente. Un vendeur peut créer un PDV sans pour autant faire aucune vente (affiché « 0 ventes »)."
-              : "Un vendeur peut créer un PDV sans pour autant faire aucune vente : chaque PDV affiche son nombre de ventes réalisées ou « 0 ventes » s'il n'y en a pas."}
-          </p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              Gestion et validation des points de vente.
+            </p>
+            <InfoTooltip
+              text={
+                canValidatePdv
+                  ? 'Validation ou rejet des demandes de création de points de vente et suivi des factures clients PDV.'
+                  : "Un vendeur peut créer un PDV sans pour autant faire aucune vente : chaque PDV affiche son nombre de ventes réalisées ou « 0 ventes » s'il n'y en a pas."
+              }
+            />
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <ExportViewButton
+            currentUser={currentUser as any}
+            jeu="pdv"
+            label="Exporter"
+            filtres={{
+              status:
+                filterStatus !== 'all' && filterStatus !== 'with_sales' && filterStatus !== 'zero_sales'
+                  ? filterStatus
+                  : '',
+              q: searchTerm,
+            }}
+          />
           {canCreate && (
             <button
               onClick={() => {
@@ -781,10 +846,14 @@ export const PdvView: React.FC<PdvViewProps> = ({
             </button>
           )}
 
-          {isAdmin && (
+          {canValidatePdv && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/50 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 text-xs font-semibold">
               <Shield className="w-4 h-4" />
-              <span>Validation / Rejet Administrateur</span>
+              <span>
+                {isDirecteurOps
+                  ? 'Validation PDV & Annulation Facture PDV (Direction Ventes)'
+                  : 'Validation / Rejet Administrateur'}
+              </span>
             </div>
           )}
         </div>
@@ -869,7 +938,7 @@ export const PdvView: React.FC<PdvViewProps> = ({
               {scopedPdvs.filter((p) => p.status === 'en_attente').length}
             </span>
           </button>
-          {(rejectedCount > 0 || isAdmin) && (
+          {(rejectedCount > 0 || canValidatePdv) && (
             <button
               onClick={() => setFilterStatus('rejete')}
               className={`px-3 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center justify-between gap-1.5 border ${
@@ -903,334 +972,334 @@ export const PdvView: React.FC<PdvViewProps> = ({
         </div>
       )}
 
-      {/* PDV Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.map((pdv) => {
+      {/* Tableau et cartes empilées partagés des Points de Vente (PDV) */}
+      <DataTable<PDVItem>
+        data={filtered}
+        rowKey={(pdv) => pdv.id}
+        mobileTitle={(pdv) => {
+          const storefrontImg = getPdvStorefrontImageUrl(pdv);
+          return (
+            <div className="flex items-center gap-2.5">
+              <img
+                src={storefrontImg}
+                alt={pdv.name}
+                referrerPolicy="no-referrer"
+                onClick={() => setPreviewPhotoPdv({ ...pdv, photo_url: storefrontImg })}
+                className="w-10 h-10 rounded-xl object-cover border border-[#008DA9] shrink-0 cursor-pointer"
+              />
+              <div>
+                <span className="font-mono text-[11px] text-[#008DA9] font-bold block">{pdv.code}</span>
+                <span>{pdv.name}</span>
+              </div>
+            </div>
+          );
+        }}
+        mobileSubtitle={(pdv) => `Quartier ${pdv.neighborhood}, ${pdv.city} • Gérant : ${pdv.manager_name}`}
+        mobileBadge={(pdv) => {
           const isValide = pdv.status === 'valide';
           const isRejete = pdv.status === 'rejete';
-          const fallbackCoords = BAMAKO_NEIGHBORHOOD_GPS[pdv.neighborhood] || BAMAKO_NEIGHBORHOOD_GPS['Sotuba'];
-          const pdvLat = Number.isFinite(Number(pdv.latitude)) ? Number(pdv.latitude) : fallbackCoords.lat;
-          const pdvLng = Number.isFinite(Number(pdv.longitude)) ? Number(pdv.longitude) : fallbackCoords.lng;
-          const pdvAcc = Number.isFinite(Number(pdv.gps_accuracy)) ? Number(pdv.gps_accuracy) : 4.5;
-          const isMapOpen = Boolean(visibleMapPdvIds[pdv.id]);
-          const salesCount = getPdvSalesCount(pdv);
-          const salesAmount = getPdvSalesAmount(pdv);
-          const storefrontImg = getPdvStorefrontImageUrl(pdv);
-
           return (
-            <div
-              key={pdv.id}
-              className={`p-5 rounded-2xl border transition shadow-xs flex flex-col justify-between space-y-4 ${
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                 isValide
-                  ? 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
                   : isRejete
-                  ? 'border-rose-200 dark:border-rose-900/50 bg-rose-50/40 dark:bg-rose-950/20'
-                  : 'border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20'
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
               }`}
             >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold">
-                    {pdv.code}
-                  </span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span
-                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                        salesCount > 0
-                          ? 'bg-[#008DA9]/15 text-[#008DA9] dark:bg-[#008DA9]/25 dark:text-cyan-300 border border-[#008DA9]/30'
-                          : 'bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
-                      }`}
-                    >
-                      <ShoppingBag className="w-3 h-3" />
-                      {salesCount > 0 ? `${salesCount} ${salesCount > 1 ? 'ventes' : 'vente'}` : '0 ventes'}
-                    </span>
-                    <span
-                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                        isValide
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                          : isRejete
-                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                      }`}
-                    >
-                      {isValide ? (
-                        <>
-                          <CheckCircle className="w-3 h-3" /> Validé
-                        </>
-                      ) : isRejete ? (
-                        <>
-                          <XCircle className="w-3 h-3" /> Rejeté
-                        </>
-                      ) : (
-                        <>
-                          <Clock className="w-3 h-3" /> En attente
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Storefront Banner & Profile Image for every PDV (validated and non-validated) */}
-                <div className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-950">
+              {isValide ? 'Validé' : isRejete ? 'Rejeté' : 'En attente'}
+            </span>
+          );
+        }}
+        columns={[
+          {
+            key: 'pdv',
+            header: 'Code & Point de Vente',
+            hideInMobileCard: true,
+            cell: (pdv) => {
+              const storefrontImg = getPdvStorefrontImageUrl(pdv);
+              return (
+                <div className="flex items-center gap-2.5">
                   <img
                     src={storefrontImg}
-                    alt={`Devanture ${pdv.name}`}
+                    alt={pdv.name}
                     referrerPolicy="no-referrer"
-                    className="w-full h-40 object-cover"
+                    onClick={() => setPreviewPhotoPdv({ ...pdv, photo_url: storefrontImg })}
+                    className="w-10 h-10 rounded-xl object-cover border border-[#008DA9] shrink-0 cursor-pointer"
                   />
+                  <div>
+                    <div className="font-mono text-[11px] font-bold text-[#008DA9]">{pdv.code}</div>
+                    <div className="font-bold text-slate-900 dark:text-white">{pdv.name}</div>
+                  </div>
+                </div>
+              );
+            },
+            footer: 'TOTAUX PDV',
+          },
+          {
+            key: 'neighborhood',
+            header: 'Quartier & Ville',
+            mobileLabel: 'Quartier',
+            cell: (pdv) => (
+              <span>
+                {pdv.neighborhood}, {pdv.city}
+              </span>
+            ),
+          },
+          {
+            key: 'manager',
+            header: 'Gérant & Téléphone',
+            mobileLabel: 'Gérant & Tél',
+            cell: (pdv) => (
+              <div>
+                <div className="font-semibold text-slate-900 dark:text-white">{pdv.manager_name}</div>
+                <div className="text-[11px] text-slate-500 whitespace-nowrap">{pdv.phone}</div>
+              </div>
+            ),
+          },
+          {
+            key: 'vendor',
+            header: 'Vendeur Créateur',
+            mobileLabel: 'Vendeur',
+            secondary: true,
+            cell: (pdv) => (
+              <div>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  {pdv.created_by || 'Oumar Konaté'}
+                </span>
+                {pdv.vendor_code && (
+                  <span className="ml-1.5 font-mono text-[10px] px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-[#008DA9] dark:text-cyan-300 font-bold">
+                    {pdv.vendor_code}
+                  </span>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: 'gps',
+            header: 'Coordonnées GPS',
+            mobileLabel: 'GPS',
+            secondary: true,
+            isNumeric: true,
+            cell: (pdv) => {
+              const fallbackCoords = BAMAKO_NEIGHBORHOOD_GPS[pdv.neighborhood] || BAMAKO_NEIGHBORHOOD_GPS['Sotuba'];
+              const pdvLat = Number.isFinite(Number(pdv.latitude)) ? Number(pdv.latitude) : fallbackCoords.lat;
+              const pdvLng = Number.isFinite(Number(pdv.longitude)) ? Number(pdv.longitude) : fallbackCoords.lng;
+              return (
+                <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                  {pdvLat.toFixed(5)}, {pdvLng.toFixed(5)}
+                </span>
+              );
+            },
+          },
+          {
+            key: 'sales',
+            header: 'Ventes & CA PDV',
+            mobileLabel: 'Activité Ventes',
+            isNumeric: true,
+            cell: (pdv) => {
+              const cnt = getPdvSalesCount(pdv);
+              const amt = getPdvSalesAmount(pdv);
+              return (
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {cnt > 0 ? `${cnt} ${cnt > 1 ? 'ventes' : 'vente'}` : '0 ventes'}
+                  </span>
+                  {cnt > 0 && (
+                    <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                      {amt.toLocaleString('fr-FR')} FCFA
+                    </div>
+                  )}
+                </div>
+              );
+            },
+            footer: `${filtered.reduce((acc, p) => acc + getPdvSalesAmount(p), 0).toLocaleString('fr-FR')} FCFA`,
+          },
+          {
+            key: 'status',
+            header: 'Statut',
+            align: 'center',
+            hideInMobileCard: true,
+            cell: (pdv) => {
+              const isValide = pdv.status === 'valide';
+              const isRejete = pdv.status === 'rejete';
+              return (
+                <div>
+                  <span
+                    className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${
+                      isValide
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        : isRejete
+                        ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                    }`}
+                  >
+                    {isValide ? 'Validé' : isRejete ? 'Rejeté' : 'En attente'}
+                  </span>
+                  {isRejete && pdv.rejection_reason && (
+                    <div className="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5 max-w-[180px] break-words">
+                      {pdv.rejection_reason}
+                    </div>
+                  )}
+                </div>
+              );
+            },
+          },
+          {
+            key: 'actions',
+            header: 'Actions',
+            align: 'right',
+            hideInMobileCard: true,
+            cell: (pdv) => {
+              const salesCount = getPdvSalesCount(pdv);
+              const storefrontImg = getPdvStorefrontImageUrl(pdv);
+              return (
+                <div className="flex items-center justify-end gap-1.5 flex-wrap">
                   <button
                     type="button"
                     onClick={() => setPreviewPhotoPdv({ ...pdv, photo_url: storefrontImg })}
-                    className="absolute top-2 right-2 px-2.5 py-1 rounded-lg bg-slate-900/85 hover:bg-slate-900 text-white text-[10px] font-bold flex items-center gap-1 shadow-md cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] font-bold cursor-pointer hover:bg-slate-100"
                   >
-                    <Maximize2 className="w-3 h-3" />
-                    <span>Agrandir</span>
+                    Photo
                   </button>
-                </div>
-
-                {/* PDV Profile Header with Circular/Rounded Storefront Profile Avatar */}
-                <div className="flex items-center gap-3 pt-0.5">
-                  <div className="relative shrink-0">
-                    <img
-                      src={storefrontImg}
-                      alt={`Image de profil ${pdv.name}`}
-                      referrerPolicy="no-referrer"
-                      onClick={() => setPreviewPhotoPdv({ ...pdv, photo_url: storefrontImg })}
-                      className="w-14 h-14 rounded-2xl object-cover border-2 border-[#008DA9] shadow-sm cursor-pointer"
-                    />
-                    {canCreate && (
-                      <button
-                        type="button"
-                        title="Prendre une photo et l'assigner directement comme image de profil"
-                        onClick={() => {
-                          setCreateError(null);
-                          setCapturedPhotoData(null);
-                          setCapturedGpsStamp(null);
-                          setPhotoTargetPdv(pdv);
-                        }}
-                        className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#008DA9] hover:bg-[#00748C] text-white flex items-center justify-center shadow-md border border-white dark:border-slate-900 cursor-pointer"
-                      >
-                        <Camera className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
-                      Profil du PDV &bull; {isValide ? 'Boutique Validée' : 'Non Validée'}
-                    </div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white leading-snug truncate">
-                      {pdv.name}
-                    </h3>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                      Quartier {pdv.neighborhood}, {pdv.city}
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-[10.5px] font-bold text-teal-800 dark:text-teal-300 max-w-full min-w-0">
-                      <User className="w-3 h-3 text-[#008DA9] shrink-0" />
-                      <span className="truncate flex-1 min-w-0">
-                        Créé par : <strong>{pdv.created_by || 'Oumar Konaté'}</strong>
-                      </span>
-                      {pdv.vendor_code && (
-                        <span className="shrink-0 font-mono text-[9px] font-extrabold px-1 py-0.2 rounded bg-white/90 dark:bg-slate-800 border border-teal-300 dark:border-teal-700 text-[#008DA9] dark:text-cyan-300">
-                          {pdv.vendor_code}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Direct Camera Action Button for Vendor to Take & Assign Storefront Photo as Profile Image */}
-                {canCreate && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCreateError(null);
-                      setCapturedPhotoData(null);
-                      setCapturedGpsStamp(null);
-                      setPhotoTargetPdv(pdv);
-                    }}
-                    className="w-full py-2 px-3 rounded-xl bg-[#008DA9]/10 hover:bg-[#008DA9] text-[#008DA9] hover:text-white border border-[#008DA9]/30 text-xs font-extrabold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>Prendre une photo (Assigner comme profil du PDV)</span>
-                  </button>
-                )}
-
-                <div>
-                  {/* Sales activity notice on each PDV */}
-                  <div
-                    className={`p-2.5 rounded-xl border text-xs ${
-                      salesCount > 0
-                        ? 'bg-cyan-50/70 dark:bg-cyan-950/25 border-cyan-200 dark:border-cyan-900/60 text-slate-800 dark:text-slate-200'
-                        : 'bg-slate-100/80 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-black text-[#008DA9] dark:text-cyan-400">
-                        {salesCount > 0
-                          ? `${salesCount} ${salesCount > 1 ? 'ventes réalisées' : 'vente réalisée'}`
-                          : '0 ventes'}
-                      </span>
-                      {salesCount > 0 && (
-                        <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                          {salesAmount.toLocaleString('fr-FR')} FCFA
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {salesCount > 0
-                        ? 'Chaque vente réalisée sur ce PDV constitue une facture à part.'
-                        : 'PDV créé par le vendeur sans aucune vente réalisée à ce jour.'}
-                    </p>
-                  </div>
-
-                  <div className="mt-2.5 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
-                    <div className="flex flex-wrap items-center justify-between gap-1.5 p-2 rounded-xl bg-teal-50/70 dark:bg-teal-950/40 border border-teal-200/70 dark:border-teal-800/70">
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1 text-slate-700 dark:text-slate-200">
-                        <User className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
-                        <span className="truncate">
-                          Vendeur : <strong className="text-slate-900 dark:text-white font-extrabold">{pdv.created_by || 'Oumar Konaté'}</strong>
-                        </span>
-                      </div>
-                      {pdv.vendor_code && (
-                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 text-[#008DA9] dark:text-cyan-300 border border-teal-200 dark:border-teal-800 shrink-0">
-                          {pdv.vendor_code}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-500">
-                      <MapPin className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
-                      <span>{pdv.neighborhood}, {pdv.city}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-500">
-                      <User className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
-                      <span>Gérant boutique : <strong>{pdv.manager_name}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-500">
-                      <Phone className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
-                      <span>{pdv.phone}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px] font-mono text-slate-600 dark:text-slate-400 bg-slate-100/80 dark:bg-slate-800/70 px-2.5 py-1.5 rounded-lg">
-                      <Navigation className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
-                      <span>
-                        GPS: {pdvLat.toFixed(5)}, {pdvLng.toFixed(5)} (±{pdvAcc.toFixed(1)}m)
-                      </span>
-                    </div>
-                    {pdv.captured_at && (
-                      <div className="text-[10px] text-slate-400">
-                        Capturé le : <span className="font-mono font-semibold">{pdv.captured_at}</span>
-                      </div>
-                    )}
-                    {isRejete && pdv.rejection_reason && (
-                      <div className="mt-2 p-2 rounded-lg bg-rose-100/70 dark:bg-rose-950/50 text-[11px] text-rose-800 dark:text-rose-300">
-                        <strong>Motif du rejet :</strong> {pdv.rejection_reason}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Show / Hide OpenStreetMap Leaflet Map Toggle Button per PDV */}
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    onClick={() => toggleCardMap(pdv.id)}
-                    className={`w-full py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                      isMapOpen
-                        ? 'bg-[#008DA9] text-white border-[#008DA9]'
-                        : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
-                    }`}
-                  >
-                    {isMapOpen ? (
-                      <>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        <span>Masquer la carte GPS</span>
-                      </>
-                    ) : (
-                      <>
-                        <MapIcon className="w-3.5 h-3.5 text-[#008DA9]" />
-                        <span>Afficher la carte (Position précise)</span>
-                      </>
-                    )}
-                  </button>
-
-                  {isMapOpen && (
-                    <div className="mt-2.5">
-                      <OsmLeafletMap
-                        centerLat={pdvLat}
-                        centerLng={pdvLng}
-                        accuracy={pdvAcc}
-                        zoom={16}
-                        heightClassName="h-48"
-                        label={pdv.name}
-                        sublabel={`${pdv.neighborhood}, Bamako • Gérant: ${pdv.manager_name} • Vendeur: ${pdv.created_by || 'Oumar Konaté'}`}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Admin Validation & Rejection Buttons */}
-              {isAdmin && (
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                  {pdv.status === 'en_attente' ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => handleUpdateStatus(pdv.id, 'valide')}
-                        disabled={updatingId === pdv.id}
-                        className="py-2 px-3 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        <span>Valider</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setRejectingPdv(pdv);
-                          setRejectionReason('Informations incomplètes ou doublon de zone');
-                        }}
-                        disabled={updatingId === pdv.id}
-                        className="py-2 px-3 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>Rejeter</span>
-                      </button>
-                    </div>
-                  ) : pdv.status === 'valide' ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => handleUpdateStatus(pdv.id, 'en_attente')}
-                        disabled={updatingId === pdv.id}
-                        className="py-1.5 px-3 rounded-xl text-xs font-bold bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 dark:bg-slate-800 dark:hover:bg-amber-950 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>En attente</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setRejectingPdv(pdv);
-                          setRejectionReason('Point de vente désactivé / rejeté');
-                        }}
-                        disabled={updatingId === pdv.id}
-                        className="py-1.5 px-3 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>Rejeter</span>
-                      </button>
-                    </div>
-                  ) : (
+                  {canCreate && (
                     <button
+                      type="button"
+                      onClick={() => {
+                        setCreateError(null);
+                        setCapturedPhotoData(null);
+                        setCapturedGpsStamp(null);
+                        setPhotoTargetPdv(pdv);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 border border-[#008DA9]/30 text-[11px] font-bold cursor-pointer"
+                    >
+                      Caméra
+                    </button>
+                  )}
+                  {canValidatePdv && pdv.status !== 'valide' && (
+                    <button
+                      type="button"
                       onClick={() => handleUpdateStatus(pdv.id, 'valide')}
                       disabled={updatingId === pdv.id}
-                      className="w-full py-1.5 px-3 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-lg bg-[#15803D] hover:bg-emerald-800 text-white text-[11px] font-bold cursor-pointer"
                     >
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      <span>Valider ce PDV</span>
+                      Valider
+                    </button>
+                  )}
+                  {canValidatePdv && pdv.status !== 'rejete' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRejectingPdv(pdv);
+                        setRejectionReason('Informations incomplètes ou doublon de zone');
+                      }}
+                      disabled={updatingId === pdv.id}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#B91C1C] hover:bg-red-800 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      Rejeter
+                    </button>
+                  )}
+                  {canCancelPdvInvoice && salesCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCancelInvoiceFeedback(null);
+                        setCancellingInvoiceSale(null);
+                        setSelectedPdvForInvoices(pdv);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-700 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      Factures ({salesCount})
                     </button>
                   )}
                 </div>
+              );
+            },
+          },
+        ]}
+        mobileActions={(pdv) => {
+          const salesCount = getPdvSalesCount(pdv);
+          const storefrontImg = getPdvStorefrontImageUrl(pdv);
+          return (
+            <>
+              <button
+                type="button"
+                onClick={() => setPreviewPhotoPdv({ ...pdv, photo_url: storefrontImg })}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
+              >
+                Voir photo
+              </button>
+              {canCreate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateError(null);
+                    setCapturedPhotoData(null);
+                    setCapturedGpsStamp(null);
+                    setPhotoTargetPdv(pdv);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 border border-[#008DA9]/30 text-xs font-bold cursor-pointer"
+                >
+                  Prendre photo
+                </button>
               )}
-            </div>
+              {canValidatePdv && pdv.status !== 'valide' && (
+                <button
+                  type="button"
+                  onClick={() => handleUpdateStatus(pdv.id, 'valide')}
+                  disabled={updatingId === pdv.id}
+                  className="px-3 py-1.5 rounded-lg bg-[#15803D] text-white text-xs font-bold cursor-pointer"
+                >
+                  Valider
+                </button>
+              )}
+              {canValidatePdv && pdv.status !== 'rejete' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRejectingPdv(pdv);
+                    setRejectionReason('Informations incomplètes ou doublon de zone');
+                  }}
+                  disabled={updatingId === pdv.id}
+                  className="px-3 py-1.5 rounded-lg bg-[#B91C1C] text-white text-xs font-bold cursor-pointer"
+                >
+                  Rejeter
+                </button>
+              )}
+              {canCancelPdvInvoice && salesCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCancelInvoiceFeedback(null);
+                    setCancellingInvoiceSale(null);
+                    setSelectedPdvForInvoices(pdv);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-700 text-white text-xs font-bold cursor-pointer"
+                >
+                  Factures ({salesCount})
+                </button>
+              )}
+            </>
           );
-        })}
-      </div>
+        }}
+        totalsFooter={
+          <>
+            <span>
+              Validés : <strong>{filtered.filter((p) => p.status === 'valide').length}</strong>
+            </span>
+            <span>
+              En attente : <strong>{filtered.filter((p) => p.status === 'en_attente').length}</strong>
+            </span>
+            <span>
+              CA cumulé PDV :{' '}
+              <strong className="text-teal-700 dark:text-teal-400 whitespace-nowrap">
+                {filtered.reduce((acc, p) => acc + getPdvSalesAmount(p), 0).toLocaleString('fr-FR')} FCFA
+              </strong>
+            </span>
+          </>
+        }
+      />
 
       {/* Hidden file input for optional direct photo selection/camera on mobile & desktop */}
       <input
@@ -1243,87 +1312,61 @@ export const PdvView: React.FC<PdvViewProps> = ({
 
       {/* Fullscreen Storefront Photo Modal */}
       {previewPhotoPdv && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-3xl w-full p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div>
-                <h3 className="font-black text-base text-slate-900 dark:text-white">
-                  Image de Profil PDV &bull; Devanture {previewPhotoPdv.name}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  {previewPhotoPdv.code} &bull; {previewPhotoPdv.neighborhood}, Bamako &bull; Créé par le vendeur :{' '}
-                  <strong>{previewPhotoPdv.created_by || 'Oumar Konaté'}</strong> &bull; GPS :{' '}
-                  {Number(previewPhotoPdv.latitude || 12.6392).toFixed(6)}, {Number(previewPhotoPdv.longitude || -8.0029).toFixed(6)}
-                </p>
-              </div>
-              <button
-                onClick={() => setPreviewPhotoPdv(null)}
-                className="px-3 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer"
-              >
-                Fermer &times;
-              </button>
-            </div>
+        <FormModal
+          title={`Devanture • ${previewPhotoPdv.name}`}
+          subtitle={`${previewPhotoPdv.code} • ${previewPhotoPdv.neighborhood}, Bamako • Par ${previewPhotoPdv.created_by || 'Oumar Konaté'}`}
+          icon={<Camera className="w-5 h-5 text-[var(--marque-fonce)]" />}
+          onClose={() => setPreviewPhotoPdv(null)}
+          cancelLabel="Fermer"
+          hideFooter={false}
+          submitLabel="Fermer"
+          onSubmit={() => setPreviewPhotoPdv(null)}
+        >
+          <div className="space-y-4">
             <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black">
               <img
                 src={getPdvStorefrontImageUrl(previewPhotoPdv)}
                 alt={previewPhotoPdv.name}
                 referrerPolicy="no-referrer"
-                className="w-full max-h-[70vh] object-contain mx-auto"
+                className="w-full max-h-[60vh] object-contain mx-auto"
               />
             </div>
+            <p className="text-xs text-slate-500 font-mono text-center">
+              Coordonnées GPS : {Number(previewPhotoPdv.latitude || 12.6392).toFixed(6)}, {Number(previewPhotoPdv.longitude || -8.0029).toFixed(6)}
+            </p>
           </div>
-        </div>
+        </FormModal>
       )}
 
       {/* Direct Camera Modal for Existing PDV — Immediately assigns captured photo as the PDV's profile image */}
       {photoTargetPdv && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 my-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-3">
-                <img
-                  src={capturedPhotoData || getPdvStorefrontImageUrl(photoTargetPdv)}
-                  alt={photoTargetPdv.name}
-                  referrerPolicy="no-referrer"
-                  className="w-14 h-14 rounded-2xl object-cover border-2 border-[#008DA9] shadow-sm"
-                />
-                <div>
-                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
-                    <Camera className="w-4 h-4 text-[#008DA9]" />
-                    Photo Devanture &bull; Image de Profil du PDV
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    {photoTargetPdv.name} ({photoTargetPdv.code}) &bull; {photoTargetPdv.neighborhood}, Bamako
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  stopCameraStream();
-                  setPhotoTargetPdv(null);
-                  setCapturedPhotoData(null);
-                  setCapturedGpsStamp(null);
-                }}
-                className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white font-bold flex items-center justify-center cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="p-3.5 rounded-2xl border-2 border-[#008DA9]/40 bg-slate-50 dark:bg-slate-800/50 space-y-3">
+        <FormModal
+          title="Photo Devanture & Profil PDV"
+          subtitle={`${photoTargetPdv.name} (${photoTargetPdv.code}) • ${photoTargetPdv.neighborhood}, Bamako`}
+          icon={<Camera className="w-5 h-5 text-[var(--marque-fonce)]" />}
+          onClose={() => {
+            stopCameraStream();
+            setPhotoTargetPdv(null);
+            setCapturedPhotoData(null);
+            setCapturedGpsStamp(null);
+          }}
+          cancelLabel="Fermer"
+          hideFooter={true}
+        >
+          <div className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-2xl border-2 border-[var(--marque)]/40 bg-slate-50 dark:bg-slate-800/50 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
                   <span className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wide text-[11px]">
-                    Prise de photo directe &mdash; Assignée immédiatement comme profil du PDV
+                    Prise de photo directe
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-2.5 py-1 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 border border-[#008DA9]/30 text-[11px] font-bold flex items-center gap-1 hover:bg-[#008DA9]/25 cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-lg bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-cyan-300 border border-[var(--marque)]/30 text-[11px] font-bold flex items-center gap-1 hover:opacity-90 cursor-pointer"
                   >
                     <Camera className="w-3 h-3" />
                     <span>Importer / Appareil photo</span>
@@ -1331,7 +1374,7 @@ export const PdvView: React.FC<PdvViewProps> = ({
                   <button
                     type="button"
                     onClick={handleToggleCameraFacing}
-                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 hover:bg-slate-100 cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 hover:bg-slate-100 cursor-pointer"
                   >
                     <RefreshCw className="w-3 h-3" />
                     <span>Changer caméra ({facingMode === 'environment' ? 'Arrière' : 'Avant'})</span>
@@ -1380,10 +1423,10 @@ export const PdvView: React.FC<PdvViewProps> = ({
                   type="button"
                   onClick={handleCaptureStorefrontAndGps}
                   disabled={isAssigningPhoto}
-                  className="w-full py-3 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-3 px-4 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
-                  <span>Prendre la photo &amp; Assigner directement comme image de profil du PDV</span>
+                  <span>Prendre la photo &amp; Assigner au profil du PDV</span>
                 </button>
               ) : (
                 <div className="w-full flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-3 rounded-xl">
@@ -1427,7 +1470,7 @@ export const PdvView: React.FC<PdvViewProps> = ({
                         setCapturedPhotoData(null);
                         setCapturedGpsStamp(null);
                       }}
-                      className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
+                      className="px-4 py-1.5 rounded-lg bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
                     >
                       Terminer
                     </button>
@@ -1436,452 +1479,507 @@ export const PdvView: React.FC<PdvViewProps> = ({
               )}
             </div>
           </div>
-        </div>
+        </FormModal>
       )}
 
       {/* Reject PDV Modal (Administrateur only) */}
       {isAdmin && rejectingPdv && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
-                <XCircle className="w-5 h-5 text-rose-600" />
-                Rejeter la demande de PDV
-              </h3>
-              <button
-                onClick={() => setRejectingPdv(null)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold"
-              >
-                &times;
-              </button>
+        <FormModal
+          title="Rejeter la demande de PDV"
+          icon={<XCircle className="w-5 h-5 text-rose-600" />}
+          onClose={() => setRejectingPdv(null)}
+          onSubmit={handleConfirmReject}
+          submitLabel="Confirmer le rejet"
+          submitDisabled={updatingId === rejectingPdv.id}
+          isDirty={Boolean(rejectionReason.trim())}
+        >
+          <div className="space-y-3.5 text-xs">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <div className="font-bold text-slate-900 dark:text-white">{rejectingPdv.name}</div>
+              <div className="text-slate-500 mt-0.5">
+                {rejectingPdv.code} &bull; {rejectingPdv.neighborhood} &bull; Gérant : {rejectingPdv.manager_name}
+              </div>
+              <div className="text-teal-700 dark:text-teal-300 font-bold mt-1">
+                Créé par le vendeur : {rejectingPdv.created_by || 'Oumar Konaté'}
+              </div>
             </div>
 
-            <form onSubmit={handleConfirmReject} className="space-y-3.5 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <div className="font-bold text-slate-900 dark:text-white">{rejectingPdv.name}</div>
-                <div className="text-slate-500 mt-0.5">
-                  {rejectingPdv.code} &bull; {rejectingPdv.neighborhood} &bull; Gérant : {rejectingPdv.manager_name}
-                </div>
-                <div className="text-teal-700 dark:text-teal-300 font-bold mt-1">
-                  Créé par le vendeur : {rejectingPdv.created_by || 'Oumar Konaté'}
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Motif du rejet :
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.target.value)}
-                  placeholder="Indiquez le motif du rejet..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setRejectingPdv(null)}
-                  className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={updatingId === rejectingPdv.id}
-                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition shadow-xs"
-                >
-                  Confirmer le rejet
-                </button>
-              </div>
-            </form>
+            <div>
+              <label className={FORM_LABEL_CLASS}>
+                Motif du rejet :
+              </label>
+              <input
+                type="text"
+                required
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Indiquez le motif du rejet..."
+                className={FORM_FIELD_CLASS}
+              />
+            </div>
           </div>
-        </div>
+        </FormModal>
       )}
 
       {/* New PDV Modal (Vendeur only) — Conditioned on Live Camera Stream + Instant Precise GPS with OpenStreetMap Leaflet */}
       {canCreate && showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 my-auto max-h-[94vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 sticky top-0 bg-white dark:bg-slate-900 z-10">
-              <div className="flex items-center gap-3 min-w-0">
+        <FormModal
+          title="Création de PDV • Photo de Profil & GPS"
+          subtitle="La photo prise s'affiche immédiatement comme image de profil du PDV."
+          icon={<Store className="w-5 h-5 text-[#008DA9]" />}
+          onClose={() => {
+            stopCameraStream();
+            setShowCreateModal(false);
+          }}
+          onSubmit={handleCreatePdv}
+          submitLabel={
+            <>
+              <CheckCircle className="w-4 h-4" />
+              <span>{isSubmitting ? 'Envoi en cours...' : 'Soumettre le PDV (Photo Profil + GPS)'}</span>
+            </>
+          }
+          submitDisabled={isSubmitting || !capturedPhotoData || !capturedGpsStamp}
+          isDirty={Boolean(name.trim() || managerName.trim() || capturedPhotoData)}
+        >
+          <div className="space-y-4 text-xs">
+            {createError && <FieldError message={createError} />}
+
+            {/* Live PDV Profile Image Card inside the Creation Modal */}
+            <div className="p-3.5 rounded-2xl border-2 border-[#008DA9]/40 bg-gradient-to-r from-teal-50/70 to-cyan-50/50 dark:from-slate-800/80 dark:to-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0">
                 <div className="relative shrink-0">
-                  {capturedPhotoData ? (
-                    <img
-                      src={capturedPhotoData}
-                      alt="Image de profil du nouveau PDV"
-                      referrerPolicy="no-referrer"
-                      className="w-12 h-12 rounded-2xl object-cover border-2 border-emerald-500 shadow-sm"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-2xl bg-[#008DA9]/10 border-2 border-dashed border-[#008DA9] flex items-center justify-center text-[#008DA9]">
-                      <Camera className="w-5 h-5" />
-                    </div>
-                  )}
+                  <img
+                    src={
+                      capturedPhotoData ||
+                      getPdvStorefrontImageUrl({
+                        name: name.trim() || 'Boutique',
+                        neighborhood,
+                      })
+                    }
+                    alt="Image de profil du PDV"
+                    referrerPolicy="no-referrer"
+                    className={`w-16 h-16 rounded-2xl object-cover border-2 shadow-md ${
+                      capturedPhotoData ? 'border-emerald-500 ring-2 ring-emerald-500/30' : 'border-[#008DA9]'
+                    }`}
+                  />
+                  <span
+                    className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full text-white flex items-center justify-center shadow-sm border border-white dark:border-slate-900 ${
+                      capturedPhotoData ? 'bg-emerald-600' : 'bg-[#008DA9]'
+                    }`}
+                  >
+                    {capturedPhotoData ? <Check className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
+                  </span>
                 </div>
-                <div className="min-w-0">
-                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white flex items-center gap-2 truncate">
-                    <Store className="w-4 h-4 text-[#008DA9] shrink-0" />
-                    <span className="truncate">Création de PDV &bull; Photo de Profil &amp; GPS</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    La photo prise s&apos;affiche immédiatement comme image de profil du PDV.
-                  </p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
+                      Image de Profil du PDV
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        capturedPhotoData
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
+                      }`}
+                    >
+                      {capturedPhotoData ? 'Photo prise & assignée au profil' : 'Prenez une photo ci-dessous'}
+                    </span>
+                  </div>
+                  <div className="text-sm font-black text-slate-900 dark:text-white break-words leading-snug mt-0.5">
+                    {name.trim() || 'Nouveau Point de Vente'}
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300 break-words leading-snug">
+                    Quartier {neighborhood}, Bamako &bull; Vendeur créateur :{' '}
+                    <strong>{currentUser?.name || 'Oumar Konaté'}</strong>
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  stopCameraStream();
-                  setShowCreateModal(false);
-                }}
-                className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white font-bold flex items-center justify-center cursor-pointer shrink-0"
-              >
-                &times;
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleCaptureStorefrontAndGps}
+                  className="px-3 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{capturedPhotoData ? 'Actualiser la photo' : 'Prendre la photo'}</span>
+                </button>
+              </div>
             </div>
 
-            {createError && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 font-semibold">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
-                <span>{createError}</span>
+            {/* Step 1: PDV Identification Fields */}
+            <div className={FORM_ROW_CLASS}>
+              <div>
+                <label className={FORM_LABEL_CLASS}>
+                  Nom du commerce / Alimentation *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Alimentation Le Régal"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className={FORM_FIELD_CLASS}
+                />
               </div>
-            )}
 
-            <form onSubmit={handleCreatePdv} className="space-y-4 text-xs">
-              {/* Live PDV Profile Image Card inside the Creation Modal */}
-              <div className="p-3.5 rounded-2xl border-2 border-[#008DA9]/40 bg-gradient-to-r from-teal-50/70 to-cyan-50/50 dark:from-slate-800/80 dark:to-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="relative shrink-0">
-                    <img
-                      src={
-                        capturedPhotoData ||
-                        getPdvStorefrontImageUrl({
-                          name: name.trim() || 'Boutique',
-                          neighborhood,
-                        })
-                      }
-                      alt="Image de profil du PDV"
-                      referrerPolicy="no-referrer"
-                      className={`w-16 h-16 rounded-2xl object-cover border-2 shadow-md ${
-                        capturedPhotoData ? 'border-emerald-500 ring-2 ring-emerald-500/30' : 'border-[#008DA9]'
-                      }`}
-                    />
-                    <span
-                      className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full text-white flex items-center justify-center shadow-sm border border-white dark:border-slate-900 ${
-                        capturedPhotoData ? 'bg-emerald-600' : 'bg-[#008DA9]'
-                      }`}
-                    >
-                      {capturedPhotoData ? <Check className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
-                        Image de Profil du PDV
-                      </span>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          capturedPhotoData
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
-                        }`}
-                      >
-                        {capturedPhotoData ? 'Photo prise & assignée au profil' : 'Prenez une photo ci-dessous'}
-                      </span>
-                    </div>
-                    <div className="text-sm font-black text-slate-900 dark:text-white truncate mt-0.5">
-                      {name.trim() || 'Nouveau Point de Vente'}
-                    </div>
-                    <div className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
-                      Quartier {neighborhood}, Bamako &bull; Vendeur créateur :{' '}
-                      <strong>{currentUser?.name || 'Oumar Konaté'}</strong>
-                    </div>
-                  </div>
+              <div>
+                <label className={FORM_LABEL_CLASS}>
+                  Nom du gérant / boutiquier *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Issa Traoré"
+                  value={managerName}
+                  onChange={(e) => setManagerName(e.target.value)}
+                  className={FORM_FIELD_CLASS}
+                />
+              </div>
+
+              <div>
+                <label className={FORM_LABEL_CLASS}>
+                  Quartier (Bamako)
+                </label>
+                <select
+                  value={neighborhood}
+                  onChange={(e) => setNeighborhood(e.target.value)}
+                  className={FORM_FIELD_CLASS}
+                >
+                  <option value="Sotuba">Sotuba (Rive Gauche)</option>
+                  <option value="Badalabougou">Badalabougou (Rive Droite)</option>
+                  <option value="ACI 2000">ACI 2000 (Rive Gauche)</option>
+                  <option value="Faladié">Faladié (Rive Droite)</option>
+                  <option value="Lafiabougou">Lafiabougou (Rive Gauche)</option>
+                  <option value="Niamakoro">Niamakoro (Rive Droite)</option>
+                  <option value="Daoudabougou">Daoudabougou (Rive Droite)</option>
+                  <option value="Bozola">Bozola (Centre / Grand Marché)</option>
+                  <option value="Djélibougou">Djélibougou (Rive Gauche)</option>
+                  <option value="Sabalibougou">Sabalibougou (Rive Droite)</option>
+                  <option value="Yirimadio">Yirimadio (Zone Est)</option>
+                  <option value="Moribabougou">Moribabougou (Périphérie)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className={FORM_LABEL_CLASS}>
+                  Téléphone du PDV
+                </label>
+                <PhoneField
+                  value={phone}
+                  onChange={setPhone}
+                  placeholder="70 00 00 00"
+                />
+              </div>
+            </div>
+
+            {/* Step 2: Live Camera Stream & Instantaneous GPS Capture */}
+            <div className="p-3.5 rounded-2xl border-2 border-[#008DA9]/40 bg-slate-50 dark:bg-slate-800/50 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
+                  <span className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wide text-[11px]">
+                    1. Flux Direct Caméra &mdash; Devanture &amp; Image de Profil du PDV (Obligatoire)
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
-                    onClick={handleCaptureStorefrontAndGps}
-                    className="px-3 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-2.5 py-1 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 border border-[#008DA9]/30 text-[11px] font-bold flex items-center gap-1 hover:bg-[#008DA9]/25 cursor-pointer"
                   >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{capturedPhotoData ? 'Actualiser la photo' : 'Prendre la photo'}</span>
+                    <Camera className="w-3 h-3" />
+                    <span>Importer / Appareil photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleCameraFacing}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 hover:bg-slate-100 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Changer caméra ({facingMode === 'environment' ? 'Arrière' : 'Avant'})</span>
                   </button>
                 </div>
               </div>
 
-              {/* Step 1: PDV Identification Fields */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Nom du commerce / Alimentation * :
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: Alimentation Le Régal"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Nom du gérant / boutiquier * :
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: Issa Traoré"
-                    value={managerName}
-                    onChange={(e) => setManagerName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Quartier (Bamako) :
-                  </label>
-                  <select
-                    value={neighborhood}
-                    onChange={(e) => setNeighborhood(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500 font-medium"
-                  >
-                    <option value="Sotuba">Sotuba (Rive Gauche)</option>
-                    <option value="Badalabougou">Badalabougou (Rive Droite)</option>
-                    <option value="ACI 2000">ACI 2000 (Rive Gauche)</option>
-                    <option value="Faladié">Faladié (Rive Droite)</option>
-                    <option value="Lafiabougou">Lafiabougou (Rive Gauche)</option>
-                    <option value="Niamakoro">Niamakoro (Rive Droite)</option>
-                    <option value="Daoudabougou">Daoudabougou (Rive Droite)</option>
-                    <option value="Bozola">Bozola (Centre / Grand Marché)</option>
-                    <option value="Djélibougou">Djélibougou (Rive Gauche)</option>
-                    <option value="Sabalibougou">Sabalibougou (Rive Droite)</option>
-                    <option value="Yirimadio">Yirimadio (Zone Est)</option>
-                    <option value="Moribabougou">Moribabougou (Périphérie)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Téléphone du PDV :
-                  </label>
-                  <input
-                    type="text"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+223 70 00 00 00"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                </div>
-              </div>
-
-              {/* Step 2: Live Camera Stream & Instantaneous GPS Capture */}
-              <div className="p-3.5 rounded-2xl border-2 border-[#008DA9]/40 bg-slate-50 dark:bg-slate-800/50 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
-                    <span className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wide text-[11px]">
-                      1. Flux Direct Caméra &mdash; Devanture &amp; Image de Profil du PDV (Obligatoire)
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="px-2.5 py-1 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 border border-[#008DA9]/30 text-[11px] font-bold flex items-center gap-1 hover:bg-[#008DA9]/25 cursor-pointer"
-                    >
-                      <Camera className="w-3 h-3" />
-                      <span>Importer / Appareil photo</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleToggleCameraFacing}
-                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 hover:bg-slate-100 cursor-pointer"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      <span>Changer caméra ({facingMode === 'environment' ? 'Arrière' : 'Avant'})</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Live Video or Captured Stamped Photo */}
-                <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 aspect-16/10 flex items-center justify-center">
-                  {!capturedPhotoData ? (
-                    <>
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className={`w-full h-full object-cover ${usingSyntheticStream ? 'hidden' : 'block'}`}
-                      />
-                      <canvas
-                        ref={fallbackCanvasRef}
-                        width={800}
-                        height={500}
-                        className={`w-full h-full object-cover ${usingSyntheticStream ? 'block' : 'hidden'}`}
-                      />
-                      {/* Live HUD overlay showing current GPS before capture */}
-                      <div className="absolute bottom-2 left-2 right-2 bg-slate-950/80 backdrop-blur-xs text-white px-3 py-2 rounded-xl border border-white/15 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                        <div className="font-mono">
-                          <span className="text-cyan-400 font-bold">GPS DIRECT :</span>{' '}
-                          Lat {liveGps.lat.toFixed(6)}° N | Lng {liveGps.lng.toFixed(6)}° O (±{liveGps.accuracy}m)
-                        </div>
-                        <div className="text-[10px] text-emerald-300 font-semibold">
-                          {cameraStatusMsg}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <img
-                      src={capturedPhotoData}
-                      alt="Devanture PDV capturée avec GPS, date et heure"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain bg-black"
+              {/* Live Video or Captured Stamped Photo */}
+              <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 aspect-16/10 flex items-center justify-center">
+                {!capturedPhotoData ? (
+                  <>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className={`w-full h-full object-cover ${usingSyntheticStream ? 'hidden' : 'block'}`}
                     />
-                  )}
-                </div>
-
-                {/* Capture / Retake Action Buttons */}
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  {!capturedPhotoData ? (
-                    <button
-                      type="button"
-                      onClick={handleCaptureStorefrontAndGps}
-                      className="w-full py-3 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>Capturer la photo de la devanture &amp; Assigner comme profil du PDV</span>
-                    </button>
-                  ) : (
-                    <div className="w-full flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-xl">
-                      <div className="flex items-center gap-3 text-emerald-800 dark:text-emerald-300">
-                        <img
-                          src={capturedPhotoData}
-                          alt="Profil PDV assigné"
-                          referrerPolicy="no-referrer"
-                          className="w-14 h-14 rounded-2xl object-cover border-2 border-emerald-500 shrink-0 shadow-xs"
-                        />
-                        <div>
-                          <div className="font-extrabold text-xs flex items-center gap-1">
-                            <Check className="w-4 h-4 shrink-0 text-emerald-600" />
-                            <span>Photo de la devanture assignée comme image de profil du PDV !</span>
-                          </div>
-                          {capturedGpsStamp && (
-                            <div className="font-mono text-[11px]">
-                              Lat: {capturedGpsStamp.lat.toFixed(6)} | Lng: {capturedGpsStamp.lng.toFixed(6)} (±{capturedGpsStamp.accuracy}m) &bull; {capturedGpsStamp.dateStr} à {capturedGpsStamp.timeStr}
-                            </div>
-                          )}
-                        </div>
+                    <canvas
+                      ref={fallbackCanvasRef}
+                      width={800}
+                      height={500}
+                      className={`w-full h-full object-cover ${usingSyntheticStream ? 'block' : 'hidden'}`}
+                    />
+                    {/* Live HUD overlay showing current GPS before capture */}
+                    <div className="absolute bottom-2 left-2 right-2 bg-slate-950/80 backdrop-blur-xs text-white px-3 py-2 rounded-xl border border-white/15 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <div className="font-mono">
+                        <span className="text-cyan-400 font-bold">GPS DIRECT :</span>{' '}
+                        Lat {liveGps.lat.toFixed(6)}° N | Lng {liveGps.lng.toFixed(6)}° O (±{liveGps.accuracy}m)
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleRetakePhoto}
-                        className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1 hover:bg-slate-100 cursor-pointer shrink-0"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Reprendre la photo</span>
-                      </button>
+                      <div className="text-[10px] text-emerald-300 font-semibold">
+                        {cameraStatusMsg}
+                      </div>
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Step 3: OpenStreetMap Leaflet Map with Show / Hide Toggle */}
-              <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Navigation className="w-4 h-4 text-[#008DA9]" />
-                    <div>
-                      <span className="font-extrabold text-slate-900 dark:text-white text-xs">
-                        2. Position GPS Précise &bull; OpenStreetMap Leaflet
-                      </span>
-                      <span className="block text-[10px] text-slate-500">
-                        {capturedGpsStamp
-                          ? `Position figée à la capture (${capturedGpsStamp.dateStr} ${capturedGpsStamp.timeStr})`
-                          : gpsStatusMsg}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowModalMap((prev) => !prev)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
-                      showModalMap
-                        ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-700'
-                        : 'bg-[#008DA9] text-white border-[#008DA9]'
-                    }`}
-                  >
-                    {showModalMap ? (
-                      <>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        <span>Masquer la carte</span>
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Afficher la carte</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {showModalMap && (
-                  <OsmLeafletMap
-                    centerLat={activeModalLat}
-                    centerLng={activeModalLng}
-                    accuracy={activeModalAcc}
-                    zoom={17}
-                    heightClassName="h-56"
-                    label={name.trim() || 'Nouveau Point de Vente (PDV)'}
-                    sublabel={`Quartier ${neighborhood}, Bamako • ${
-                      capturedGpsStamp
-                        ? `Capturé le ${capturedGpsStamp.dateStr} à ${capturedGpsStamp.timeStr}`
-                        : 'Position GPS en direct'
-                    }`}
+                  </>
+                ) : (
+                  <img
+                    src={capturedPhotoData}
+                    alt="Devanture PDV capturée avec GPS, date et heure"
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-contain bg-black"
                   />
                 )}
               </div>
 
-              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
-                La demande de création accompagnée de la photo de devanture horodatée (assignée comme image de profil du PDV) sera soumise à l'Administrateur pour validation.
+              {/* Capture / Retake Action Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {!capturedPhotoData ? (
+                  <button
+                    type="button"
+                    onClick={handleCaptureStorefrontAndGps}
+                    className="w-full py-3 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Capturer la photo de la devanture &amp; Assigner comme profil du PDV</span>
+                  </button>
+                ) : (
+                  <div className="w-full flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-xl">
+                    <div className="flex items-center gap-3 text-emerald-800 dark:text-emerald-300">
+                      <img
+                        src={capturedPhotoData}
+                        alt="Profil PDV assigné"
+                        referrerPolicy="no-referrer"
+                        className="w-14 h-14 rounded-2xl object-cover border-2 border-emerald-500 shrink-0 shadow-xs"
+                      />
+                      <div>
+                        <div className="font-extrabold text-xs flex items-center gap-1">
+                          <Check className="w-4 h-4 shrink-0 text-emerald-600" />
+                          <span>Photo de la devanture assignée comme image de profil du PDV !</span>
+                        </div>
+                        {capturedGpsStamp && (
+                          <div className="font-mono text-[11px]">
+                            Lat: {capturedGpsStamp.lat.toFixed(6)} | Lng: {capturedGpsStamp.lng.toFixed(6)} (±{capturedGpsStamp.accuracy}m) &bull; {capturedGpsStamp.dateStr} à {capturedGpsStamp.timeStr}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRetakePhoto}
+                      className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1 hover:bg-slate-100 cursor-pointer shrink-0"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reprendre la photo</span>
+                    </button>
+                  </div>
+                )}
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+            {/* Step 3: OpenStreetMap Leaflet Map with Show / Hide Toggle */}
+            <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Navigation className="w-4 h-4 text-[#008DA9]" />
+                  <div>
+                    <span className="font-extrabold text-slate-900 dark:text-white text-xs">
+                      2. Position GPS Précise &bull; OpenStreetMap Leaflet
+                    </span>
+                    <span className="block text-[10px] text-slate-500">
+                      {capturedGpsStamp
+                        ? `Position figée à la capture (${capturedGpsStamp.dateStr} ${capturedGpsStamp.timeStr})`
+                        : gpsStatusMsg}
+                    </span>
+                  </div>
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => {
-                    stopCameraStream();
-                    setShowCreateModal(false);
-                  }}
-                  className="px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !capturedPhotoData || !capturedGpsStamp}
-                  className={`px-5 py-2.5 rounded-xl font-bold transition shadow-xs flex items-center gap-1.5 ${
-                    !capturedPhotoData || !capturedGpsStamp
-                      ? 'bg-slate-300 dark:bg-slate-800 text-slate-500 cursor-not-allowed'
-                      : 'bg-[#008DA9] hover:bg-[#00748C] text-white cursor-pointer'
+                  onClick={() => setShowModalMap((prev) => !prev)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
+                    showModalMap
+                      ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-700'
+                      : 'bg-[#008DA9] text-white border-[#008DA9]'
                   }`}
                 >
-                  <CheckCircle className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Envoi en cours...' : 'Soumettre le PDV (Photo Profil + GPS)'}</span>
+                  {showModalMap ? (
+                    <>
+                      <EyeOff className="w-3.5 h-3.5" />
+                      <span>Masquer la carte</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Afficher la carte</span>
+                    </>
+                  )}
                 </button>
               </div>
-            </form>
+
+              {showModalMap && (
+                <OsmLeafletMap
+                  centerLat={activeModalLat}
+                  centerLng={activeModalLng}
+                  accuracy={activeModalAcc}
+                  zoom={17}
+                  heightClassName="h-56"
+                  label={name.trim() || 'Nouveau Point de Vente (PDV)'}
+                  sublabel={`Quartier ${neighborhood}, Bamako • ${
+                    capturedGpsStamp
+                      ? `Capturé le ${capturedGpsStamp.dateStr} à ${capturedGpsStamp.timeStr}`
+                      : 'Position GPS en direct'
+                  }`}
+                />
+              )}
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
+              La demande de création accompagnée de la photo de devanture horodatée (assignée comme image de profil du PDV) sera soumise à l&apos;Administrateur pour validation.
+            </div>
           </div>
-        </div>
+        </FormModal>
+      )}
+
+      {/* Modal Factures du client PDV & Annulation de facture */}
+      {selectedPdvForInvoices && (
+        <FormModal
+          title={`Factures du client PDV • ${selectedPdvForInvoices.name}`}
+          subtitle={`${selectedPdvForInvoices.code} • Gérant : ${selectedPdvForInvoices.manager_name} • Quartier ${selectedPdvForInvoices.neighborhood}`}
+          onClose={() => {
+            setSelectedPdvForInvoices(null);
+            setCancellingInvoiceSale(null);
+          }}
+          submitLabel="Fermer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setSelectedPdvForInvoices(null);
+            setCancellingInvoiceSale(null);
+          }}
+        >
+          <div className="space-y-4 text-xs">
+            {cancelInvoiceFeedback && (
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-semibold flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{cancelInvoiceFeedback}</span>
+              </div>
+            )}
+
+            {cancellingInvoiceSale && (
+              <form
+                onSubmit={handleConfirmCancelPdvInvoice}
+                className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 space-y-3"
+              >
+                <div className="font-bold text-rose-800 dark:text-rose-200 flex items-center justify-between">
+                  <span>
+                    Confirmer l&apos;annulation de la facture{' '}
+                    <strong className="font-mono">
+                      {cancellingInvoiceSale.invoice_number || `FAC-${cancellingInvoiceSale.number.replace('VTE-', '')}`}
+                    </strong>{' '}
+                    ({Number(cancellingInvoiceSale.total_amount || 0).toLocaleString('fr-FR')} FCFA)
+                  </span>
+                </div>
+                <div>
+                  <label className={FORM_LABEL_CLASS}>
+                    Motif obligatoire d&apos;annulation de la facture client PDV :
+                  </label>
+                  <input
+                    type="text"
+                    value={cancelInvoiceReason}
+                    onChange={(e) => setCancelInvoiceReason(e.target.value)}
+                    required
+                    className={FORM_FIELD_CLASS}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setCancellingInvoiceSale(null)}
+                    className="h-[44px] px-4 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] font-semibold cursor-pointer"
+                  >
+                    Retour
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isCancellingInvoice}
+                    className="h-[44px] px-4 rounded-[12px] bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold cursor-pointer"
+                  >
+                    {isCancellingInvoice ? 'Annulation...' : 'Confirmer annulation facture'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="space-y-2.5">
+              {(sales || [])
+                .filter((s) => s.pdv_id === selectedPdvForInvoices.id)
+                .map((s) => {
+                  const isCancelled = s.status === 'annulee';
+                  const invoiceRef = s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`;
+                  return (
+                    <div
+                      key={s.id}
+                      className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        isCancelled
+                          ? 'border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-900/50 opacity-80'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-black text-slate-900 dark:text-white">
+                            {invoiceRef}
+                          </span>
+                          <span className="font-mono text-[10px] text-slate-500">({s.number})</span>
+                          {isCancelled ? (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-bold">
+                              Facture annulée
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold">
+                              Facture valide
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                          Date : <strong>{s.date}</strong> &bull; Vendeur : <strong>{s.vendor_name}</strong> &bull; Montant :{' '}
+                          <strong className="text-teal-700 dark:text-teal-400">
+                            {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                          </strong>
+                        </div>
+                        {isCancelled && s.cancel_reason && (
+                          <div className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
+                            Motif d&apos;annulation : {s.cancel_reason}
+                          </div>
+                        )}
+                      </div>
+
+                      {!isCancelled && canCancelPdvInvoice && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCancellingInvoiceSale(s);
+                            setCancelInvoiceReason('Erreur de facturation / annulation demandée par le client PDV');
+                          }}
+                          className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          <span>Annuler la facture</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </FormModal>
       )}
     </div>
   );

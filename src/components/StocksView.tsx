@@ -119,7 +119,54 @@ export const StocksView: React.FC<StocksViewProps> = ({ products, currentRole })
 
       {/* Inventory Table */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
+        {/* Mobile Stacked Cards (< 640px) */}
+        <div className="sm:hidden p-3 space-y-3">
+          {filtered.map((prod) => {
+            const isLowStock = prod.stock <= prod.threshold;
+            return (
+              <div
+                key={prod.id}
+                className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 space-y-2 text-xs"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="font-mono text-[10px] font-bold text-slate-500 block">
+                      {prod.code} &bull; {prod.category}
+                    </span>
+                    <span className="font-bold text-slate-900 dark:text-white break-words">
+                      {prod.name}
+                    </span>
+                  </div>
+                  <span className="font-extrabold text-slate-900 dark:text-white shrink-0">
+                    {prod.price.toLocaleString('fr-FR')} FCFA
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-slate-200/70 dark:border-slate-700/70">
+                  <span className="font-bold">
+                    Stock :{' '}
+                    <span className={isLowStock ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}>
+                      {prod.stock} {prod.unit}
+                    </span>
+                  </span>
+                  {isLowStock ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      <AlertTriangle className="w-3 h-3" />
+                      Seuil ({prod.threshold})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                      <Check className="w-3 h-3" />
+                      Conforme
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Tablet & Desktop Table (>= 640px) */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">

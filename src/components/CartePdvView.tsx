@@ -36,6 +36,8 @@ import {
   OfflineGpsRecord,
 } from '../utils/offlineSync';
 import { getPdvStorefrontImageUrl } from '../utils/malianStorefrontImages';
+import { InfoTooltip } from './InfoTooltip';
+import { DataTable } from './DataTable';
 
 interface CartePdvViewProps {
   pdvs: any[];
@@ -587,11 +589,18 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                 : `${mergedVendorPositions.length} Vendeurs GPS • ${visiblePdvs.length} PDV`}
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {isVendeur
-              ? 'Affichage exclusif des Points de Vente (PDV) que vous avez créés sur la carte OpenStreetMap. Les positions et les PDV des autres vendeurs sont confidentiels.'
-              : "Suivi GPS en temps réel de tous les vendeurs sur la carte, sauvegarde hors-ligne des positions en cas d'absence de réseau avec synchronisation automatique, et historique complet des trajets pour l'Administrateur."}
-          </p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              Carte GPS des points de vente et tournées.
+            </p>
+            <InfoTooltip
+              text={
+                isVendeur
+                  ? 'Affichage exclusif des Points de Vente (PDV) que vous avez créés sur la carte OpenStreetMap. Les positions et les PDV des autres vendeurs sont confidentiels.'
+                  : "Suivi GPS en temps réel de tous les vendeurs sur la carte, sauvegarde hors-ligne des positions en cas d'absence de réseau avec synchronisation automatique, et historique complet des trajets pour l'Administrateur."
+              }
+            />
+          </div>
         </div>
 
         <button
@@ -663,7 +672,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
             type="button"
             onClick={() => handleRecordVendorGpsPosition()}
             disabled={isCapturingGps}
-            className="px-3.5 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
+            className="px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
             <LocateFixed className="w-3.5 h-3.5" />
             <span>
@@ -680,7 +689,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
             onClick={() => setAutoTrackGps((v) => !v)}
             className={`px-3 py-2 rounded-xl font-bold text-xs border transition cursor-pointer ${
               autoTrackGps
-                ? 'bg-teal-600 text-white border-teal-600'
+                ? 'bg-[var(--marque-fonce)] text-white border-[var(--marque-fonce)]'
                 : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
             }`}
           >
@@ -692,7 +701,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
               type="button"
               onClick={() => handleSyncNow(false)}
               disabled={isSyncing}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
+              className="px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
               <span>{isSyncing ? 'Synchro...' : 'Synchroniser maintenant'}</span>
@@ -705,7 +714,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
             className={`px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 border transition cursor-pointer ${
               online
                 ? 'bg-white dark:bg-slate-900 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-50'
-                : 'bg-emerald-600 hover:bg-emerald-700 border-emerald-600 text-white shadow-xs'
+                : 'bg-[var(--marque-fonce)] hover:bg-[#00586B] border-[var(--marque-fonce)] text-white shadow-xs'
             }`}
           >
             {online ? (
@@ -1312,116 +1321,119 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
             </div>
           </div>
 
-          {/* Mobile Cards (< 640px) */}
-          <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
-            {selectedVendorTrajectory.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-400">
-                Aucun point de trajet enregistré pour ce filtre.
+          <DataTable
+            data={selectedVendorTrajectory.map((pt, idx) => ({ ...pt, stepNumber: idx + 1 }))}
+            rowKey={(pt) => pt.id}
+            pageSize={20}
+            emptyMessage="Aucun point de trajet enregistré pour ce filtre."
+            mobileTitle={(pt) => (
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono font-black text-[#008DA9]">
+                  Étape #{pt.stepNumber} &bull; {selectedVendorInfo?.vendor_name}
+                </span>
+                <span className="font-mono text-[10px] text-slate-500 whitespace-nowrap">
+                  {String(pt.recorded_at || '').replace('T', ' ').slice(0, 19)}
+                </span>
               </div>
-            ) : (
-              selectedVendorTrajectory.map((pt, idx) => (
-                <div key={pt.id} className="p-3.5 space-y-2 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-black text-[#008DA9]">
-                      Étape #{idx + 1} &bull; {selectedVendorInfo?.vendor_name}
-                    </span>
-                    <span className="font-mono text-[10px] text-slate-500">
+            )}
+            mobileBadge={(pt) =>
+              pt.isPendingLocal ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                  <Clock className="w-3 h-3" /> Hors-ligne (En attente)
+                </span>
+              ) : pt.recorded_offline ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
+                  <CheckCircle2 className="w-3 h-3" /> Hors-Ligne • Synchro
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                  <Wifi className="w-3 h-3" /> En ligne (Direct GPS)
+                </span>
+              )
+            }
+            totalsFooter={
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Total points GPS enregistrés : {selectedVendorTrajectory.length}</span>
+                <span className="whitespace-nowrap font-bold text-slate-600 dark:text-slate-300">
+                  Vendeur : {selectedVendorInfo?.vendor_name || '-'}
+                </span>
+              </div>
+            }
+            columns={[
+              {
+                key: 'step',
+                header: 'Étape & Horodatage',
+                hideOnMobileCard: true,
+                render: (pt) => (
+                  <div>
+                    <span className="font-mono font-black text-[#008DA9]">#{pt.stepNumber}</span>
+                    <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
                       {String(pt.recorded_at || '').replace('T', ' ').slice(0, 19)}
-                    </span>
+                    </div>
                   </div>
-                  <div className="font-semibold text-slate-900 dark:text-white">
-                    {pt.activity_label}
-                    {pt.pdv_name && (
-                      <span className="block text-[11px] text-slate-500 font-normal">
-                        PDV : {pt.pdv_name} ({pt.pdv_neighborhood})
+                ),
+              },
+              {
+                key: 'activity',
+                header: 'Vendeur & Activité',
+                mobileLabel: 'Activité',
+                render: (pt) => (
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">
+                      {selectedVendorInfo?.vendor_name}{' '}
+                      <span className="font-mono text-[10px] text-[#008DA9]">
+                        ({selectedVendorInfo?.vendor_code})
                       </span>
+                    </div>
+                    <div className="font-semibold text-slate-700 dark:text-slate-200 mt-0.5">
+                      {pt.activity_label}
+                    </div>
+                    {pt.pdv_name && (
+                      <div className="text-[10px] text-slate-400">
+                        PDV : {pt.pdv_name} ({pt.pdv_neighborhood})
+                      </div>
                     )}
                   </div>
-                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/60 p-2 rounded-xl">
-                    <span>
-                      {Number(pt.latitude).toFixed(5)}° N, {Number(pt.longitude).toFixed(5)}° O
-                    </span>
-                    <span>
-                      ±{Number(pt.accuracy || 4.0).toFixed(1)}m &bull; {Number(pt.speed_kmh || 0)} km/h
-                    </span>
+                ),
+              },
+              {
+                key: 'coords',
+                header: 'Coordonnées GPS & Précision',
+                mobileLabel: 'Coordonnées GPS',
+                isNumeric: true,
+                render: (pt) => (
+                  <div className="font-mono">
+                    <div className="font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                      {Number(pt.latitude).toFixed(6)}° N, {Number(pt.longitude).toFixed(6)}° O
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">
+                      Précision ±{Number(pt.accuracy || 4.0).toFixed(1)} m &bull; Vitesse {Number(pt.speed_kmh || 0)} km/h
+                    </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Tablet & Desktop Table (>= 640px) — Sans débordement */}
-          <div className="hidden sm:block">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">
-                  <th className="py-3 px-3">Étape &amp; Horodatage</th>
-                  <th className="py-3 px-3">Vendeur &amp; Activité</th>
-                  <th className="py-3 px-3">Coordonnées GPS &amp; Précision</th>
-                  <th className="py-3 px-3 text-center">Mode Synchro</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {selectedVendorTrajectory.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-8 text-center text-slate-400">
-                      Aucun point de trajet enregistré pour ce filtre.
-                    </td>
-                  </tr>
-                ) : (
-                  selectedVendorTrajectory.map((pt, idx) => (
-                    <tr key={pt.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                      <td className="py-3 px-3">
-                        <span className="font-mono font-black text-[#008DA9]">#{idx + 1}</span>
-                        <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
-                          {String(pt.recorded_at || '').replace('T', ' ').slice(0, 19)}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="font-bold text-slate-900 dark:text-white">
-                          {selectedVendorInfo?.vendor_name}{' '}
-                          <span className="font-mono text-[10px] text-[#008DA9]">
-                            ({selectedVendorInfo?.vendor_code})
-                          </span>
-                        </div>
-                        <div className="font-semibold text-slate-700 dark:text-slate-200 mt-0.5">
-                          {pt.activity_label}
-                        </div>
-                        {pt.pdv_name && (
-                          <div className="text-[10px] text-slate-400">
-                            PDV : {pt.pdv_name} ({pt.pdv_neighborhood})
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 font-mono">
-                        <div className="font-bold text-slate-700 dark:text-slate-300">
-                          {Number(pt.latitude).toFixed(6)}° N, {Number(pt.longitude).toFixed(6)}° O
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Précision ±{Number(pt.accuracy || 4.0).toFixed(1)} m &bull; Vitesse {Number(pt.speed_kmh || 0)} km/h
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        {pt.isPendingLocal ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                            <Clock className="w-3 h-3" /> Hors-ligne (En attente)
-                          </span>
-                        ) : pt.recorded_offline ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
-                            <CheckCircle2 className="w-3 h-3" /> Hors-Ligne • Synchro
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            <Wifi className="w-3 h-3" /> En ligne (Direct GPS)
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                ),
+              },
+              {
+                key: 'sync',
+                header: 'Mode Synchro',
+                align: 'center',
+                hideOnMobileCard: true,
+                render: (pt) =>
+                  pt.isPendingLocal ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      <Clock className="w-3 h-3" /> Hors-ligne (En attente)
+                    </span>
+                  ) : pt.recorded_offline ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
+                      <CheckCircle2 className="w-3 h-3" /> Hors-Ligne • Synchro
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                      <Wifi className="w-3 h-3" /> En ligne (Direct GPS)
+                    </span>
+                  ),
+              },
+            ]}
+          />
         </div>
       )}
     </div>

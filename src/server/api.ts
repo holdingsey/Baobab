@@ -13,11 +13,49 @@ import {
   dispatchPushForNotification,
   sendTestPushToUser,
 } from './pushService.js';
+import { initSearchEngine, handleGlobalSearch } from './searchEngine.js';
+import {
+  handleDataExtraction,
+  handleGetExtractionPermissions,
+  handleUpdateExtractionPermission,
+  handleGetAllowedDatasets,
+  handleEstimateExtraction,
+  handleGetExtractionHistory,
+} from './extractionEngine.js';
+import {
+  initBackupSystem,
+  hashPasswordScrypt,
+  handleListBackups,
+  handleCreateBackup,
+  handleExportFullDatabase,
+  handleDownloadBackupFile,
+} from './backupService.js';
 
 export const apiRouter = Router();
 
 initPushTables();
 ensureVapidConfigured();
+initSearchEngine();
+initBackupSystem();
+
+// Global Search Route (/api/recherche)
+apiRouter.get('/recherche', handleGlobalSearch);
+
+// Extraction Permissions Management, Catalogue, Estimation, History & Extraction Route
+apiRouter.get('/extractions/droits', handleGetExtractionPermissions);
+apiRouter.put('/extractions/droits', handleUpdateExtractionPermission);
+apiRouter.post('/extractions/droits', handleUpdateExtractionPermission);
+apiRouter.get('/extractions/catalogue-autorise', handleGetAllowedDatasets);
+apiRouter.get('/extractions/historique', handleGetExtractionHistory);
+apiRouter.get('/extractions/estimer/:jeu', handleEstimateExtraction);
+apiRouter.get('/extractions/:jeu', handleDataExtraction);
+
+// Sauvegarde de la base complète SQLite (Réservée à l'Administrateur, 403 pour tout autre rôle)
+apiRouter.get('/sauvegardes', handleListBackups);
+apiRouter.post('/sauvegardes/creer', handleCreateBackup);
+apiRouter.post('/sauvegardes/exporter', handleExportFullDatabase);
+apiRouter.get('/sauvegardes/telecharger/:filename', handleDownloadBackupFile);
+apiRouter.post('/sauvegardes/telecharger/:filename', handleDownloadBackupFile);
 
 // Ensure public/uploads directory exists
 const uploadsDir = path.resolve(process.cwd(), 'public', 'uploads');
@@ -37,6 +75,10 @@ function getUserRole(req: Request): string {
 function requireRole(allowedRoles: string[], actionDesc?: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const role = getUserRole(req);
+    // L'Administrateur a tous les droits dans l'application et est autorisé à faire tout ce que les autres profils peuvent faire
+    if (role === 'Administrateur') {
+      return next();
+    }
     if (!allowedRoles.includes(role)) {
       return res.status(403).json({
         success: false,
@@ -48,9 +90,15 @@ function requireRole(allowedRoles: string[], actionDesc?: string) {
 }
 
 const requireAdmin = requireRole(['Administrateur'], 'Administration & Réglages');
-const requireMagasinier = requireRole(['Magasinier'], 'Gestion Dépôt & Magasin');
+const requireAdminOrDirecteurOps = requireRole(['Administrateur', 'Directeur des opérations de vente'], 'Validation PDV & Direction des Opérations de Vente');
+const requireMagasinier = requireRole(['Gestionnaire de stock', 'Magasinier'], 'Gestion Dépôt & Stock');
+const requireSalesAdmin = requireRole(['Sales Admin', 'Administrateur'], 'Contrôle & Sales Admin');
+const requireCanCancelSale = requireRole(['Sales Admin', 'Directeur des opérations de vente', 'Administrateur'], 'Annulation de vente / facture client PDV');
+const requireMagasinierOrSalesAdmin = requireRole(['Gestionnaire de stock', 'Magasinier', 'Sales Admin', 'Administrateur'], 'Gestion & Contrôle Stock');
 const requireComptable = requireRole(['Comptable'], 'Gestion Caisse & Comptabilité');
 const requireVendeur = requireRole(['Vendeur'], 'Vente & Dépôt-Vente');
+const requireVendeurOrDirecteurOps = requireRole(['Vendeur', 'Directeur des opérations de vente', 'Administrateur'], 'Demande de stock vendeur & Chargement');
+const requireGrossiste = requireRole(['Gestionnaire grossiste', 'Administrateur', 'Directeur des opérations de vente'], 'Gestion des Commandes en Gros & Clients en Gros');
 
 // 1. SETTINGS
 apiRouter.get('/settings', (req, res) => {
@@ -183,7 +231,10 @@ apiRouter.post('/users', requireAdmin, (req, res) => {
 
     // Generate unique code based on role
     let codePrefix = 'BAO-VND';
-    if (role === 'Magasinier') codePrefix = 'BAO-MAG';
+    if (role === 'Gestionnaire de stock' || role === 'Magasinier') codePrefix = 'BAO-MAG';
+    if (role === 'Sales Admin') codePrefix = 'BAO-SAD';
+    if (role === 'Directeur des opérations de vente') codePrefix = 'BAO-DOV';
+    if (role === 'Gestionnaire grossiste') codePrefix = 'BAO-GRS';
     if (role === 'Comptable') codePrefix = 'BAO-CPT';
     if (role === 'Administrateur') {
       // Check if Admin already exists
@@ -201,15 +252,21 @@ apiRouter.post('/users', requireAdmin, (req, res) => {
     if (role === 'Vendeur') {
       const vendorCount = (db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'Vendeur'").get() as { count: number }).count;
       code = `BAO-VND-${String(vendorCount + 1).padStart(3, '0')}`;
+    } else if (role === 'Gestionnaire grossiste') {
+      const grsCount = (db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'Gestionnaire grossiste'").get() as { count: number }).count;
+      code = grsCount === 0 ? 'BAO-GRS' : `BAO-GRS-${String(grsCount + 1).padStart(2, '0')}`;
     }
 
     const id = `usr-${Date.now()}`;
     const createdAt = new Date().toISOString().split('T')[0];
+    const hashedInitialPassword = hashPasswordScrypt(
+      req.body?.password ? String(req.body.password) : `Baobab#${code}`
+    );
 
     db.prepare(`
       INSERT INTO users (id, code, name, email, role, phone, team, must_change_password, password_hash, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'temp_hash', ?)
-    `).run(id, code, name, email, role, phone || '', team || '', createdAt);
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run(id, code, name, email, role, phone || '', team || '', hashedInitialPassword, createdAt);
 
     res.json({
       success: true,
@@ -222,11 +279,13 @@ apiRouter.post('/users', requireAdmin, (req, res) => {
   }
 });
 
-// Mot de passe provisoire à changer à la première connexion
+// Mot de passe provisoire à changer à la première connexion (toujours haché avec scrypt)
 apiRouter.patch('/users/:id/change-password', (req, res) => {
   try {
     const { id } = req.params;
-    db.prepare('UPDATE users SET must_change_password = 0 WHERE id = ?').run(id);
+    const rawNewPwd = String(req.body?.newPassword || req.body?.password || 'Baobab2026!');
+    const newHash = hashPasswordScrypt(rawNewPwd);
+    db.prepare('UPDATE users SET must_change_password = 0, password_hash = ? WHERE id = ?').run(newHash, id);
     res.json({ success: true, message: 'Mot de passe mis à jour avec succès.' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -257,18 +316,73 @@ apiRouter.get('/gammes', (req, res) => {
   }
 });
 
+// Création de produit : Administrateur seul
+apiRouter.post('/products', requireAdmin, (req, res) => {
+  try {
+    const {
+      code,
+      name,
+      gamme,
+      packaging,
+      units_per_box,
+      price_box,
+      stock_depot,
+      threshold_depot,
+    } = req.body;
+    if (!name || !gamme) {
+      return res.status(400).json({ success: false, error: 'Nom et gamme du produit obligatoires.' });
+    }
+    const id = `prd-${Date.now()}`;
+    const finalCode =
+      code && String(code).trim()
+        ? String(code).trim().toUpperCase()
+        : `BAO-PRD-${String(Date.now()).slice(-4)}`;
+    db.prepare(`
+      INSERT INTO products (id, code, name, gamme, packaging, units_per_box, price_box, stock_depot, threshold_depot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      finalCode,
+      String(name).trim(),
+      String(gamme).trim(),
+      packaging ? String(packaging).trim() : 'Carton standard',
+      Number(units_per_box || 12),
+      Number(price_box || 10000),
+      Number(stock_depot || 0),
+      Number(threshold_depot || 50)
+    );
+    res.json({ success: true, message: 'Produit ajouté au catalogue.' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
 // Modification de produit : Administrateur seul
 apiRouter.patch('/products/:id', requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
-    const { price_box, stock_depot, threshold_depot } = req.body;
+    const { name, gamme, packaging, units_per_box, price_box, stock_depot, threshold_depot } = req.body;
     db.prepare(`
       UPDATE products
-      SET price_box = COALESCE(?, price_box),
+      SET name = COALESCE(?, name),
+          gamme = COALESCE(?, gamme),
+          packaging = COALESCE(?, packaging),
+          units_per_box = COALESCE(?, units_per_box),
+          price_box = COALESCE(?, price_box),
           stock_depot = COALESCE(?, stock_depot),
           threshold_depot = COALESCE(?, threshold_depot)
       WHERE id = ?
-    `).run(price_box, stock_depot, threshold_depot, id);
+    `).run(
+      name ?? null,
+      gamme ?? null,
+      packaging ?? null,
+      units_per_box !== undefined ? Number(units_per_box) : null,
+      price_box !== undefined ? Number(price_box) : null,
+      stock_depot !== undefined ? Number(stock_depot) : null,
+      threshold_depot !== undefined ? Number(threshold_depot) : null,
+      id
+    );
     res.json({ success: true, message: 'Produit mis à jour.' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -290,9 +404,9 @@ apiRouter.get('/pdvs', (req, res) => {
              COALESCE(u.code, 'BAO-VND-001') AS vendor_code,
              COALESCE(u.team, '') AS vendor_team,
              COALESCE(u.phone, '') AS vendor_phone,
-             COALESCE((SELECT COUNT(*) FROM sales s WHERE s.pdv_id = p.id), 0) AS sales_count,
-             COALESCE((SELECT SUM(s.total_amount) FROM sales s WHERE s.pdv_id = p.id), 0) AS total_sales_amount,
-             (SELECT MAX(s.date) FROM sales s WHERE s.pdv_id = p.id) AS last_sale_date
+             COALESCE((SELECT COUNT(*) FROM sales s WHERE s.pdv_id = p.id AND COALESCE(s.status, 'livree') != 'annulee'), 0) AS sales_count,
+             COALESCE((SELECT SUM(s.total_amount) FROM sales s WHERE s.pdv_id = p.id AND COALESCE(s.status, 'livree') != 'annulee'), 0) AS total_sales_amount,
+             (SELECT MAX(s.date) FROM sales s WHERE s.pdv_id = p.id AND COALESCE(s.status, 'livree') != 'annulee') AS last_sale_date
       FROM points_de_vente p
       LEFT JOIN users u ON p.vendor_id = u.id
     `;
@@ -311,11 +425,17 @@ apiRouter.get('/pdvs', (req, res) => {
   }
 });
 
-// Validation ou rejet des demandes de création de PDV : Administrateur seul
-apiRouter.patch('/pdvs/:id/status', requireAdmin, (req, res) => {
+// Validation ou rejet des demandes de création de PDV : Administrateur ou Directeur des opérations de vente
+apiRouter.patch('/pdvs/:id/status', requireAdminOrDirecteurOps, (req, res) => {
   try {
     const { id } = req.params;
     const { status, rejection_reason } = req.body; // 'valide' | 'rejete' | 'en_attente'
+    const userRole = getUserRole(req) || 'Administrateur';
+    const actorLabel =
+      userRole === 'Directeur des opérations de vente'
+        ? 'le Directeur des opérations de vente'
+        : "l'Administrateur";
+
     if (status !== 'valide' && status !== 'rejete' && status !== 'en_attente') {
       return res.status(400).json({ success: false, error: 'Statut invalide.' });
     }
@@ -331,11 +451,12 @@ apiRouter.patch('/pdvs/:id/status', requireAdmin, (req, res) => {
 
     db.prepare('UPDATE points_de_vente SET status = ?, rejection_reason = ? WHERE id = ?').run(
       status,
-      status === 'rejete' ? (rejection_reason || 'Demande rejetée par l\'Administrateur') : null,
+      status === 'rejete' ? (rejection_reason || `Demande rejetée par ${actorLabel}`) : null,
       id
     );
 
     markNotificationsReadByReference('Administrateur', pdv.code);
+    markNotificationsReadByReference('Directeur des opérations de vente', pdv.code);
 
     const statusLabel = status === 'valide' ? 'validé' : status === 'rejete' ? 'rejeté' : 'mis en attente';
     const notifType = status === 'valide' ? 'validation_pdv' : status === 'rejete' ? 'rejet_pdv' : 'info';
@@ -347,10 +468,10 @@ apiRouter.patch('/pdvs/:id/status', requireAdmin, (req, res) => {
         : `PDV en attente : ${pdv.name} (${pdv.code})`;
     const notifMessage =
       status === 'valide'
-        ? `Félicitations ${pdv.vendor_name || ''} ! L'Administrateur a validé votre Point de Vente "${pdv.name}" (${pdv.code}, quartier ${pdv.neighborhood}). Votre PDV est désormais actif pour vos ventes.`
+        ? `Félicitations ${pdv.vendor_name || ''} ! ${actorLabel === 'le Directeur des opérations de vente' ? 'Le Directeur des opérations de vente' : "L'Administrateur"} a validé votre Point de Vente "${pdv.name}" (${pdv.code}, quartier ${pdv.neighborhood}). Votre PDV est désormais actif pour vos ventes.`
         : status === 'rejete'
-        ? `La demande de création du Point de Vente "${pdv.name}" (${pdv.code}, quartier ${pdv.neighborhood}) a été rejetée par l'Administrateur.${rejection_reason ? ` Motif : ${rejection_reason}.` : ''}`
-        : `Le statut du Point de Vente "${pdv.name}" (${pdv.code}) a été mis en attente par l'Administrateur.`;
+        ? `La demande de création du Point de Vente "${pdv.name}" (${pdv.code}, quartier ${pdv.neighborhood}) a été rejetée par ${actorLabel}.${rejection_reason ? ` Motif : ${rejection_reason}.` : ''}`
+        : `Le statut du Point de Vente "${pdv.name}" (${pdv.code}) a été mis en attente par ${actorLabel}.`;
 
     sendNotification(
       'Vendeur',
@@ -377,9 +498,9 @@ apiRouter.patch('/pdvs/:id/status', requireAdmin, (req, res) => {
       status === 'valide' ? 'VALIDATION_PDV' : status === 'rejete' ? 'REJET_PDV' : 'ATTENTE_PDV',
       'PDV',
       id,
-      'Administrateur',
+      userRole,
       null,
-      `Point de vente ${pdv.code} (${pdv.name}, créé par ${pdv.vendor_name}) ${statusLabel}${status === 'rejete' && rejection_reason ? ` — Motif : ${rejection_reason}` : ''}.`
+      `Point de vente ${pdv.code} (${pdv.name}, créé par ${pdv.vendor_name}) ${statusLabel} par ${actorLabel}${status === 'rejete' && rejection_reason ? ` — Motif : ${rejection_reason}` : ''}.`
     );
 
     res.json({ success: true, message: `Point de vente ${statusLabel}.` });
@@ -445,6 +566,25 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
       'Administrateur',
       `Nouveau PDV créé par ${creatorName} : ${name}`,
       `Le vendeur ${creatorName} (${creatorCode}) a créé le point de vente "${name}" (${code}, quartier ${neighborhood || 'Sotuba'}, gérant : ${manager_name}) avec photo de profil de devanture certifiée et GPS (${latNum.toFixed(5)}, ${lngNum.toFixed(5)}). En attente de votre validation.`,
+      'creation_pdv',
+      code,
+      {
+        metadataJson: JSON.stringify({
+          pdvId: id,
+          pdvCode: code,
+          pdvName: name,
+          managerName: manager_name,
+          neighborhood: neighborhood || 'Sotuba',
+          vendorId: creatorVendorId,
+          vendorName: creatorName,
+          vendorCode: creatorCode,
+        }),
+      }
+    );
+    sendNotification(
+      'Directeur des opérations de vente',
+      `Nouveau PDV à valider (${creatorName}) : ${name}`,
+      `Le vendeur ${creatorName} (${creatorCode}) a soumis une demande de création pour le point de vente "${name}" (${code}, quartier ${neighborhood || 'Sotuba'}, gérant : ${manager_name}). En attente de validation.`,
       'creation_pdv',
       code,
       {
@@ -766,11 +906,11 @@ apiRouter.get('/chargements', (req, res) => {
   }
 });
 
-// Le Vendeur demande un chargement : multi-produits ligne par ligne, date souhaitée, pas de doublon, quantité plafonnée au stock dépôt
-apiRouter.post('/chargements/request', requireVendeur, (req, res) => {
+// Le Vendeur ou le Directeur des opérations de vente demande un chargement : multi-produits ligne par ligne, date souhaitée, pas de doublon, quantité plafonnée au stock dépôt
+apiRouter.post('/chargements/request', requireVendeurOrDirecteurOps, (req, res) => {
   try {
     const { vendor_id, desired_date, items } = req.body;
-    const userRole = getUserRole(req);
+    const userRole = getUserRole(req) || 'Vendeur';
 
     if (!vendor_id || !desired_date || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants (vendeur, date souhaitée, lignes de produits).' });
@@ -810,17 +950,47 @@ apiRouter.post('/chargements/request', requireVendeur, (req, res) => {
     `).run(id, ref, vendor_id, date, desired_date, JSON.stringify(items), total, date);
 
     const vendor = db.prepare('SELECT name, code FROM users WHERE id = ?').get(vendor_id) as any;
+    const isRequestedByDirector = userRole === 'Directeur des opérations de vente';
     sendNotification(
       'Magasinier',
-      'Nouvelle demande de chargement',
-      `${vendor?.name || 'Un vendeur'} a soumis une demande de chargement (${ref}) pour le ${desired_date}.`,
+      isRequestedByDirector ? `Demande de stock vendeur (${ref}) — Direction Ventes` : 'Nouvelle demande de chargement',
+      isRequestedByDirector
+        ? `Le Directeur des opérations de vente a soumis une demande de stock (${ref}) pour le vendeur ${vendor?.name || ''} (${vendor?.code || ''}) souhaitée le ${desired_date}.`
+        : `${vendor?.name || 'Un vendeur'} a soumis une demande de chargement (${ref}) pour le ${desired_date}.`,
       'chargement',
       ref
     );
 
-    recordAudit('DEMANDE_CHARGEMENT', 'CHARGEMENT', id, userRole, vendor_id, `Demande de chargement ${ref} créée avec statut "Demandée".`);
+    if (isRequestedByDirector) {
+      sendNotification(
+        'Vendeur',
+        `Demande de stock initiée pour vous (${ref})`,
+        `Le Directeur des opérations de vente a initié une demande de chargement camionnette (${ref}) d'une valeur de ${total.toLocaleString('fr-FR')} FCFA pour votre tournée du ${desired_date}.`,
+        'chargement',
+        ref,
+        { targetUserId: vendor_id }
+      );
+    }
 
-    res.json({ success: true, message: `Demande de chargement ${ref} envoyée avec succès (statut : Demandée).`, chargementId: id, reference: ref });
+    recordAudit(
+      'DEMANDE_CHARGEMENT',
+      'CHARGEMENT',
+      id,
+      userRole,
+      vendor_id,
+      isRequestedByDirector
+        ? `Demande de stock ${ref} initiée par le Directeur des opérations de vente pour le vendeur ${vendor?.name || vendor_id} (statut "Demandée").`
+        : `Demande de chargement ${ref} créée avec statut "Demandée".`
+    );
+
+    res.json({
+      success: true,
+      message: isRequestedByDirector
+        ? `Demande de stock ${ref} envoyée pour ${vendor?.name || 'le vendeur'} (statut : Demandée).`
+        : `Demande de chargement ${ref} envoyée avec succès (statut : Demandée).`,
+      chargementId: id,
+      reference: ref
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
@@ -828,7 +998,7 @@ apiRouter.post('/chargements/request', requireVendeur, (req, res) => {
 });
 
 // Annulation possible tant que "Demandée"
-apiRouter.delete('/chargements/:id/cancel', requireVendeur, (req, res) => {
+apiRouter.delete('/chargements/:id/cancel', requireVendeurOrDirecteurOps, (req, res) => {
   try {
     const { id } = req.params;
     const userRole = getUserRole(req);
@@ -845,7 +1015,7 @@ apiRouter.delete('/chargements/:id/cancel', requireVendeur, (req, res) => {
     }
 
     db.prepare('DELETE FROM chargements WHERE id = ?').run(id);
-    recordAudit('ANNULATION_CHARGEMENT', 'CHARGEMENT', id, userRole, chg.vendor_id, `Demande de chargement ${chg.reference} annulée par le vendeur.`);
+    recordAudit('ANNULATION_CHARGEMENT', 'CHARGEMENT', id, userRole, chg.vendor_id, `Demande de chargement ${chg.reference} annulée par ${userRole}.`);
 
     res.json({ success: true, message: `Demande de chargement ${chg.reference} annulée.` });
   } catch (err: unknown) {
@@ -855,7 +1025,7 @@ apiRouter.delete('/chargements/:id/cancel', requireVendeur, (req, res) => {
 });
 
 // Rectification possible tant que "Demandée"
-apiRouter.put('/chargements/:id/rectify', requireVendeur, (req, res) => {
+apiRouter.put('/chargements/:id/rectify', requireVendeurOrDirecteurOps, (req, res) => {
   try {
     const { id } = req.params;
     const { desired_date, items } = req.body;
@@ -1085,13 +1255,136 @@ apiRouter.post('/chargements/:id/confirm-remise', requireMagasinier, (req, res) 
   }
 });
 
-// 6. RÉCEPTIONS (Magasinier)
-// Lignes avec produit, cartons, numéro de lot et date de péremption obligatoires ; mouvement entrant (journal en ajout seul, jamais négatif)
+// Annulation d'un approvisionnement (Chargement vendeur) par le Sales Admin (Contrôleur) ou l'Administrateur
+apiRouter.post('/chargements/:id/cancel-appro', requireSalesAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cancel_reason } = req.body;
+    const userRole = getUserRole(req) || 'Sales Admin';
+    const chg = db.prepare('SELECT * FROM chargements WHERE id = ?').get(id) as any;
+
+    if (!chg) {
+      return res.status(404).json({ success: false, error: 'Approvisionnement (chargement) introuvable.' });
+    }
+    if (chg.status === 'Annulée') {
+      return res.status(400).json({ success: false, error: 'Cet approvisionnement a déjà été annulé.' });
+    }
+    if (!cancel_reason || String(cancel_reason).trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Le motif d\'annulation de l\'approvisionnement est obligatoire.' });
+    }
+
+    const reasonClean = String(cancel_reason).trim();
+    const nowIso = new Date().toISOString();
+    const cancelledByLabel = userRole === 'Sales Admin' ? 'Salif Keïta (Sales Admin - Contrôleur)' : 'Administrateur';
+    const items = typeof chg.items === 'string' ? JSON.parse(chg.items) : chg.items;
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      // Si l'approvisionnement avait déjà été remis (Chargée / valide), on réintègre le stock au dépôt central et dans les lots
+      if (chg.status === 'Chargée' || chg.status === 'valide') {
+        for (const it of items) {
+          const qtyToRestore = Number(it.validatedBoxes !== undefined ? it.validatedBoxes : it.requestedBoxes || it.qtyBoxes || 0);
+          if (qtyToRestore <= 0) continue;
+
+          const prod = db.prepare('SELECT id, name, price_box FROM products WHERE id = ?').get(it.productId) as any;
+          if (!prod) continue;
+
+          // 1. Réintégrer dans le stock dépôt central
+          db.prepare('UPDATE products SET stock_depot = stock_depot + ? WHERE id = ?').run(qtyToRestore, prod.id);
+
+          // 2. Réintégrer dans le lot actif le plus récent (ou réactiver un lot épuisé)
+          const targetLot = db.prepare(`
+            SELECT id, lot_number FROM lots
+            WHERE product_id = ?
+            ORDER BY CASE WHEN status = 'actif' THEN 0 ELSE 1 END, expiry_date DESC
+            LIMIT 1
+          `).get(prod.id) as any;
+
+          if (targetLot) {
+            db.prepare(`
+              UPDATE lots
+              SET quantity = quantity + ?, status = 'actif'
+              WHERE id = ?
+            `).run(qtyToRestore, targetLot.id);
+          }
+
+          // 3. Journaliser la réintégration de stock
+          recordStockMovement(
+            'retour',
+            'IN',
+            prod.id,
+            targetLot ? targetLot.id : null,
+            qtyToRestore,
+            chg.reference,
+            `Annulation approvisionnement par Contrôleur (${reasonClean})`,
+            qtyToRestore * Number(prod.price_box || it.unitPrice || 0),
+            cancelledByLabel
+          );
+        }
+      }
+
+      db.prepare(`
+        UPDATE chargements
+        SET status = 'Annulée',
+            cancel_reason = ?,
+            cancelled_by = ?,
+            cancelled_at = ?
+        WHERE id = ?
+      `).run(reasonClean, cancelledByLabel, nowIso, id);
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    markNotificationsReadByReference('Magasinier', chg.reference);
+    markNotificationsReadByReference('Sales Admin', chg.reference);
+
+    sendNotification(
+      'Vendeur',
+      `Approvisionnement annulé (${chg.reference})`,
+      `Votre approvisionnement ${chg.reference} a été annulé par le Contrôleur (${cancelledByLabel}). Motif : ${reasonClean}.`,
+      'chargement',
+      chg.reference,
+      { targetUserId: chg.vendor_id }
+    );
+    sendNotification(
+      'Magasinier',
+      `Approvisionnement annulé (${chg.reference})`,
+      `L'approvisionnement ${chg.reference} a été annulé par ${cancelledByLabel}. Motif : ${reasonClean}.`,
+      'chargement',
+      chg.reference
+    );
+
+    recordAudit(
+      'ANNULATION_APPROVISIONNEMENT',
+      'CHARGEMENT',
+      id,
+      userRole,
+      chg.vendor_id,
+      `Approvisionnement ${chg.reference} (statut initial : ${chg.status}) annulé par ${cancelledByLabel}. Motif : ${reasonClean}.`
+    );
+
+    res.json({
+      success: true,
+      message: `Approvisionnement ${chg.reference} annulé avec succès${chg.status === 'Chargée' || chg.status === 'valide' ? ' (stock réintégré au dépôt central)' : ''}.`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// 6. RÉCEPTIONS (Soumises par le Gestionnaire de stock, validées par le Sales Admin / Contrôleur)
+// Lignes avec produit, cartons, numéro de lot et date de péremption obligatoires ; pièce jointe photo du BL fournisseur et note optionnelle en cas d'écart
 apiRouter.get('/receptions', (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM receptions ORDER BY created_at DESC').all();
     const receptions = rows.map((r: any) => ({
       ...r,
+      status: r.status || 'valide',
+      submitted_by: r.submitted_by || 'Moussa Diarra (Gestionnaire de stock)',
       items: typeof r.items === 'string' ? JSON.parse(r.items) : r.items
     }));
     res.json({ success: true, receptions });
@@ -1101,38 +1394,164 @@ apiRouter.get('/receptions', (req, res) => {
   }
 });
 
-apiRouter.post('/receptions', requireMagasinier, (req, res) => {
+// Helper pour la numérotation automatique de lot selon les normes agroalimentaires :
+// Format : LOT-{TRIGRAMME}-{YYYYMMDD}-{INDEX} (ex: LOT-CAJ-20261030-01)
+export function generateAutoLotNumber(productId?: string, targetDate?: string, excludeLots: string[] = []): string {
+  let trigram = 'LOT';
+  if (productId) {
+    const prod = db.prepare('SELECT id, code, name FROM products WHERE id = ?').get(productId) as any;
+    if (prod) {
+      if (prod.code) {
+        const parts = prod.code.split('-');
+        if (parts.length >= 2 && parts[1].length >= 2) {
+          trigram = parts[1].toUpperCase();
+        } else if (parts[0] && parts[0].length >= 2) {
+          trigram = parts[0].toUpperCase();
+        }
+      } else if (prod.name) {
+        const words = prod.name.trim().split(/\s+/);
+        const lastOrFirst = words[words.length - 1] || words[0];
+        trigram = lastOrFirst.slice(0, 3).toUpperCase();
+      }
+    }
+  }
+
+  const dateVal = targetDate || new Date().toISOString().split('T')[0];
+  const dateCompact = dateVal.replace(/-/g, '');
+  const prefix = `LOT-${trigram}-${dateCompact}-`;
+
+  // Récupérer les numéros de lots existants avec ce préfixe dans la table lots
+  const existingLots = db.prepare(`
+    SELECT lot_number FROM lots WHERE lot_number LIKE ?
+  `).all(`${prefix}%`) as { lot_number: string }[];
+
+  // Récupérer également les lots des réceptions encore en attente de validation
+  const pendingReceptions = db.prepare(`
+    SELECT items FROM receptions WHERE status = 'en_attente'
+  `).all() as { items: string }[];
+
+  const pendingLotNumbers: string[] = [];
+  for (const r of pendingReceptions) {
+    try {
+      const items = typeof r.items === 'string' ? JSON.parse(r.items) : r.items;
+      if (Array.isArray(items)) {
+        for (const it of items) {
+          const num = it.lot_number || it.lotNumber;
+          if (num && String(num).toUpperCase().startsWith(prefix.toUpperCase())) {
+            pendingLotNumbers.push(String(num).trim().toUpperCase());
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const existingSet = new Set<string>([
+    ...existingLots.map(l => (l.lot_number || '').trim().toUpperCase()),
+    ...pendingLotNumbers,
+    ...excludeLots.map(l => (l || '').trim().toUpperCase())
+  ]);
+
+  let seq = 1;
+  while (existingSet.has(`${prefix}${String(seq).padStart(2, '0')}`)) {
+    seq++;
+  }
+
+  return `${prefix}${String(seq).padStart(2, '0')}`;
+}
+
+// Endpoint de numérotation de lot automatique pour la réception de stock (Gestionnaire de stock)
+apiRouter.get('/receptions/next-lot-number', (req, res) => {
   try {
-    const { supplier_name, lines, date: reqDate } = req.body;
-    const userRole = getUserRole(req);
+    const productId = typeof req.query.productId === 'string' ? req.query.productId : undefined;
+    const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+    const exclude = typeof req.query.exclude === 'string' && req.query.exclude ? req.query.exclude.split(',') : [];
+
+    const lotNumber = generateAutoLotNumber(productId, date, exclude);
+    res.json({ success: true, lotNumber });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+apiRouter.post('/receptions', requireMagasinierOrSalesAdmin, (req, res) => {
+  try {
+    const {
+      supplier_name,
+      lines,
+      date: reqDate,
+      bl_number,
+      bl_photo,
+      bl_filename,
+      notes,
+    } = req.body;
+    const userRole = getUserRole(req) || 'Gestionnaire de stock';
 
     if (!Array.isArray(lines) || lines.length === 0) {
       return res.status(400).json({ success: false, error: 'Au moins une ligne de réception est obligatoire.' });
     }
 
-    // Validation stricte : produit, cartons, numéro de lot et date de péremption obligatoires
+    const date = reqDate || new Date().toISOString().split('T')[0];
+    const defaultExpiry = new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0];
+    const assignedLotsInThisBatch: string[] = [];
+
+    // Validation et numérotation automatique des lots si non renseigné
     for (let idx = 0; idx < lines.length; idx++) {
       const line = lines[idx];
       if (!line.productId) {
         return res.status(400).json({ success: false, error: `Ligne ${idx + 1} : Produit obligatoire.` });
       }
       if (!line.cartons || Number(line.cartons) <= 0) {
-        return res.status(400).json({ success: false, error: `Ligne ${idx + 1} : Nombre de cartons obligatoire et supérieur à 0.` });
+        return res.status(400).json({ success: false, error: `Ligne ${idx + 1} : Nombre de cartons reçus obligatoire et supérieur à 0.` });
       }
-      if (!line.lotNumber || String(line.lotNumber).trim().length === 0) {
-        return res.status(400).json({ success: false, error: `Ligne ${idx + 1} : Numéro de lot obligatoire.` });
+      // Numérotation de lot automatique si vide ou non spécifié
+      if (!line.lotNumber || String(line.lotNumber).trim().length === 0 || String(line.lotNumber).trim().toLowerCase() === 'auto') {
+        line.lotNumber = generateAutoLotNumber(line.productId, date, assignedLotsInThisBatch);
       }
+      assignedLotsInThisBatch.push(String(line.lotNumber).trim());
+
+      // Date de péremption par défaut (+6 mois) si vide
       if (!line.expiryDate || String(line.expiryDate).trim().length === 0) {
-        return res.status(400).json({ success: false, error: `Ligne ${idx + 1} : Date de péremption obligatoire.` });
+        line.expiryDate = defaultExpiry;
       }
     }
-
-    const date = reqDate || new Date().toISOString().split('T')[0];
     const ref = `REC-FOURN-${date}-${Math.floor(100 + Math.random() * 900)}`;
     const id = `recp-${Date.now()}`;
     let totalBoxes = 0;
 
-    // ATOMIC TRANSACTION: update depot stock, insert new lots, insert strictly positive movement log
+    // Sauvegarde optionnelle de la photo du BL sur disque si DataURL fournie (tout en conservant le DataURL pour affichage immédiat)
+    const cleanBlNumber = typeof bl_number === 'string' && bl_number.trim() ? bl_number.trim() : null;
+    const cleanBlPhoto = typeof bl_photo === 'string' && bl_photo.trim() ? bl_photo.trim() : null;
+    const cleanBlFilename = typeof bl_filename === 'string' && bl_filename.trim() ? bl_filename.trim() : (cleanBlPhoto ? `bl_${ref}.jpg` : null);
+    const cleanNotes = typeof notes === 'string' && notes.trim() ? notes.trim() : null;
+
+    if (cleanBlPhoto && cleanBlPhoto.startsWith('data:image/')) {
+      try {
+        const matches = cleanBlPhoto.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
+        if (matches) {
+          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1].replace(/[^a-z0-9]/gi, '');
+          const fileBuffer = Buffer.from(matches[2], 'base64');
+          const safeFile = `bl-fournisseur-${Date.now()}.${ext || 'jpg'}`;
+          fs.writeFileSync(path.join(uploadsDir, safeFile), fileBuffer);
+        }
+      } catch {
+        // Non-bloquant : bl_photo est aussi stocké en base
+      }
+    }
+
+    // Si soumis par le Gestionnaire de stock (ou Magasinier), la réception est validée par le Gestionnaire de stock et transmise au Sales Admin (Contrôleur) pour validation finale en stock.
+    // Si créée directement par le Sales Admin ou l'Administrateur, elle est validée immédiatement.
+    const isDirectValidation = userRole === 'Sales Admin' || userRole === 'Administrateur';
+    const initialStatus = isDirectValidation ? 'valide' : 'en_attente';
+    const submittedByLabel =
+      userRole === 'Gestionnaire de stock' || userRole === 'Magasinier'
+        ? 'Moussa Diarra (Gestionnaire de stock)'
+        : userRole === 'Sales Admin'
+        ? 'Salif Keïta (Sales Admin - Contrôleur)'
+        : 'Administrateur';
+
     db.exec('BEGIN TRANSACTION');
     try {
       const enrichedLines = [];
@@ -1142,36 +1561,43 @@ apiRouter.post('/receptions', requireMagasinier, (req, res) => {
         if (!prod) throw new Error(`Produit ${line.productId} introuvable.`);
 
         const cartons = Number(line.cartons);
+        const requestedBoxes =
+          line.requestedCartons !== undefined && line.requestedCartons !== null && line.requestedCartons !== ''
+            ? Number(line.requestedCartons)
+            : undefined;
         totalBoxes += cartons;
-
-        // 1. Increment central warehouse stock
-        db.prepare('UPDATE products SET stock_depot = stock_depot + ? WHERE id = ?').run(cartons, prod.id);
-
-        // 2. Create entry in Lots table
         const lotId = `lot-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        db.prepare(`
-          INSERT INTO lots (id, product_id, lot_number, expiry_date, quantity, initial_quantity, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'actif', ?)
-        `).run(lotId, prod.id, line.lotNumber.trim(), line.expiryDate.trim(), cartons, cartons, date);
 
-        // 3. Mouvement entrant (journal en ajout seul, strictement positif, jamais négatif)
-        recordStockMovement(
-          'reception',
-          'IN',
-          prod.id,
-          lotId,
-          cartons, // strictly positive
-          ref,
-          `Entrée réception fournisseur: ${supplier_name || 'Fournisseur Agréé'} (Lot ${line.lotNumber})`,
-          cartons * prod.price_box,
-          'Magasinier Sotuba'
-        );
+        if (isDirectValidation) {
+          // 1. Increment central warehouse stock immediately
+          db.prepare('UPDATE products SET stock_depot = stock_depot + ? WHERE id = ?').run(cartons, prod.id);
+
+          // 2. Create entry in Lots table
+          db.prepare(`
+            INSERT INTO lots (id, product_id, lot_number, expiry_date, quantity, initial_quantity, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'actif', ?)
+          `).run(lotId, prod.id, line.lotNumber.trim(), line.expiryDate.trim(), cartons, cartons, date);
+
+          // 3. Mouvement entrant
+          recordStockMovement(
+            'reception',
+            'IN',
+            prod.id,
+            lotId,
+            cartons,
+            ref,
+            `Entrée réception fournisseur validée: ${supplier_name || 'Fournisseur Agréé'} (Lot ${line.lotNumber})${cleanBlNumber ? ` • BL: ${cleanBlNumber}` : ''}`,
+            cartons * prod.price_box,
+            submittedByLabel
+          );
+        }
 
         enrichedLines.push({
           productId: prod.id,
           code: prod.code,
           name: prod.name,
           boxes: cartons,
+          ...(requestedBoxes && requestedBoxes > 0 ? { requestedBoxes } : {}),
           lot_number: line.lotNumber.trim(),
           expiry_date: line.expiryDate.trim(),
           lotId
@@ -1179,9 +1605,29 @@ apiRouter.post('/receptions', requireMagasinier, (req, res) => {
       }
 
       db.prepare(`
-        INSERT INTO receptions (id, reference, supplier_name, date, items, total_boxes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(id, ref, supplier_name || 'Fournisseur Agréé Mali', date, JSON.stringify(enrichedLines), totalBoxes, date);
+        INSERT INTO receptions (
+          id, reference, supplier_name, date, items, total_boxes,
+          status, submitted_by, validated_by, validated_at,
+          bl_number, bl_photo, bl_filename, notes, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        ref,
+        supplier_name || 'Fournisseur Agréé Mali',
+        date,
+        JSON.stringify(enrichedLines),
+        totalBoxes,
+        initialStatus,
+        submittedByLabel,
+        isDirectValidation ? submittedByLabel : null,
+        isDirectValidation ? new Date().toISOString() : null,
+        cleanBlNumber,
+        cleanBlPhoto,
+        cleanBlFilename,
+        cleanNotes,
+        date
+      );
 
       db.exec('COMMIT');
     } catch (txErr) {
@@ -1189,13 +1635,251 @@ apiRouter.post('/receptions', requireMagasinier, (req, res) => {
       throw txErr;
     }
 
-    recordAudit('RECEPTION_FOURNISSEUR', 'RECEPTION', id, userRole, null, `Réception fournisseur ${ref} enregistrée : ${totalBoxes} cartons ajoutés.`);
+    const blInfoText = cleanBlPhoto ? ` (Photo du BL fournisseur jointe${cleanBlNumber ? ` : ${cleanBlNumber}` : ''})` : cleanBlNumber ? ` (BL : ${cleanBlNumber})` : '';
+    const noteInfoText = cleanNotes ? ` • Note : "${cleanNotes}"` : '';
+
+    if (!isDirectValidation) {
+      sendNotification(
+        'Sales Admin',
+        `Réception de stock à valider (${ref})`,
+        `Le Gestionnaire de stock a validé et soumis une réception fournisseur (${ref} — ${supplier_name || 'Fournisseur Agréé Mali'}, ${totalBoxes} cartons)${blInfoText}${noteInfoText} en attente de votre validation.`,
+        'reception',
+        ref
+      );
+      recordAudit(
+        'SOUMISSION_RECEPTION_FOURNISSEUR',
+        'RECEPTION',
+        id,
+        userRole,
+        null,
+        `Réception fournisseur ${ref} (${totalBoxes} cartons)${blInfoText}${noteInfoText} validée et soumise par le Gestionnaire de stock — en attente de validation par le Sales Admin (Contrôleur).`
+      );
+    } else {
+      recordAudit(
+        'RECEPTION_FOURNISSEUR_VALIDEE',
+        'RECEPTION',
+        id,
+        userRole,
+        null,
+        `Réception fournisseur ${ref} enregistrée et validée directement par ${submittedByLabel} : ${totalBoxes} cartons ajoutés${blInfoText}${noteInfoText}.`
+      );
+    }
 
     res.json({
       success: true,
-      message: `Réception ${ref} enregistrée au dépôt central avec ${totalBoxes} cartons (lots tracés, mouvement entrant en ajout seul).`,
+      status: initialStatus,
+      message: isDirectValidation
+        ? `Réception ${ref} enregistrée et validée au dépôt central (${totalBoxes} cartons ajoutés au stock).`
+        : `Stock reçu validé (${ref} — ${totalBoxes} cartons)${cleanBlPhoto ? ' avec photo du BL fournisseur en pièce jointe' : ''}${cleanNotes ? ' et note de réception enregistrée' : ''}. Transmis au Sales Admin (Contrôleur) pour intégration au stock dépôt.`,
       receptionId: id,
       reference: ref
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Validation d'une réception de stock soumise par le Gestionnaire de stock : réservée au Sales Admin (Contrôleur) ou Administrateur
+apiRouter.post('/receptions/:id/validate', requireSalesAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const userRole = getUserRole(req) || 'Sales Admin';
+    const rec = db.prepare('SELECT * FROM receptions WHERE id = ?').get(id) as any;
+
+    if (!rec) {
+      return res.status(404).json({ success: false, error: 'Réception introuvable.' });
+    }
+    if (rec.status === 'valide') {
+      return res.status(400).json({ success: false, error: 'Cette réception a déjà été validée.' });
+    }
+    if (rec.status === 'annulee' || rec.status === 'rejete') {
+      return res.status(400).json({ success: false, error: `Impossible de valider une réception au statut "${rec.status}".` });
+    }
+
+    const lines = typeof rec.items === 'string' ? JSON.parse(rec.items) : rec.items;
+    const nowIso = new Date().toISOString();
+    const dateStr = rec.date || nowIso.split('T')[0];
+    const validatorLabel = userRole === 'Sales Admin' ? 'Salif Keïta (Sales Admin - Contrôleur)' : 'Administrateur';
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      for (const line of lines) {
+        const prod = db.prepare('SELECT id, code, name, price_box FROM products WHERE id = ?').get(line.productId) as any;
+        if (!prod) continue;
+        const cartons = Number(line.boxes || line.cartons || 0);
+        if (cartons <= 0) continue;
+
+        // 1. Increment central warehouse stock
+        db.prepare('UPDATE products SET stock_depot = stock_depot + ? WHERE id = ?').run(cartons, prod.id);
+
+        // 2. Insert lot
+        const lotId = line.lotId || `lot-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const existingLot = db.prepare('SELECT id FROM lots WHERE id = ?').get(lotId);
+        const finalLotId = existingLot ? `lot-${Date.now()}-${Math.floor(Math.random() * 10000)}` : lotId;
+
+        db.prepare(`
+          INSERT INTO lots (id, product_id, lot_number, expiry_date, quantity, initial_quantity, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'actif', ?)
+        `).run(finalLotId, prod.id, String(line.lot_number || line.lotNumber || 'LOT').trim(), String(line.expiry_date || line.expiryDate || dateStr).trim(), cartons, cartons, dateStr);
+
+        // 3. Record stock movement
+        recordStockMovement(
+          'reception',
+          'IN',
+          prod.id,
+          finalLotId,
+          cartons,
+          rec.reference,
+          `Validation réception fournisseur par Contrôleur: ${rec.supplier_name || 'Fournisseur'} (Lot ${line.lot_number || line.lotNumber})`,
+          cartons * Number(prod.price_box || 0),
+          validatorLabel
+        );
+      }
+
+      db.prepare(`
+        UPDATE receptions
+        SET status = 'valide',
+            validated_by = ?,
+            validated_at = ?
+        WHERE id = ?
+      `).run(validatorLabel, nowIso, id);
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    markNotificationsReadByReference('Sales Admin', rec.reference);
+
+    sendNotification(
+      'Gestionnaire de stock',
+      `Réception validée par le Contrôleur (${rec.reference})`,
+      `La réception ${rec.reference} (${rec.total_boxes} cartons — ${rec.supplier_name}) a été validée par ${validatorLabel}. Le stock dépôt central et les lots ont été crédités.`,
+      'reception',
+      rec.reference
+    );
+
+    recordAudit(
+      'VALIDATION_RECEPTION_CONTROLEUR',
+      'RECEPTION',
+      id,
+      userRole,
+      null,
+      `Réception ${rec.reference} (${rec.total_boxes} cartons) validée par ${validatorLabel}. Stock dépôt incrémenté.`
+    );
+
+    res.json({
+      success: true,
+      message: `Réception ${rec.reference} validée avec succès ! ${rec.total_boxes} cartons ont été intégrés au stock du dépôt central.`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Annulation ou rejet d'une réception fournisseur (Approvisionnement dépôt) par le Sales Admin (Contrôleur) ou Administrateur
+apiRouter.post('/receptions/:id/cancel', requireSalesAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cancel_reason } = req.body;
+    const userRole = getUserRole(req) || 'Sales Admin';
+    const rec = db.prepare('SELECT * FROM receptions WHERE id = ?').get(id) as any;
+
+    if (!rec) {
+      return res.status(404).json({ success: false, error: 'Réception introuvable.' });
+    }
+    if (rec.status === 'annulee') {
+      return res.status(400).json({ success: false, error: 'Cette réception est déjà annulée.' });
+    }
+    if (!cancel_reason || String(cancel_reason).trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Le motif d\'annulation est obligatoire.' });
+    }
+
+    const reasonClean = String(cancel_reason).trim();
+    const nowIso = new Date().toISOString();
+    const cancelledByLabel = userRole === 'Sales Admin' ? 'Salif Keïta (Sales Admin - Contrôleur)' : 'Administrateur';
+    const wasValidated = !rec.status || rec.status === 'valide';
+    const lines = typeof rec.items === 'string' ? JSON.parse(rec.items) : rec.items;
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      if (wasValidated) {
+        // Déduire du stock dépôt et des lots les quantités qui avaient été entrées
+        for (const line of lines) {
+          const prod = db.prepare('SELECT id, name, price_box, stock_depot FROM products WHERE id = ?').get(line.productId) as any;
+          if (!prod) continue;
+          const cartons = Number(line.boxes || line.cartons || 0);
+          if (cartons <= 0) continue;
+
+          db.prepare('UPDATE products SET stock_depot = MAX(0, stock_depot - ?) WHERE id = ?').run(cartons, prod.id);
+
+          const lotRow = line.lotId
+            ? (db.prepare('SELECT id, quantity FROM lots WHERE id = ?').get(line.lotId) as any)
+            : (db.prepare('SELECT id, quantity FROM lots WHERE product_id = ? AND lot_number = ? ORDER BY created_at DESC LIMIT 1').get(prod.id, line.lot_number || '') as any);
+
+          if (lotRow) {
+            db.prepare(`
+              UPDATE lots
+              SET quantity = MAX(0, quantity - ?),
+                  status = CASE WHEN (quantity - ?) <= 0 THEN 'epuise' ELSE status END
+              WHERE id = ?
+            `).run(cartons, cartons, lotRow.id);
+          }
+
+          recordStockMovement(
+            'perte_casse_peremption',
+            'OUT',
+            prod.id,
+            lotRow ? lotRow.id : null,
+            cartons,
+            rec.reference,
+            `Annulation réception fournisseur par Contrôleur (${reasonClean})`,
+            cartons * Number(prod.price_box || 0),
+            cancelledByLabel
+          );
+        }
+      }
+
+      db.prepare(`
+        UPDATE receptions
+        SET status = 'annulee',
+            cancel_reason = ?,
+            cancelled_by = ?,
+            cancelled_at = ?
+        WHERE id = ?
+      `).run(reasonClean, cancelledByLabel, nowIso, id);
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    markNotificationsReadByReference('Sales Admin', rec.reference);
+
+    sendNotification(
+      'Gestionnaire de stock',
+      `Réception annulée (${rec.reference})`,
+      `La réception fournisseur ${rec.reference} (${rec.total_boxes} cartons) a été annulée par ${cancelledByLabel}. Motif : ${reasonClean}.`,
+      'reception',
+      rec.reference
+    );
+
+    recordAudit(
+      'ANNULATION_RECEPTION_FOURNISSEUR',
+      'RECEPTION',
+      id,
+      userRole,
+      null,
+      `Réception ${rec.reference} (${rec.total_boxes} cartons, statut précédent : ${rec.status || 'valide'}) annulée par ${cancelledByLabel}. Motif : ${reasonClean}.`
+    );
+
+    res.json({
+      success: true,
+      message: `Approvisionnement fournisseur ${rec.reference} annulé avec succès${wasValidated ? ' (stock dépôt ajusté)' : ''}.`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -1263,16 +1947,16 @@ apiRouter.post('/retours/request', requireVendeur, (req, res) => {
 
     const vendor = db.prepare('SELECT name FROM users WHERE id = ?').get(vendor_id) as any;
     sendNotification(
-      'Magasinier',
+      'Gestionnaire de stock',
       'Retour d\'invendus en attente',
       `Le vendeur ${vendor?.name || 'Vendeur'} a déclaré un retour d'invendus (${ref}) à réintégrer au stock dépôt.`,
       'retour',
       ref
     );
 
-    recordAudit('DECLARATION_RETOUR', 'RETOUR', id, userRole, vendor_id, `Retour d'invendus ${ref} déclaré par le vendeur (en attente confirmation magasinier).`);
+    recordAudit('DECLARATION_RETOUR', 'RETOUR', id, userRole, vendor_id, `Retour d'invendus ${ref} déclaré par le vendeur (en attente confirmation gestionnaire de stock).`);
 
-    res.json({ success: true, message: `Retour ${ref} déclaré (en attente de confirmation par le Magasinier).` });
+    res.json({ success: true, message: `Retour ${ref} déclaré (en attente de confirmation par le Gestionnaire de stock).` });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
@@ -1389,10 +2073,10 @@ apiRouter.get('/inventaires-vendeur/theoretical/:vendorId', (req, res) => {
         }
       }
 
-      // 2. Total Vendu (sales during current tour)
+      // 2. Total Vendu (active non-cancelled sales during current tour)
       const sales = db.prepare(`
         SELECT items FROM sales
-        WHERE vendor_id = ? AND date >= ?
+        WHERE vendor_id = ? AND date >= ? AND COALESCE(status, 'livree') != 'annulee'
       `).all(vendorId, activeCycleStartDate) as any[];
 
       let soldBoxes = 0;
@@ -1448,11 +2132,17 @@ apiRouter.get('/inventaires-vendeur/theoretical/:vendorId', (req, res) => {
   }
 });
 
-// Enregistrement de l'Inventaire Vendeur par le Magasinier & Détection des Écarts
-apiRouter.post('/inventaires-vendeur', requireMagasinier, (req, res) => {
+// Enregistrement de l'Inventaire Vendeur par le Magasinier ou le Sales Admin (Contrôleur) & Détection des Écarts
+apiRouter.post('/inventaires-vendeur', requireMagasinierOrSalesAdmin, (req, res) => {
   try {
     const { vendor_id, date: reqDate, counted_items, notes } = req.body;
-    const userRole = getUserRole(req);
+    const userRole = getUserRole(req) || 'Sales Admin';
+    const actorLabel =
+      userRole === 'Sales Admin'
+        ? 'Salif Keïta (Sales Admin - Contrôleur)'
+        : userRole === 'Administrateur'
+        ? 'Administrateur'
+        : 'Moussa Diarra (Magasinier)';
 
     if (!vendor_id || !Array.isArray(counted_items) || counted_items.length === 0) {
       return res.status(400).json({ success: false, error: 'Données d\'inventaire incomplètes.' });
@@ -1498,17 +2188,18 @@ apiRouter.post('/inventaires-vendeur', requireMagasinier, (req, res) => {
 
     db.exec('BEGIN TRANSACTION');
     try {
+      const actorUserId = userRole === 'Sales Admin' ? 'usr-sad' : 'usr-mag';
       db.prepare(`
         INSERT INTO vendor_inventories (id, reference, vendor_id, date, items, total_ecart_boxes, total_ecart_fcfa, magasinier_id, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'usr-mag', ?, ?)
-      `).run(id, ref, vendor_id, date, JSON.stringify(detailedItems), totalEcartBoxes, totalEcartFcfa, notes || 'Inventaire physique camionnette', date);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, ref, vendor_id, date, JSON.stringify(detailedItems), totalEcartBoxes, totalEcartFcfa, actorUserId, notes || `Inventaire physique camionnette (${actorLabel})`, date);
 
       // Notification to ADMINISTRATEUR and COMPTABLE
       const ecartLabel = totalEcartBoxes === 0
         ? 'Inventaire vendeur conforme (aucun écart)'
         : `Écart inventaire vendeur : ${totalEcartBoxes > 0 ? '+' : ''}${totalEcartBoxes} cartons (${totalEcartFcfa.toLocaleString('fr-FR')} FCFA)`;
 
-      const msg = `Inventaire vendeur réalisé par le Magasinier sur ${vendor.name} (${vendor.code}). Résultat : ${ecartLabel}. Date : ${date}.`;
+      const msg = `Inventaire vendeur réalisé par ${actorLabel} sur ${vendor.name} (${vendor.code}). Résultat : ${ecartLabel}. Date : ${date}.`;
 
       sendNotification('Administrateur', ecartLabel, msg, 'ecart', ref);
       sendNotification('Comptable', ecartLabel, msg, 'ecart', ref);
@@ -1519,7 +2210,7 @@ apiRouter.post('/inventaires-vendeur', requireMagasinier, (req, res) => {
         id,
         userRole,
         vendor_id,
-        `Inventaire vendeur ${ref} sur ${vendor.code} : Écart ${totalEcartBoxes} cartons, Valeur ${totalEcartFcfa} FCFA. Notifications envoyées à l'Administrateur et au Comptable.`
+        `Inventaire vendeur ${ref} sur ${vendor.code} réalisé par ${actorLabel} : Écart ${totalEcartBoxes} cartons, Valeur ${totalEcartFcfa} FCFA. Notifications envoyées à l'Administrateur et au Comptable.`
       );
 
       db.exec('COMMIT');
@@ -1530,7 +2221,7 @@ apiRouter.post('/inventaires-vendeur', requireMagasinier, (req, res) => {
 
     res.json({
       success: true,
-      message: `Inventaire vendeur ${ref} enregistré avec succès. Écart : ${totalEcartBoxes} cartons (${totalEcartFcfa.toLocaleString('fr-FR')} FCFA). Notifications transmises à l'Administrateur et au Comptable.`,
+      message: `Inventaire vendeur ${ref} enregistré avec succès par ${actorLabel}. Écart : ${totalEcartBoxes} cartons (${totalEcartFcfa.toLocaleString('fr-FR')} FCFA).`,
       inventory: {
         id,
         reference: ref,
@@ -1559,6 +2250,154 @@ apiRouter.get('/inventaires-vendeur', (req, res) => {
       items: typeof r.items === 'string' ? JSON.parse(r.items) : r.items
     }));
     res.json({ success: true, inventories });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// 8B. INVENTAIRES PHYSIQUES DU DÉPÔT CENTRAL (Gérés par le Sales Admin / Contrôleur)
+apiRouter.get('/inventaires-depot', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM depot_inventories ORDER BY created_at DESC').all();
+    const inventories = rows.map((r: any) => ({
+      ...r,
+      items: typeof r.items === 'string' ? JSON.parse(r.items) : r.items,
+    }));
+    res.json({ success: true, inventories });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+apiRouter.post('/inventaires-depot', requireMagasinierOrSalesAdmin, (req, res) => {
+  try {
+    const { date: reqDate, counted_items, notes, apply_adjustment } = req.body;
+    const userRole = getUserRole(req) || 'Sales Admin';
+    const actorLabel =
+      userRole === 'Sales Admin'
+        ? 'Salif Keïta (Sales Admin - Contrôleur)'
+        : userRole === 'Administrateur'
+        ? 'Administrateur'
+        : 'Moussa Diarra (Magasinier)';
+
+    if (!Array.isArray(counted_items) || counted_items.length === 0) {
+      return res.status(400).json({ success: false, error: 'Données d\'inventaire dépôt incomplètes.' });
+    }
+
+    const date = reqDate || new Date().toISOString().split('T')[0];
+    const rand = Math.floor(100 + Math.random() * 900);
+    const ref = `INV-DEP-${date}-${rand}`;
+    const id = `inv-dep-${Date.now()}`;
+    const shouldAdjust = Boolean(apply_adjustment);
+
+    let totalEcartBoxes = 0;
+    let totalEcartFcfa = 0;
+    const detailedItems: any[] = [];
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      for (const it of counted_items) {
+        const prod = db.prepare('SELECT id, code, name, price_box, stock_depot FROM products WHERE id = ?').get(it.productId) as any;
+        if (!prod) continue;
+
+        const theoreticalQty = Number(prod.stock_depot || 0);
+        const countedQty = Math.max(0, Number(it.countedQty ?? theoreticalQty));
+        const diffQty = countedQty - theoreticalQty;
+        const diffAmount = diffQty * Number(prod.price_box || 0);
+
+        totalEcartBoxes += diffQty;
+        totalEcartFcfa += diffAmount;
+
+        detailedItems.push({
+          productId: prod.id,
+          productCode: prod.code,
+          productName: prod.name,
+          countedQty,
+          theoreticalQty,
+          diffQty,
+          unitPrice: prod.price_box,
+          diffAmount,
+        });
+
+        if (shouldAdjust && diffQty !== 0) {
+          db.prepare('UPDATE products SET stock_depot = ? WHERE id = ?').run(countedQty, prod.id);
+          recordStockMovement(
+            diffQty > 0 ? 'reception' : 'perte_casse_peremption',
+            diffQty > 0 ? 'IN' : 'OUT',
+            prod.id,
+            null,
+            Math.abs(diffQty),
+            ref,
+            `Ajustement inventaire dépôt central (${actorLabel})`,
+            Math.abs(diffAmount),
+            actorLabel
+          );
+        }
+      }
+
+      db.prepare(`
+        INSERT INTO depot_inventories (
+          id, reference, date, items, total_ecart_boxes, total_ecart_fcfa,
+          performed_by, performed_role, notes, applied_adjustment, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        ref,
+        date,
+        JSON.stringify(detailedItems),
+        totalEcartBoxes,
+        totalEcartFcfa,
+        actorLabel,
+        userRole,
+        notes || 'Inventaire physique du Dépôt Central Sotuba',
+        shouldAdjust ? 1 : 0,
+        new Date().toISOString()
+      );
+
+      const ecartLabel =
+        totalEcartBoxes === 0
+          ? `Inventaire Dépôt conforme (${ref})`
+          : `Écart Inventaire Dépôt (${ref}) : ${totalEcartBoxes > 0 ? '+' : ''}${totalEcartBoxes} ctn`;
+
+      sendNotification(
+        'Administrateur',
+        ecartLabel,
+        `Inventaire du Dépôt Central réalisé par ${actorLabel}. Écart : ${totalEcartBoxes} cartons (${totalEcartFcfa.toLocaleString('fr-FR')} FCFA).${shouldAdjust ? ' Stock dépôt ajusté automatiquement.' : ''}`,
+        'ecart',
+        ref
+      );
+
+      recordAudit(
+        'INVENTAIRE_DEPOT_CENTRAL',
+        'DEPOT_INVENTORY',
+        id,
+        userRole,
+        null,
+        `Inventaire dépôt ${ref} par ${actorLabel} : Écart ${totalEcartBoxes} cartons (${totalEcartFcfa} FCFA). Ajustement appliqué : ${shouldAdjust ? 'Oui' : 'Non'}.`
+      );
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    res.json({
+      success: true,
+      message: `Inventaire dépôt ${ref} enregistré avec succès (${totalEcartBoxes === 0 ? 'Aucun écart' : `Écart : ${totalEcartBoxes > 0 ? '+' : ''}${totalEcartBoxes} cartons`})${shouldAdjust ? ' et stock dépôt mis à jour.' : '.'}`,
+      inventory: {
+        id,
+        reference: ref,
+        date,
+        total_ecart_boxes: totalEcartBoxes,
+        total_ecart_fcfa: totalEcartFcfa,
+        performed_by: actorLabel,
+        applied_adjustment: shouldAdjust ? 1 : 0,
+        items: detailedItems,
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
@@ -1617,6 +2456,13 @@ apiRouter.get('/sales', (req, res) => {
         rectification_status: r.rectification_status || null,
         rectification_reason: r.rectification_reason || null,
         rectification_requested_at: r.rectification_requested_at || null,
+        cancel_request_status: r.cancel_request_status || null,
+        cancel_request_reason: r.cancel_request_reason || null,
+        cancel_requested_at: r.cancel_requested_at || null,
+        cancel_requested_by: r.cancel_requested_by || null,
+        cancel_reviewed_at: r.cancel_reviewed_at || null,
+        cancel_reviewed_by: r.cancel_reviewed_by || null,
+        cancel_rejection_reason: r.cancel_rejection_reason || null,
         items: typeof r.items === 'string' ? JSON.parse(r.items) : r.items,
       };
     });
@@ -1728,6 +2574,321 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       thermal_ticket_number: thermalTicketNumber,
       date,
       sale_time: saleTime,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Annulation d'une vente / facture client PDV par le Sales Admin (Contrôleur), le Directeur des opérations de vente ou l'Administrateur
+apiRouter.post('/sales/:id/cancel', requireCanCancelSale, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cancel_reason } = req.body;
+    const userRole = getUserRole(req) || 'Sales Admin';
+
+    if (!cancel_reason || String(cancel_reason).trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le motif d\'annulation de la facture / vente est obligatoire.',
+      });
+    }
+
+    const sale = db.prepare(`
+      SELECT s.*, u.name as vendor_name, u.code as vendor_code, p.name as pdv_name
+      FROM sales s
+      JOIN users u ON s.vendor_id = u.id
+      JOIN points_de_vente p ON s.pdv_id = p.id
+      WHERE s.id = ?
+    `).get(id) as any;
+
+    if (!sale) {
+      return res.status(404).json({ success: false, error: 'Facture / Vente introuvable.' });
+    }
+    if (sale.status === 'annulee') {
+      return res.status(400).json({ success: false, error: 'Cette facture / vente a déjà été annulée.' });
+    }
+
+    const reasonClean = String(cancel_reason).trim();
+    const nowIso = new Date().toISOString();
+    const cancelledByLabel =
+      userRole === 'Directeur des opérations de vente'
+        ? 'Ibrahim Sangaré (Directeur des opérations de vente)'
+        : userRole === 'Sales Admin'
+        ? 'Salif Keïta (Sales Admin - Contrôleur)'
+        : 'Administrateur';
+
+    db.prepare(`
+      UPDATE sales
+      SET status = 'annulee',
+          cancel_reason = ?,
+          cancelled_by = ?,
+          cancelled_at = ?,
+          cancel_request_status = CASE WHEN cancel_request_status = 'en_attente' THEN 'approuvee' ELSE cancel_request_status END,
+          cancel_reviewed_at = COALESCE(cancel_reviewed_at, ?),
+          cancel_reviewed_by = COALESCE(cancel_reviewed_by, ?)
+      WHERE id = ?
+    `).run(reasonClean, cancelledByLabel, nowIso, nowIso, cancelledByLabel, id);
+
+    markNotificationsReadByReference('Directeur des opérations de vente', sale.number);
+    markNotificationsReadByReference('Administrateur', sale.number);
+
+    const invoiceRef = sale.invoice_number || `FAC-${sale.number.replace('VTE-', '')}`;
+
+    sendNotification(
+      'Vendeur',
+      `Facture client PDV annulée (${invoiceRef})`,
+      `La facture client ${invoiceRef} / vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}) a été annulée par ${cancelledByLabel}. Motif : ${reasonClean}. Les quantités sont réintégrées dans votre stock camionnette.`,
+      'ecart',
+      sale.number,
+      { targetUserId: sale.vendor_id }
+    );
+    sendNotification(
+      'Comptable',
+      `Facture PDV / Vente annulée (${invoiceRef})`,
+      `La facture ${invoiceRef} (${sale.number}) du client PDV ${sale.pdv_name} (vendeur ${sale.vendor_name}, ${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA) a été annulée par ${cancelledByLabel}. Motif : ${reasonClean}.`,
+      'ecart',
+      sale.number
+    );
+
+    recordAudit(
+      'ANNULATION_VENTE',
+      'SALE',
+      id,
+      userRole,
+      sale.vendor_id,
+      `Facture ${invoiceRef} / Vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA, client PDV ${sale.pdv_name}) annulée par ${cancelledByLabel}. Motif : ${reasonClean}.`
+    );
+
+    res.json({
+      success: true,
+      message: `Facture client ${invoiceRef} (${sale.number} — PDV ${sale.pdv_name}) annulée avec succès. Les quantités ont été réintégrées au stock camionnette du vendeur et le solde a été ajusté.`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Demande d'annulation d'une vente par le Vendeur (en cas d'erreur dans la vente), soumise au Directeur des opérations de vente (DOV)
+apiRouter.post('/sales/:id/request-cancel', requireVendeur, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userRole = getUserRole(req) || 'Vendeur';
+
+    if (!reason || String(reason).trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Veuillez préciser le motif de l'erreur sur la vente pour soumettre la demande d'annulation.",
+      });
+    }
+
+    const sale = db.prepare(`
+      SELECT s.*, u.name as vendor_name, u.code as vendor_code, p.name as pdv_name, p.neighborhood as pdv_neighborhood
+      FROM sales s
+      JOIN users u ON s.vendor_id = u.id
+      JOIN points_de_vente p ON s.pdv_id = p.id
+      WHERE s.id = ?
+    `).get(id) as any;
+
+    if (!sale) {
+      return res.status(404).json({ success: false, error: 'Vente introuvable.' });
+    }
+    if (sale.status === 'annulee') {
+      return res.status(400).json({ success: false, error: 'Cette vente est déjà annulée.' });
+    }
+    if (sale.cancel_request_status === 'en_attente') {
+      return res.status(400).json({
+        success: false,
+        error: "Une demande d'annulation est déjà en attente de validation par le Directeur des opérations de vente.",
+      });
+    }
+
+    const reasonClean = String(reason).trim();
+    const nowIso = new Date().toISOString();
+    const requestedByLabel = `${sale.vendor_name} (${sale.vendor_code})`;
+
+    db.prepare(`
+      UPDATE sales
+      SET cancel_request_status = 'en_attente',
+          cancel_request_reason = ?,
+          cancel_requested_at = ?,
+          cancel_requested_by = ?,
+          cancel_rejection_reason = NULL
+      WHERE id = ?
+    `).run(reasonClean, nowIso, requestedByLabel, id);
+
+    sendNotification(
+      'Directeur des opérations de vente',
+      `Demande d'annulation de vente (${sale.number}) — ${sale.vendor_name}`,
+      `Le vendeur ${sale.vendor_name} (${sale.vendor_code}) a soumis une demande d'annulation pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}, ${sale.pdv_neighborhood}). Motif déclaré : "${reasonClean}". En attente de votre validation.`,
+      'demande_annulation_vente',
+      sale.number,
+      {
+        metadataJson: JSON.stringify({
+          saleId: sale.id,
+          saleNumber: sale.number,
+          vendorId: sale.vendor_id,
+          vendorName: sale.vendor_name,
+          vendorCode: sale.vendor_code,
+          pdvName: sale.pdv_name,
+          totalAmount: sale.total_amount,
+          reason: reasonClean,
+        }),
+      }
+    );
+
+    sendNotification(
+      'Administrateur',
+      `Demande d'annulation de vente (${sale.number}) — ${sale.vendor_name}`,
+      `Le vendeur ${sale.vendor_name} (${sale.vendor_code}) a soumis une demande d'annulation au Directeur des opérations de vente pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}). Motif : "${reasonClean}".`,
+      'demande_annulation_vente',
+      sale.number
+    );
+
+    recordAudit(
+      'DEMANDE_ANNULATION_VENTE',
+      'SALE',
+      id,
+      userRole,
+      sale.vendor_id,
+      `Demande d'annulation soumise au Directeur des opérations de vente pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}) par ${requestedByLabel}. Motif : ${reasonClean}.`
+    );
+
+    res.json({
+      success: true,
+      message: `Demande d'annulation pour la vente ${sale.number} transmise au Directeur des opérations de vente (DOV).`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Validation ou rejet d'une demande d'annulation de vente par le Directeur des opérations de vente (DOV) ou l'Administrateur
+apiRouter.post('/sales/:id/review-cancel-request', requireAdminOrDirecteurOps, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { decision, response_reason } = req.body; // 'approve' | 'reject'
+    const userRole = getUserRole(req) || 'Directeur des opérations de vente';
+    const actorLabel =
+      userRole === 'Directeur des opérations de vente'
+        ? 'Ibrahim Sangaré (Directeur des opérations de vente)'
+        : 'Amadou Touré (Administrateur)';
+
+    if (decision !== 'approve' && decision !== 'reject') {
+      return res.status(400).json({ success: false, error: 'Décision invalide (approve ou reject attendu).' });
+    }
+
+    const sale = db.prepare(`
+      SELECT s.*, u.name as vendor_name, u.code as vendor_code, p.name as pdv_name
+      FROM sales s
+      JOIN users u ON s.vendor_id = u.id
+      JOIN points_de_vente p ON s.pdv_id = p.id
+      WHERE s.id = ?
+    `).get(id) as any;
+
+    if (!sale) {
+      return res.status(404).json({ success: false, error: 'Vente introuvable.' });
+    }
+    if (sale.status === 'annulee') {
+      return res.status(400).json({ success: false, error: 'Cette vente est déjà annulée.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const invoiceRef = sale.invoice_number || `FAC-${String(sale.number || '').replace('VTE-', '')}`;
+
+    markNotificationsReadByReference('Directeur des opérations de vente', sale.number);
+    markNotificationsReadByReference('Administrateur', sale.number);
+
+    if (decision === 'approve') {
+      const finalReason = String(
+        response_reason?.trim() ||
+          sale.cancel_request_reason ||
+          "Erreur de vente signalée par le vendeur et validée par le Directeur des opérations de vente"
+      ).trim();
+
+      db.prepare(`
+        UPDATE sales
+        SET status = 'annulee',
+            cancel_reason = ?,
+            cancelled_by = ?,
+            cancelled_at = ?,
+            cancel_request_status = 'approuvee',
+            cancel_reviewed_at = ?,
+            cancel_reviewed_by = ?
+        WHERE id = ?
+      `).run(finalReason, actorLabel, nowIso, nowIso, actorLabel, id);
+
+      sendNotification(
+        'Vendeur',
+        `Demande d'annulation approuvée (${sale.number})`,
+        `Votre demande d'annulation pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}) a été approuvée par ${actorLabel}. Les cartons sont réintégrés dans votre stock camionnette et votre solde est ajusté.`,
+        'demande_annulation_vente',
+        sale.number,
+        { targetUserId: sale.vendor_id }
+      );
+
+      sendNotification(
+        'Comptable',
+        `Vente ${sale.number} annulée sur demande vendeur (${invoiceRef})`,
+        `La vente ${sale.number} (${invoiceRef} — client PDV ${sale.pdv_name}, vendeur ${sale.vendor_name}, ${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA) a été annulée suite à la validation par ${actorLabel} de la demande d'annulation du vendeur. Motif : ${finalReason}.`,
+        'ecart',
+        sale.number
+      );
+
+      recordAudit(
+        'VALIDATION_DEMANDE_ANNULATION_VENTE',
+        'SALE',
+        id,
+        userRole,
+        sale.vendor_id,
+        `Demande d'annulation de la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA, vendeur ${sale.vendor_name}) approuvée par ${actorLabel}. Motif : ${finalReason}.`
+      );
+
+      return res.json({
+        success: true,
+        message: `Demande d'annulation approuvée : la vente ${sale.number} (${sale.pdv_name}) est annulée et le stock camionnette de ${sale.vendor_name} a été réintégré.`,
+      });
+    }
+
+    // decision === 'reject'
+    const rejectionClean = String(
+      response_reason?.trim() || 'Demande refusée après vérification par le Directeur des opérations de vente.'
+    ).trim();
+
+    db.prepare(`
+      UPDATE sales
+      SET cancel_request_status = 'rejetee',
+          cancel_reviewed_at = ?,
+          cancel_reviewed_by = ?,
+          cancel_rejection_reason = ?
+      WHERE id = ?
+    `).run(nowIso, actorLabel, rejectionClean, id);
+
+    sendNotification(
+      'Vendeur',
+      `Demande d'annulation refusée (${sale.number})`,
+      `Votre demande d'annulation pour la vente ${sale.number} (PDV ${sale.pdv_name}) a été refusée par ${actorLabel}. Motif : ${rejectionClean}.`,
+      'demande_annulation_vente',
+      sale.number,
+      { targetUserId: sale.vendor_id }
+    );
+
+    recordAudit(
+      'REJET_DEMANDE_ANNULATION_VENTE',
+      'SALE',
+      id,
+      userRole,
+      sale.vendor_id,
+      `Demande d'annulation de la vente ${sale.number} (vendeur ${sale.vendor_name}) rejetée par ${actorLabel}. Motif : ${rejectionClean}.`
+    );
+
+    return res.json({
+      success: true,
+      message: `Demande d'annulation de la vente ${sale.number} refusée. Le vendeur ${sale.vendor_name} a été notifié.`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -2080,7 +3241,7 @@ apiRouter.get('/vendor-balances', (req, res) => {
     const vendors = db.prepare("SELECT id, code, name, team, phone FROM users WHERE role = 'Vendeur' ORDER BY code ASC").all() as any[];
 
     const balances = vendors.map(v => {
-      const salesRow = db.prepare('SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE vendor_id = ?').get(v.id) as { total: number };
+      const salesRow = db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE vendor_id = ? AND COALESCE(status, 'livree') != 'annulee'").get(v.id) as { total: number };
       const versementsRow = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM versements WHERE vendor_id = ? AND status = 'valide'").get(v.id) as { total: number };
       const chgRow = db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM chargements WHERE vendor_id = ? AND status = 'Chargée'").get(v.id) as { total: number };
 
@@ -2165,7 +3326,7 @@ apiRouter.get('/lots', (req, res) => {
 });
 
 // Sortie "Perte / casse / péremption" avec motif et valeur
-apiRouter.post('/lots/exit-loss', requireMagasinier, (req, res) => {
+apiRouter.post('/lots/exit-loss', requireMagasinierOrSalesAdmin, (req, res) => {
   try {
     const { lot_id, quantity, motif } = req.body;
     const userRole = getUserRole(req);
@@ -2277,6 +3438,13 @@ apiRouter.get('/notifications', (req, res) => {
         ORDER BY created_at DESC
         LIMIT 60
       `).all(headerUserId) as any[];
+    } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
+      notifs = db.prepare(`
+        SELECT * FROM notifications
+        WHERE role IN ('Gestionnaire de stock', 'Magasinier') OR role = 'ALL'
+        ORDER BY created_at DESC
+        LIMIT 60
+      `).all() as any[];
     } else {
       notifs = db.prepare(`
         SELECT * FROM notifications
@@ -2363,6 +3531,15 @@ apiRouter.post('/notifications/read-all', (req, res) => {
           AND (target_user_id IS NULL OR target_user_id = '' OR target_user_id = ?)
       `
       ).run(userId);
+    } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
+      db.prepare(
+        `
+        UPDATE notifications
+        SET is_read = 1
+        WHERE is_read = 0
+          AND (role IN ('Gestionnaire de stock', 'Magasinier') OR role = 'ALL')
+      `
+      ).run();
     } else if (role) {
       db.prepare(
         `
@@ -3062,10 +4239,10 @@ apiRouter.get('/purchase-requests', (req, res) => {
   }
 });
 
-// Création d'une demande d'achat par le Magasinier ou le Comptable (avec motif optionnel)
+// Création d'une demande d'achat par le Gestionnaire de stock ou le Comptable (avec motif optionnel)
 apiRouter.post(
   '/purchase-requests',
-  requireRole(['Magasinier', 'Comptable'], 'Création d\'une demande d\'achat'),
+  requireRole(['Gestionnaire de stock', 'Magasinier', 'Comptable'], 'Création d\'une demande d\'achat'),
   (req, res) => {
     try {
       const {
@@ -3088,10 +4265,13 @@ apiRouter.post(
         });
       }
 
-      const defaultUser = db.prepare('SELECT * FROM users WHERE role = ? LIMIT 1').get(userRole) as any;
-      const finalRequesterId = requester_id || defaultUser?.id || (userRole === 'Magasinier' ? 'usr-mag' : 'usr-cpt');
-      const finalRequesterName = requester_name || defaultUser?.name || userRole;
-      const finalRequesterCode = requester_code || defaultUser?.code || (userRole === 'Magasinier' ? 'BAO-MAG' : 'BAO-CPT');
+      const isStockMgr = userRole === 'Gestionnaire de stock' || userRole === 'Magasinier';
+      const defaultUser = isStockMgr
+        ? (db.prepare("SELECT * FROM users WHERE role IN ('Gestionnaire de stock', 'Magasinier') OR code = 'BAO-MAG' LIMIT 1").get() as any)
+        : (db.prepare('SELECT * FROM users WHERE role = ? LIMIT 1').get(userRole) as any);
+      const finalRequesterId = requester_id || defaultUser?.id || (isStockMgr ? 'usr-mag' : 'usr-cpt');
+      const finalRequesterName = requester_name || defaultUser?.name || (isStockMgr ? 'Gestionnaire de stock' : userRole);
+      const finalRequesterCode = requester_code || defaultUser?.code || (isStockMgr ? 'BAO-MAG' : 'BAO-CPT');
 
       const parsedItems = Array.isArray(items) && items.length > 0
         ? items.map((it: any, idx: number) => {
@@ -4274,7 +5454,7 @@ apiRouter.post('/bons/:id/demander-retrait', (req, res) => {
     `).run(JSON.stringify(enrichedItems), basketTotal, nowIso, id);
 
     sendNotification(
-      'Magasinier',
+      'Gestionnaire de stock',
       `Bon cadeau à préparer (${bon.reference})`,
       `${bon.vendor_name} (${bon.vendor_code}) a envoyé une demande de retrait pour son bon ${bon.reference} : panier de ${basketTotal.toLocaleString('fr-FR')} FCFA / ${bonAmount.toLocaleString('fr-FR')} FCFA (Statut : À préparer, FEFO).`,
       'cadeau',
@@ -5217,5 +6397,563 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
   }
 });
 
+// ============================================================================
+// 15. GESTIONNAIRE GROSSISTE : CLIENTS EN GROS & COMMANDES EN GROS
+// ============================================================================
+
+// GET /api/wholesale/clients : Liste des clients en gros avec statistiques d'achats
+apiRouter.get('/wholesale/clients', (_req, res) => {
+  try {
+    const clients = db.prepare(`
+      SELECT c.*,
+             COALESCE((
+               SELECT COUNT(*) FROM wholesale_orders o
+               WHERE o.client_id = c.id AND COALESCE(o.delivery_status, 'livree') != 'annulee'
+             ), 0) AS orders_count,
+             COALESCE((
+               SELECT SUM(o.total_boxes) FROM wholesale_orders o
+               WHERE o.client_id = c.id AND COALESCE(o.delivery_status, 'livree') != 'annulee'
+             ), 0) AS total_boxes_ordered,
+             COALESCE((
+               SELECT SUM(o.total_amount) FROM wholesale_orders o
+               WHERE o.client_id = c.id AND COALESCE(o.delivery_status, 'livree') != 'annulee'
+             ), 0) AS total_ca_fcfa,
+             (
+               SELECT MAX(o.date) FROM wholesale_orders o
+               WHERE o.client_id = c.id AND COALESCE(o.delivery_status, 'livree') != 'annulee'
+             ) AS last_order_date
+      FROM wholesale_clients c
+      ORDER BY c.created_at DESC, c.code ASC
+    `).all();
+    res.json({ success: true, wholesaleClients: clients });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur chargement clients en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// POST /api/wholesale/clients : Créer un nouveau client en gros (Gestionnaire grossiste / Administrateur)
+apiRouter.post('/wholesale/clients', requireGrossiste, (req, res) => {
+  try {
+    const {
+      company_name,
+      manager_name,
+      phone,
+      email,
+      neighborhood,
+      city,
+      address,
+      nif,
+      rccm,
+      category,
+      default_discount_percent,
+      notes,
+    } = req.body;
+
+    if (!company_name || !manager_name || !phone) {
+      return res.status(400).json({
+        success: false,
+        error: "Le nom de l'établissement/société, le nom du gérant et le téléphone sont obligatoires.",
+      });
+    }
+
+    const userRole = getUserRole(req) || 'Gestionnaire grossiste';
+    const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : 'usr-grs';
+    const userRow = db.prepare('SELECT name, code FROM users WHERE id = ?').get(headerUserId) as { name: string; code: string } | undefined;
+    const creatorLabel = userRow ? `${userRow.name} (${userRow.code})` : `${userRole}`;
+
+    const count = (db.prepare('SELECT COUNT(*) as count FROM wholesale_clients').get() as { count: number }).count;
+    const cityClean = (city || 'Bamako').trim();
+    const prefix = cityClean.toLowerCase() === 'bamako' ? 'GRS-BKO' : 'GRS-REG';
+    const code = `${prefix}-${String(count + 1).padStart(3, '0')}`;
+    const id = `grs-cli-${Date.now()}`;
+    const createdAt = new Date().toISOString().split('T')[0];
+    const discountNum = Math.max(0, Math.min(30, Number(default_discount_percent) || 0));
+
+    db.prepare(`
+      INSERT INTO wholesale_clients (
+        id, code, company_name, manager_name, phone, email,
+        neighborhood, city, address, nif, rccm, category,
+        default_discount_percent, status, notes, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'actif', ?, ?, ?)
+    `).run(
+      id,
+      code,
+      String(company_name).trim(),
+      String(manager_name).trim(),
+      String(phone).trim(),
+      email ? String(email).trim() : '',
+      neighborhood ? String(neighborhood).trim() : 'Grand Marché',
+      cityClean,
+      address ? String(address).trim() : '',
+      nif ? String(nif).trim() : '',
+      rccm ? String(rccm).trim() : '',
+      category || 'Demi-grossiste',
+      discountNum,
+      notes ? String(notes).trim() : '',
+      creatorLabel,
+      createdAt
+    );
+
+    sendNotification(
+      'Administrateur',
+      `Nouveau client en gros enregistré : ${company_name} (${code})`,
+      `${creatorLabel} a ajouté le client grossiste "${company_name}" (${code}, gérant : ${manager_name}, catégorie : ${category || 'Demi-grossiste'}, quartier : ${neighborhood || 'Bamako'}).`,
+      'info',
+      code
+    );
+
+    recordAudit(
+      'CREATION_CLIENT_GROS',
+      'WHOLESALE_CLIENT',
+      id,
+      userRole,
+      headerUserId,
+      `Client en gros ${code} (${company_name}) créé par ${creatorLabel}.`
+    );
+
+    const createdClient = db.prepare('SELECT * FROM wholesale_clients WHERE id = ?').get(id);
+    res.json({
+      success: true,
+      message: `Client en gros "${company_name}" (${code}) créé avec succès.`,
+      client: {
+        ...(createdClient as any),
+        orders_count: 0,
+        total_boxes_ordered: 0,
+        total_ca_fcfa: 0,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur création client en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// PATCH /api/wholesale/clients/:id : Modifier un client en gros
+apiRouter.patch('/wholesale/clients/:id', requireGrossiste, (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      company_name,
+      manager_name,
+      phone,
+      email,
+      neighborhood,
+      city,
+      address,
+      nif,
+      rccm,
+      category,
+      default_discount_percent,
+      status,
+      notes,
+    } = req.body;
+
+    const existing = db.prepare('SELECT * FROM wholesale_clients WHERE id = ?').get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Client en gros introuvable.' });
+    }
+
+    db.prepare(`
+      UPDATE wholesale_clients
+      SET company_name = COALESCE(?, company_name),
+          manager_name = COALESCE(?, manager_name),
+          phone = COALESCE(?, phone),
+          email = COALESCE(?, email),
+          neighborhood = COALESCE(?, neighborhood),
+          city = COALESCE(?, city),
+          address = COALESCE(?, address),
+          nif = COALESCE(?, nif),
+          rccm = COALESCE(?, rccm),
+          category = COALESCE(?, category),
+          default_discount_percent = COALESCE(?, default_discount_percent),
+          status = COALESCE(?, status),
+          notes = COALESCE(?, notes)
+      WHERE id = ?
+    `).run(
+      company_name ?? null,
+      manager_name ?? null,
+      phone ?? null,
+      email ?? null,
+      neighborhood ?? null,
+      city ?? null,
+      address ?? null,
+      nif ?? null,
+      rccm ?? null,
+      category ?? null,
+      default_discount_percent !== undefined ? Number(default_discount_percent) : null,
+      status ?? null,
+      notes ?? null,
+      id
+    );
+
+    const userRole = getUserRole(req) || 'Gestionnaire grossiste';
+    recordAudit(
+      'MODIFICATION_CLIENT_GROS',
+      'WHOLESALE_CLIENT',
+      id,
+      userRole,
+      null,
+      `Fiche client en gros ${existing.code} (${company_name || existing.company_name}) mise à jour.`
+    );
+
+    res.json({ success: true, message: 'Fiche client en gros mise à jour.' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur modification client en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// GET /api/wholesale/orders : Liste des commandes en gros
+apiRouter.get('/wholesale/orders', (_req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM wholesale_orders
+      ORDER BY date DESC, created_at DESC
+    `).all() as any[];
+
+    const orders = rows.map((r) => {
+      let items: any[] = [];
+      try {
+        items = JSON.parse(r.items_json || '[]');
+      } catch {
+        items = [];
+      }
+      return {
+        ...r,
+        items,
+      };
+    });
+
+    res.json({ success: true, wholesaleOrders: orders });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur chargement commandes en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// POST /api/wholesale/orders : Créer une commande en gros (Gestionnaire grossiste / Administrateur)
+apiRouter.post('/wholesale/orders', requireGrossiste, (req, res) => {
+  try {
+    const {
+      client_id,
+      items,
+      discount_percent = 0,
+      payment_mode = 'Virement Bancaire',
+      payment_status = 'paye',
+      delivery_status = 'livree',
+      notes = '',
+      date,
+    } = req.body;
+
+    if (!client_id || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Veuillez sélectionner un client en gros et ajouter au moins un produit (cartons).',
+      });
+    }
+
+    const client = db.prepare('SELECT * FROM wholesale_clients WHERE id = ?').get(client_id) as any;
+    if (!client) {
+      return res.status(404).json({ success: false, error: 'Client en gros introuvable.' });
+    }
+
+    const normalizedItems = items
+      .filter((it: any) => Number(it.qtyBoxes) > 0)
+      .map((it: any) => {
+        const prod = db.prepare('SELECT * FROM products WHERE id = ? OR code = ?').get(it.productId || '', it.code || '') as any;
+        const qtyBoxes = Math.max(1, Math.round(Number(it.qtyBoxes) || 0));
+        const unitPrice = Number(it.unitPrice || prod?.price_box || 0);
+        return {
+          productId: prod?.id || it.productId,
+          code: prod?.code || it.code,
+          name: prod?.name || it.name,
+          qtyBoxes,
+          unitPrice,
+          total: qtyBoxes * unitPrice,
+        };
+      });
+
+    if (normalizedItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'La commande en gros doit contenir au moins un carton.',
+      });
+    }
+
+    const totalBoxes = normalizedItems.reduce((acc, it) => acc + it.qtyBoxes, 0);
+    const subtotalHt = normalizedItems.reduce((acc, it) => acc + it.total, 0);
+    const discPct = Math.max(0, Math.min(30, Number(discount_percent) || 0));
+    const discountAmount = Math.round((subtotalHt * discPct) / 100);
+    const totalAmount = Math.max(0, subtotalHt - discountAmount);
+
+    const userRole = getUserRole(req) || 'Gestionnaire grossiste';
+    const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : 'usr-grs';
+    const userRow = db.prepare('SELECT name, code FROM users WHERE id = ?').get(headerUserId) as { name: string; code: string } | undefined;
+    const creatorName = userRow?.name || (userRole === 'Administrateur' ? 'Amadou Touré' : 'Cheick Oumar Diallo');
+    const creatorCode = userRow?.code || (userRole === 'Administrateur' ? 'BAO-ADM' : 'BAO-GRS');
+
+    const count = (db.prepare('SELECT COUNT(*) as count FROM wholesale_orders').get() as { count: number }).count;
+    const reference = `CMD-GROS-2026-${String(count + 1).padStart(3, '0')}`;
+    const id = `grs-ord-${Date.now()}`;
+    const now = new Date();
+    const orderDate = date || now.toISOString().split('T')[0];
+    const orderTime = now.toTimeString().slice(0, 5);
+    const createdAt = now.toISOString();
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      db.prepare(`
+        INSERT INTO wholesale_orders (
+          id, reference, client_id, client_code, client_name, client_manager,
+          client_phone, client_neighborhood, client_city, date, order_time,
+          items_json, total_boxes, subtotal_ht, discount_percent, discount_amount,
+          total_amount, payment_mode, payment_status, delivery_status, notes,
+          created_by, created_by_code, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        reference,
+        client.id,
+        client.code,
+        client.company_name,
+        client.manager_name || '',
+        client.phone || '',
+        client.neighborhood || '',
+        client.city || 'Bamako',
+        orderDate,
+        orderTime,
+        JSON.stringify(normalizedItems),
+        totalBoxes,
+        subtotalHt,
+        discPct,
+        discountAmount,
+        totalAmount,
+        payment_mode,
+        payment_status,
+        delivery_status,
+        notes,
+        creatorName,
+        creatorCode,
+        createdAt
+      );
+
+      // Si la commande en gros est marquée "livree", déduire du stock dépôt central en toute sécurité
+      if (delivery_status === 'livree') {
+        const deductStmt = db.prepare(`
+          UPDATE products
+          SET stock_depot = MAX(0, stock_depot - ?)
+          WHERE id = ?
+        `);
+        for (const it of normalizedItems) {
+          if (it.productId) {
+            deductStmt.run(it.qtyBoxes, it.productId);
+          }
+        }
+      }
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    sendNotification(
+      'Administrateur',
+      `Nouvelle commande en gros : ${reference} (${totalAmount.toLocaleString('fr-FR')} FCFA)`,
+      `${creatorName} (${creatorCode}) a enregistré la commande en gros ${reference} pour "${client.company_name}" (${totalBoxes} cartons, net à payer : ${totalAmount.toLocaleString('fr-FR')} FCFA, mode : ${payment_mode}).`,
+      'info',
+      reference
+    );
+
+    sendNotification(
+      'Gestionnaire de stock',
+      `Commande en gros ${delivery_status === 'livree' ? 'livrée' : 'à préparer'} : ${reference}`,
+      `Commande grossiste ${reference} pour ${client.company_name} (${totalBoxes} cartons au total). Statut : ${delivery_status === 'livree' ? 'Livrée / Sortie dépôt' : 'En préparation au dépôt'}.`,
+      'info',
+      reference
+    );
+
+    recordAudit(
+      'CREATION_COMMANDE_GROS',
+      'WHOLESALE_ORDER',
+      id,
+      userRole,
+      headerUserId,
+      `Commande en gros ${reference} (${totalBoxes} cartons, ${totalAmount.toLocaleString('fr-FR')} FCFA) créée pour ${client.company_name} (${client.code}) par ${creatorName}.`
+    );
+
+    res.json({
+      success: true,
+      message: `Commande en gros ${reference} enregistrée avec succès (${totalBoxes} cartons — ${totalAmount.toLocaleString('fr-FR')} FCFA).`,
+      order: {
+        id,
+        reference,
+        client_id: client.id,
+        client_code: client.code,
+        client_name: client.company_name,
+        client_manager: client.manager_name,
+        client_phone: client.phone,
+        client_neighborhood: client.neighborhood,
+        client_city: client.city,
+        date: orderDate,
+        order_time: orderTime,
+        items: normalizedItems,
+        total_boxes: totalBoxes,
+        subtotal_ht: subtotalHt,
+        discount_percent: discPct,
+        discount_amount: discountAmount,
+        total_amount: totalAmount,
+        payment_mode,
+        payment_status,
+        delivery_status,
+        notes,
+        created_by: creatorName,
+        created_by_code: creatorCode,
+        created_at: createdAt,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur création commande en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// PATCH /api/wholesale/orders/:id/status : Mettre à jour le statut de livraison ou de paiement d'une commande en gros
+apiRouter.patch('/wholesale/orders/:id/status', requireGrossiste, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { delivery_status, payment_status, payment_mode } = req.body;
+
+    const order = db.prepare('SELECT * FROM wholesale_orders WHERE id = ?').get(id) as any;
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Commande en gros introuvable.' });
+    }
+
+    const nextDelivery = delivery_status || order.delivery_status;
+    const nextPayment = payment_status || order.payment_status;
+    const nextMode = payment_mode || order.payment_mode;
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      // Si la commande passe de 'en_preparation' à 'livree', déduire du stock dépôt
+      if (order.delivery_status !== 'livree' && nextDelivery === 'livree') {
+        let items: any[] = [];
+        try {
+          items = JSON.parse(order.items_json || '[]');
+        } catch {
+          items = [];
+        }
+        const deductStmt = db.prepare('UPDATE products SET stock_depot = MAX(0, stock_depot - ?) WHERE id = ?');
+        for (const it of items) {
+          if (it.productId && Number(it.qtyBoxes) > 0) {
+            deductStmt.run(Number(it.qtyBoxes), it.productId);
+          }
+        }
+      }
+
+      db.prepare(`
+        UPDATE wholesale_orders
+        SET delivery_status = ?,
+            payment_status = ?,
+            payment_mode = ?
+        WHERE id = ?
+      `).run(nextDelivery, nextPayment, nextMode, id);
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    const userRole = getUserRole(req) || 'Gestionnaire grossiste';
+    recordAudit(
+      'STATUT_COMMANDE_GROS',
+      'WHOLESALE_ORDER',
+      id,
+      userRole,
+      null,
+      `Commande en gros ${order.reference} mise à jour : livraison=${nextDelivery}, paiement=${nextPayment}.`
+    );
+
+    res.json({
+      success: true,
+      message: `Statut de la commande ${order.reference} mis à jour.`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur mise à jour commande en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// POST /api/wholesale/orders/:id/cancel : Annuler une commande en gros
+apiRouter.post('/wholesale/orders/:id/cancel', requireGrossiste, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const order = db.prepare('SELECT * FROM wholesale_orders WHERE id = ?').get(id) as any;
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Commande en gros introuvable.' });
+    }
+    if (order.delivery_status === 'annulee') {
+      return res.status(400).json({ success: false, error: 'Cette commande en gros est déjà annulée.' });
+    }
+
+    const userRole = getUserRole(req) || 'Gestionnaire grossiste';
+    const nowIso = new Date().toISOString();
+    const cancelReason = reason ? String(reason).trim() : `Annulée par ${userRole}`;
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      if (order.delivery_status === 'livree') {
+        let items: any[] = [];
+        try {
+          items = JSON.parse(order.items_json || '[]');
+        } catch {
+          items = [];
+        }
+        const restoreStmt = db.prepare('UPDATE products SET stock_depot = stock_depot + ? WHERE id = ?');
+        for (const it of items) {
+          if (it.productId && Number(it.qtyBoxes) > 0) {
+            restoreStmt.run(Number(it.qtyBoxes), it.productId);
+          }
+        }
+      }
+
+      db.prepare(`
+        UPDATE wholesale_orders
+        SET delivery_status = 'annulee',
+            payment_status = 'annulee',
+            cancel_reason = ?,
+            cancelled_by = ?,
+            cancelled_at = ?
+        WHERE id = ?
+      `).run(cancelReason, userRole, nowIso, id);
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    recordAudit(
+      'ANNULATION_COMMANDE_GROS',
+      'WHOLESALE_ORDER',
+      id,
+      userRole,
+      null,
+      `Commande en gros ${order.reference} (${order.client_name}) annulée par ${userRole}. Motif : ${cancelReason}`
+    );
+
+    res.json({
+      success: true,
+      message: `La commande en gros ${order.reference} a été annulée.`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur annulation commande en gros';
+    res.status(500).json({ success: false, error: message });
+  }
+});
 
 

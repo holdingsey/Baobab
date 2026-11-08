@@ -3,11 +3,7 @@ import {
   Menu,
   Sun,
   Moon,
-  Shield,
   Bell,
-  User,
-  Wifi,
-  WifiOff,
   Receipt,
   ShoppingBag,
   X,
@@ -19,12 +15,17 @@ import {
   Package,
   Clock,
   Settings,
+  ChevronDown,
+  Check,
+  Search,
 } from 'lucide-react';
 import { BaobabLogo } from './BaobabLogo';
 import { PWAInstallButton } from './PWAInstallButton';
 import { UserSession } from './LoginScreen';
 import { InvoiceData } from './PrintableDocument';
+import { FormModal } from './FormModal';
 import { NotificationSettingsPanel } from './NotificationSettingsPanel';
+import { GlobalSearchModal, SearchResultItem } from './GlobalSearchModal';
 import {
   isAppOnline,
   isSimulatedOffline,
@@ -50,10 +51,11 @@ interface HeaderProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onOpenMobileMenu: () => void;
-  onSwitchRole: (newRole: 'Administrateur' | 'Magasinier' | 'Comptable' | 'Vendeur') => void;
+  onSwitchRole: (newRole: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur') => void;
   onSwitchUser?: (user: UserSession) => void;
   onOpenDocument?: (doc: InvoiceData) => void;
   onNavigateTab?: (tab: string) => void;
+  onSelectSearchResult?: (item: SearchResultItem) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -67,17 +69,45 @@ export const Header: React.FC<HeaderProps> = ({
   onSwitchUser,
   onOpenDocument,
   onNavigateTab,
+  onSelectSearchResult,
 }) => {
   const [notifications, setNotifications] = React.useState<any[]>([]);
   const [showNotifMenu, setShowNotifMenu] = React.useState(false);
   const [showNotifSettingsModal, setShowNotifSettingsModal] = React.useState(false);
   const [selectedNotification, setSelectedNotification] = React.useState<any | null>(null);
+  const [showProfileMenu, setShowProfileMenu] = React.useState(false);
+  const [showSearchModal, setShowSearchModal] = React.useState(false);
   const [showPushInvite, setShowPushInvite] = React.useState(false);
   const [pushInviteBusy, setPushInviteBusy] = React.useState(false);
   const [online, setOnline] = React.useState<boolean>(() => isAppOnline());
   const [pendingCount, setPendingCount] = React.useState<number>(
     () => getOfflineSalesQueue().length + getOfflineGpsQueue().length
   );
+
+  // Raccourci clavier global Ctrl+K / Cmd+K pour ouvrir la recherche
+  React.useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowSearchModal((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
+  // Helper to format any role nicely for user display
+  const getDisplayRole = React.useCallback((role?: string, code?: string) => {
+    const r = (role || '').trim();
+    if (/directeur|op[eé]ration|dov/i.test(r) || code === 'BAO-DOV') return 'Directeur des opérations de vente (DOV)';
+    if (/sales|contr/i.test(r) || code === 'BAO-SAD') return 'Sales Admin (Contrôleur)';
+    if (/grossiste/i.test(r) || (code && code.startsWith('BAO-GRS'))) return 'Gestionnaire grossiste';
+    if (/gestionnaire|magas/i.test(r) || code === 'BAO-MAG') return 'Gestionnaire de stock';
+    if (/admin/i.test(r) || code === 'BAO-ADM') return 'Administrateur';
+    if (/compt/i.test(r) || code === 'BAO-CPT') return 'Comptable';
+    if (/vend/i.test(r) || (code && code.startsWith('BAO-VND'))) return 'Vendeur';
+    return r || 'Administrateur';
+  }, []);
 
   React.useEffect(() => {
     const syncState = () => {
@@ -98,11 +128,6 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, []);
 
-  const vendorUsers = React.useMemo(
-    () => usersList.filter((u) => u.role === 'Vendeur'),
-    [usersList]
-  );
-
   const fetchNotifs = React.useCallback(async () => {
     try {
       const res = await fetch('/api/notifications', {
@@ -113,12 +138,24 @@ export const Header: React.FC<HeaderProps> = ({
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.notifications) {
-          setNotifications(d.notifications);
+        if (Array.isArray(d.notifications)) {
+          const nextNotifs = d.notifications;
+          setNotifications((prev) => {
+            if (
+              prev.length === nextNotifs.length &&
+              prev.every(
+                (item, idx) =>
+                  item.id === nextNotifs[idx]?.id && item.is_read === nextNotifs[idx]?.is_read
+              )
+            ) {
+              return prev;
+            }
+            return nextNotifs;
+          });
           const count =
             typeof d.unreadCount === 'number'
               ? d.unreadCount
-              : d.notifications.filter((n: any) => !n.is_read).length;
+              : nextNotifs.filter((n: any) => !n.is_read).length;
           syncAppBadge(count);
         }
       }
@@ -301,6 +338,21 @@ export const Header: React.FC<HeaderProps> = ({
     const title = String(n.title || '').toLowerCase();
 
     if (
+      type === 'demande_annulation_vente' ||
+      ref.startsWith('VTE-') ||
+      title.includes("demande d'annulation")
+    ) {
+      const isDovOrAdmin =
+        currentUser.role === 'Directeur des opérations de vente' ||
+        currentUser.role === 'Administrateur';
+      return {
+        tab: isDovOrAdmin ? 'demandes-annulation-vente' : currentUser.role === 'Vendeur' ? 'mes-ventes' : 'ventes',
+        label: isDovOrAdmin ? "Ouvrir Demandes d'annulation de vente" : 'Ouvrir Mes Ventes',
+        icon: <ShoppingBag className="w-3.5 h-3.5" />,
+      };
+    }
+
+    if (
       type === 'demande_achat' ||
       type === 'validation_demande_achat' ||
       type === 'rejet_demande_achat' ||
@@ -321,9 +373,11 @@ export const Header: React.FC<HeaderProps> = ({
       title.includes('pdv') ||
       title.includes('point de vente')
     ) {
+      const canValidatePdvRole =
+        currentUser.role === 'Administrateur' || currentUser.role === 'Directeur des opérations de vente';
       return {
-        tab: currentUser.role === 'Administrateur' ? 'validation-pdv' : 'mes-pdvs',
-        label: currentUser.role === 'Administrateur' ? 'Ouvrir Validation PDV' : 'Ouvrir Mes PDV',
+        tab: canValidatePdvRole ? 'validation-pdv' : 'mes-pdvs',
+        label: canValidatePdvRole ? 'Ouvrir Validation PDV' : 'Ouvrir Mes PDV',
         icon: <Store className="w-3.5 h-3.5" />,
       };
     }
@@ -352,7 +406,7 @@ export const Header: React.FC<HeaderProps> = ({
     }
 
     if (type === 'cadeau' || ref.startsWith('BON-') || title.includes('gratter') || title.includes('cadeau')) {
-      if (currentUser.role === 'Magasinier') {
+      if (currentUser.role === 'Gestionnaire de stock' || currentUser.role === 'Magasinier') {
         return {
           tab: 'bons-a-remettre',
           label: 'Ouvrir Bons à remettre',
@@ -382,7 +436,15 @@ export const Header: React.FC<HeaderProps> = ({
       };
     }
 
-    if (type === 'chargement' || ref.startsWith('CHG-') || title.includes('chargement')) {
+    if (type === 'reception' || ref.startsWith('REC-FOURN-') || title.includes('réception')) {
+      return {
+        tab: 'receptions',
+        label: 'Ouvrir les Réceptions Fournisseur',
+        icon: <Package className="w-3.5 h-3.5" />,
+      };
+    }
+
+    if (type === 'chargement' || ref.startsWith('CHG-') || title.includes('chargement') || title.includes('approvisionnement')) {
       return {
         tab: currentUser.role === 'Vendeur' ? 'mon-chargement' : 'chargements',
         label: 'Ouvrir les Chargements',
@@ -402,146 +464,136 @@ export const Header: React.FC<HeaderProps> = ({
     return isoStr;
   };
 
+  const isDemoMode =
+    typeof import.meta !== 'undefined' &&
+    (import.meta as any).env?.VITE_DEMO_MODE !== 'false';
+
+  const connectionTooltip = online
+    ? pendingCount > 0
+      ? `En ligne (${pendingCount} en attente de synchronisation)`
+      : 'En ligne'
+    : pendingCount > 0
+    ? `Hors ligne (${pendingCount} en attente)`
+    : 'Hors ligne';
+
   return (
     <>
-      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
-        <div className="flex items-center justify-between gap-2.5 px-3.5 sm:px-6 lg:px-6 h-[4.5rem] sm:h-20 lg:h-16">
-          {/* Left: Mobile menu toggle + Header Logo */}
-          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+      <header className="sticky top-0 z-30 w-full max-w-full h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 transform-gpu">
+        <div className="flex items-center justify-between gap-2 md:gap-2.5 px-3 md:px-5 lg:px-6 h-16 w-full max-w-full">
+          {/* Gauche : Hamburger (Mobile & Tablette < 1024 px) + Logo */}
+          <div className="flex items-center gap-2 md:gap-2.5 shrink-0 min-w-0">
             <button
+              type="button"
               onClick={onOpenMobileMenu}
-              className="p-2.5 -ml-1 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white lg:hidden cursor-pointer shrink-0"
+              className="w-11 h-11 min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-xl text-slate-700 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-200 dark:hover:text-white dark:hover:bg-slate-800 lg:hidden cursor-pointer shrink-0 transition"
               aria-label="Ouvrir le menu"
             >
-              <Menu className="w-6 h-6 sm:w-6 sm:h-6" />
+              <Menu className="w-5 h-5" />
             </button>
 
-            {/* Logo visible on Mobile, Tablet and Desktop */}
             <div
               onClick={() => (onNavigateTab ? onNavigateTab('dashboard') : null)}
-              className="flex items-center gap-2.5 cursor-pointer select-none shrink-0"
+              className="flex items-center gap-2 cursor-pointer select-none shrink-0"
               title="Baobab Distribution - Accueil"
             >
               <BaobabLogo
                 variant="header"
-                size={42}
+                size={36}
                 logoUrl={logoUrl}
                 showTextOnPC={true}
               />
             </div>
           </div>
 
-          {/* Center / Right: Quick Role Switcher + Notifications + PWA Install + Theme Toggle */}
-          <div className="flex items-center gap-2 sm:gap-2.5 lg:gap-2.5 shrink-0">
-            {/* Quick Role Switcher dropdown for quick testing */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-2 lg:px-2.5 lg:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 text-xs sm:text-sm lg:text-xs whitespace-nowrap shrink-0">
-              <Shield className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-              <span className="hidden xl:inline text-slate-500 text-xs whitespace-nowrap">Rôle :</span>
-              <select
-                value={currentUser.role}
-                onChange={(e) =>
-                  onSwitchRole(
-                    e.target.value as 'Administrateur' | 'Magasinier' | 'Comptable' | 'Vendeur'
-                  )
-                }
-                className="bg-transparent font-bold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
-              >
-                <option value="Administrateur" className="dark:bg-slate-900">
-                  Administrateur
-                </option>
-                <option value="Magasinier" className="dark:bg-slate-900">
-                  Magasinier
-                </option>
-                <option value="Comptable" className="dark:bg-slate-900">
-                  Comptable
-                </option>
-                <option value="Vendeur" className="dark:bg-slate-900">
-                  Vendeur
-                </option>
-              </select>
-            </div>
+          {/* Droite :
+              - Mobile (< 768 px) : loupe, cloche, avatar
+              - Tablette (768-1023 px) : loupe, point de connexion, thème, cloche, avatar
+          */}
+          <div className="flex items-center justify-end gap-2 md:gap-2.5 shrink-0">
+            {/* 1. Loupe de recherche (Mobile, Tablette, PC) */}
+            <button
+              type="button"
+              onClick={() => setShowSearchModal(true)}
+              title="Recherche globale (Ctrl+K)"
+              aria-label="Ouvrir la recherche globale (Ctrl+K)"
+              className="w-11 h-11 min-w-[44px] min-h-[44px] lg:w-auto lg:px-3 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 transition cursor-pointer shrink-0"
+            >
+              <Search className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+              <span className="hidden lg:inline text-xs font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                Rechercher...
+              </span>
+              <kbd className="hidden xl:inline-flex items-center px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-[10px] font-mono font-bold text-slate-600 dark:text-slate-300">
+                Ctrl+K
+              </kbd>
+            </button>
 
-            {/* Vendor Account Selector when role === 'Vendeur' */}
-            {currentUser.role === 'Vendeur' && vendorUsers.length > 1 && onSwitchUser && (
-              <div className="hidden md:flex items-center gap-1.5 px-3 py-2 lg:px-2.5 lg:py-1.5 rounded-xl bg-[#008DA9]/10 border border-[#008DA9]/30 text-xs sm:text-sm lg:text-xs whitespace-nowrap shrink-0">
-                <User className="w-4 h-4 lg:w-3.5 lg:h-3.5 text-[#008DA9] shrink-0" />
-                <select
-                  value={currentUser.id}
-                  onChange={(e) => {
-                    const found = vendorUsers.find((v) => v.id === e.target.value);
-                    if (found) onSwitchUser(found);
-                  }}
-                  className="bg-transparent font-bold text-[#008DA9] dark:text-cyan-300 focus:outline-none cursor-pointer max-w-[140px] lg:max-w-none truncate"
-                  title="Changer de compte vendeur"
-                >
-                  {vendorUsers.map((v) => (
-                    <option key={v.id} value={v.id} className="dark:bg-slate-900 text-slate-900 dark:text-white">
-                      {v.name} ({v.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Network Status & Offline Sync Toggle */}
+            {/* 2. Point de connexion (Tablette >= 768 px et PC ; sur Mobile il passe dans le menu de l'avatar) */}
             <button
               type="button"
               onClick={() => setSimulatedOffline(!isSimulatedOffline())}
-              title={
-                online
-                  ? 'Réseau actif — Cliquer pour tester le mode Hors-Ligne (sans réseau)'
-                  : 'Mode Hors-Ligne actif — Cliquer pour rétablir le réseau et synchroniser automatiquement'
-              }
-              className={`inline-flex items-center gap-1.5 px-3 py-2 lg:px-2.5 lg:py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer whitespace-nowrap shrink-0 ${
-                online
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
-                  : 'bg-amber-100 dark:bg-amber-950/60 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200'
-              }`}
+              title={connectionTooltip}
+              aria-label={connectionTooltip}
+              className="hidden md:inline-flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer shrink-0"
             >
-              {online ? <Wifi className="w-4 h-4 sm:w-4.5 sm:h-4.5 lg:w-4 lg:h-4 shrink-0" /> : <WifiOff className="w-4 h-4 sm:w-4.5 sm:h-4.5 lg:w-4 lg:h-4 shrink-0" />}
-              <span className="hidden sm:inline whitespace-nowrap">{online ? 'En ligne' : 'Hors-ligne'}</span>
-              {pendingCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-black leading-none">
-                  {pendingCount}
-                </span>
+              <span
+                className={`w-3 h-3 rounded-full transition ${
+                  online
+                    ? 'bg-[#15803D] ring-4 ring-[#15803D]/20'
+                    : 'bg-slate-400 dark:bg-slate-500 ring-4 ring-slate-400/20'
+                }`}
+              />
+            </button>
+
+            {/* 3. Thème (Tablette >= 768 px et PC ; sur Mobile il passe dans le menu de l'avatar) */}
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              title={theme === 'dark' ? 'Passer en thème clair' : 'Passer en thème sombre'}
+              aria-label={theme === 'dark' ? 'Passer en thème clair' : 'Passer en thème sombre'}
+              className="hidden md:inline-flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition shrink-0 cursor-pointer"
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-5 h-5 text-amber-400" />
+              ) : (
+                <Moon className="w-5 h-5 text-slate-700" />
               )}
             </button>
 
-            {/* Notifications Bell */}
+            {/* 4. Cloche de notifications (Mobile, Tablette, PC) */}
             <div className="relative shrink-0">
               <button
                 type="button"
-                onClick={() => setShowNotifMenu(v => !v)}
-                className="relative p-2.5 lg:p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition cursor-pointer"
+                onClick={() => setShowNotifMenu((v) => !v)}
+                className="relative w-11 h-11 min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition cursor-pointer"
                 title="Notifications système"
+                aria-label="Notifications système"
               >
-                <Bell className="w-5 h-5 lg:w-4 lg:h-4" />
+                <Bell className="w-5 h-5" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 flex h-4.5 w-4.5 lg:h-4 lg:w-4 items-center justify-center rounded-full bg-red-600 text-[10px] lg:text-[9px] font-black text-white shadow-xs">
+                  <span className="absolute top-1.5 right-1.5 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-[#DC2626] text-[10px] font-black text-white shadow-xs">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
               </button>
 
-              {/* Notification Popover — Optimized for Mobile (fixed inset-x-2.5 so it never overflows left) and Desktop */}
               {showNotifMenu && (
                 <>
                   <div
                     className="fixed inset-0 z-40 bg-black/25 sm:bg-transparent"
                     onClick={() => setShowNotifMenu(false)}
                   />
-                  <div className="fixed left-2.5 right-2.5 top-[4.75rem] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-96 max-w-[calc(100vw-1.25rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-3 sm:p-3.5 text-xs">
+                  <div className="fixed left-2.5 right-2.5 top-[4.25rem] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-96 max-w-[calc(100vw-1.25rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-3 sm:p-3.5 text-xs">
                     <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
                       <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 min-w-0">
-                        <Bell className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                        <span className="truncate">Notifications &bull; {currentUser.role}</span>
+                        <Bell className="w-3.5 h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                        <span className="truncate">Notifications &bull; {getDisplayRole(currentUser.role, currentUser.code)}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {unreadCount > 0 && (
                           <button
                             type="button"
                             onClick={markAllAsRead}
-                            className="px-2 py-0.5 rounded-lg bg-teal-50 dark:bg-teal-950/60 text-[#008DA9] dark:text-cyan-300 text-[10px] font-bold hover:bg-teal-100 cursor-pointer"
+                            className="px-2 py-0.5 rounded-lg bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] text-[10px] font-bold hover:opacity-90 cursor-pointer"
                           >
                             Tout marquer comme lu ({unreadCount})
                           </button>
@@ -553,7 +605,7 @@ export const Header: React.FC<HeaderProps> = ({
                             setShowNotifSettingsModal(true);
                           }}
                           title="Réglages des notifications"
-                          className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 hover:text-[#008DA9] dark:text-slate-300 dark:hover:text-cyan-300 cursor-pointer"
+                          className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 hover:text-[var(--marque-fonce)] dark:text-slate-300 dark:hover:text-[var(--marque-eclaircie)] cursor-pointer"
                           aria-label="Réglages des notifications"
                         >
                           <Settings className="w-3.5 h-3.5" />
@@ -575,7 +627,7 @@ export const Header: React.FC<HeaderProps> = ({
                           Aucune notification pour le moment.
                         </div>
                       ) : (
-                        notifications.map(n => (
+                        notifications.map((n) => (
                           <div
                             key={n.id}
                             onClick={() => handleOpenNotificationMessage(n)}
@@ -589,20 +641,24 @@ export const Header: React.FC<HeaderProps> = ({
                             }}
                             className={`p-2.5 sm:p-3 rounded-xl transition cursor-pointer ${
                               !n.is_read
-                                ? 'bg-teal-50/70 dark:bg-teal-950/35 border-l-2 border-[#008DA9]'
+                                ? 'bg-[var(--marque-clair)] border-l-2 border-[var(--marque-fonce)] dark:border-[var(--marque-eclaircie)]'
                                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <span className={`font-bold text-xs leading-snug break-words ${
-                                n.type === 'ecart' || n.type === 'rejet_demande_achat' || n.type === 'rejet_pdv'
-                                  ? 'text-red-600 dark:text-red-400'
-                                  : n.type === 'rectification_facture'
-                                  ? 'text-amber-600 dark:text-amber-400'
-                                  : n.type === 'validation_demande_achat' || n.type === 'facture_rectifiee' || n.type === 'validation_pdv'
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : 'text-slate-800 dark:text-slate-200'
-                              }`}>
+                              <span
+                                className={`font-bold text-xs leading-snug break-words ${
+                                  n.type === 'ecart' || n.type === 'rejet_demande_achat' || n.type === 'rejet_pdv'
+                                    ? 'text-[#B91C1C] dark:text-red-400'
+                                    : n.type === 'rectification_facture'
+                                    ? 'text-[#92400E] dark:text-amber-400'
+                                    : n.type === 'validation_demande_achat' ||
+                                      n.type === 'facture_rectifiee' ||
+                                      n.type === 'validation_pdv'
+                                    ? 'text-[#15803D] dark:text-emerald-400'
+                                    : 'text-slate-800 dark:text-slate-200'
+                                }`}
+                              >
                                 {n.title}
                               </span>
                               <span className="text-[9px] text-slate-400 whitespace-nowrap shrink-0">
@@ -621,13 +677,12 @@ export const Header: React.FC<HeaderProps> = ({
                                   e.stopPropagation();
                                   handleOpenNotificationMessage(n);
                                 }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#008DA9]/15 hover:bg-[#008DA9] text-[#008DA9] hover:text-white dark:text-cyan-300 font-bold text-[10px] transition cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--marque-clair)] hover:bg-[var(--marque-fonce)] text-[var(--marque-fonce)] hover:text-white dark:text-[var(--marque-eclaircie)] font-bold text-[10px] transition cursor-pointer"
                               >
                                 <ExternalLink className="w-3 h-3" />
                                 <span>Ouvrir le message</span>
                               </button>
 
-                              {/* Si la notification contient une Mini Facture Thermique soumise comme preuve */}
                               {n.proof && onOpenDocument && (
                                 <button
                                   type="button"
@@ -641,7 +696,7 @@ export const Header: React.FC<HeaderProps> = ({
                                       isProofPreview: true,
                                     });
                                   }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[10px] shadow-xs cursor-pointer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#92400E] hover:bg-[#78350F] text-white font-black text-[10px] shadow-xs cursor-pointer"
                                 >
                                   <Receipt className="w-3 h-3" />
                                   <span>Voir Preuve Thermique</span>
@@ -657,56 +712,193 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
 
-            {/* PWA Install Button (Mandatory as per PWA guidelines) */}
-            <PWAInstallButton compact />
+            {/* 5. Avatar (Mobile, Tablette, PC) */}
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowProfileMenu((prev) => !prev)}
+                className="w-11 h-11 min-w-[44px] min-h-[44px] lg:w-auto lg:px-2 inline-flex items-center justify-center gap-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 whitespace-nowrap transition cursor-pointer"
+                title="Menu du profil"
+                aria-label="Ouvrir le menu du profil"
+              >
+                <div className="h-9 w-9 rounded-full bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
+                  {currentUser.name.charAt(0)}
+                </div>
+                <div className="hidden lg:flex flex-col text-left max-w-[110px]">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight truncate">
+                    {currentUser.name.split(' ')[0]}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 leading-none truncate">
+                    {getDisplayRole(currentUser.role, currentUser.code)}
+                  </span>
+                </div>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden lg:inline shrink-0" />
+              </button>
 
-            {/* Dark / Light Theme Toggle */}
-            <button
-              onClick={onToggleTheme}
-              title={theme === 'dark' ? 'Passer en thème clair' : 'Passer en thème sombre'}
-              className="p-2.5 lg:p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition shrink-0 cursor-pointer"
-            >
-              {theme === 'dark' ? (
-                <Sun className="w-5 h-5 lg:w-4 lg:h-4 text-amber-400" />
-              ) : (
-                <Moon className="w-5 h-5 lg:w-4 lg:h-4 text-slate-600" />
+              {/* Menu de l'avatar :
+                  - Carte utilisateur + point coloré d'état de connexion à côté de l'avatar
+                  - Contrôle du thème et de l'état de connexion (indispensable sur Mobile < 768 px)
+                  - Sélecteur de rôles unique (seulement si DEMO_MODE est actif)
+              */}
+              {showProfileMenu && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40 bg-black/20 sm:bg-transparent"
+                    onClick={() => setShowProfileMenu(false)}
+                  />
+                  <div className="fixed right-2.5 top-[4.25rem] sm:absolute sm:right-0 sm:top-full sm:mt-2 w-80 max-w-[calc(100vw-1.25rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-3 text-xs space-y-2.5">
+                    {/* Carte de l'utilisateur actif avec point coloré de connexion à côté de l'avatar */}
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative flex items-center gap-1.5 shrink-0">
+                          <div className="h-9 w-9 rounded-full bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] font-bold text-sm flex items-center justify-center shrink-0">
+                            {currentUser.name.charAt(0)}
+                          </div>
+                          <span
+                            title={connectionTooltip}
+                            className={`w-3 h-3 rounded-full shrink-0 ${
+                              online
+                                ? 'bg-[#15803D] ring-2 ring-[#15803D]/25'
+                                : 'bg-slate-400 dark:bg-slate-500 ring-2 ring-slate-400/25'
+                            }`}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-black text-slate-900 dark:text-white truncate">
+                            {currentUser.name}
+                          </div>
+                          <div className="text-[11px] font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] truncate">
+                            {getDisplayRole(currentUser.role, currentUser.code)} &bull; {currentUser.code}
+                          </div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                            {currentUser.email}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* État de connexion & Thème dans le menu de l'avatar */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSimulatedOffline(!isSimulatedOffline())}
+                        title={connectionTooltip}
+                        className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+                      >
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                            online ? 'bg-[#15803D]' : 'bg-slate-400 dark:bg-slate-500'
+                          }`}
+                        />
+                        <span className="truncate">{online ? 'En ligne' : 'Hors ligne'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={onToggleTheme}
+                        className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+                      >
+                        {theme === 'dark' ? (
+                          <>
+                            <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+                            <span className="truncate">Thème clair</span>
+                          </>
+                        ) : (
+                          <>
+                            <Moon className="w-4 h-4 text-[var(--marque-fonce)] shrink-0" />
+                            <span className="truncate">Thème sombre</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <PWAInstallButton />
+
+                    {/* Sélecteur de rôles unique : uniquement dans le menu de l'avatar et seulement si DEMO_MODE est actif */}
+                    {isDemoMode && (
+                      <div className="pt-1 border-t border-slate-200 dark:border-slate-800">
+                        <div className="px-1 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          Changer de rôle (Mode démo) :
+                        </div>
+
+                        <div className="max-h-56 overflow-y-auto space-y-1 py-1">
+                          {usersList.map((u) => {
+                            const isCurrent = u.id === currentUser.id;
+                            return (
+                              <button
+                                key={u.id}
+                                type="button"
+                                onClick={() => {
+                                  if (onSwitchUser) {
+                                    onSwitchUser(u);
+                                  } else {
+                                    onSwitchRole(u.role as any);
+                                  }
+                                  setShowProfileMenu(false);
+                                }}
+                                className={`w-full min-h-[44px] p-2 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer ${
+                                  isCurrent
+                                    ? 'bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] font-bold'
+                                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate font-semibold text-xs flex items-center gap-1.5">
+                                    <span className="truncate">{u.name}</span>
+                                    <span
+                                      className={`text-[10px] font-mono px-1 rounded shrink-0 ${
+                                        isCurrent
+                                          ? 'bg-white/20 text-white'
+                                          : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                      }`}
+                                    >
+                                      {u.code}
+                                    </span>
+                                  </div>
+                                  <div
+                                    className={`text-[10px] truncate ${
+                                      isCurrent ? 'text-white/90' : 'text-slate-500 dark:text-slate-400'
+                                    }`}
+                                  >
+                                    {getDisplayRole(u.role, u.code)}
+                                  </div>
+                                </div>
+                                {isCurrent && <Check className="w-4 h-4 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
-            </button>
-
-            {/* User Avatar badge */}
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800 shrink-0 whitespace-nowrap">
-              <div className="h-9 w-9 sm:h-10 sm:w-10 lg:h-8 lg:w-8 rounded-full bg-teal-600 text-white font-bold text-sm lg:text-xs flex items-center justify-center shrink-0">
-                {currentUser.name.charAt(0)}
-              </div>
-              <span className="hidden md:inline text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">
-                {currentUser.name.split(' ')[0]}
-              </span>
             </div>
           </div>
         </div>
 
-        {/* Invite discrète "Activer les notifications" après connexion (demande de permission au clic seulement) */}
+        {/* Invite discrète "Activer les notifications" après connexion (sans texte tronqué ni débordement) */}
         {showPushInvite && (
-          <div className="px-3 sm:px-5 lg:px-6 py-2 bg-teal-50/90 dark:bg-slate-800/95 border-t border-teal-200/70 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2 min-w-0">
-              <Bell className="w-4 h-4 text-[#008DA9] dark:text-cyan-400 shrink-0" />
-              <span className="text-slate-700 dark:text-slate-200 font-medium truncate">
+          <div className="px-3 sm:px-5 lg:px-6 py-2 bg-[var(--marque-clair)] dark:bg-slate-800/95 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs w-full max-w-full">
+            <div className="flex items-start sm:items-center gap-2 min-w-0">
+              <Bell className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0 mt-0.5 sm:mt-0" />
+              <span className="text-slate-700 dark:text-slate-200 font-medium leading-snug break-words">
                 Recevez les alertes Baobab Distribution en temps réel sur cet appareil.
               </span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
               <button
                 type="button"
                 onClick={handleActivateNotificationsClick}
                 disabled={pushInviteBusy}
-                className="px-3 py-1 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-extrabold text-xs transition cursor-pointer disabled:opacity-60"
+                className="px-3 py-1 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] font-extrabold text-xs transition cursor-pointer disabled:opacity-60 whitespace-nowrap"
               >
                 {pushInviteBusy ? 'Activation...' : 'Activer les notifications'}
               </button>
               <button
                 type="button"
                 onClick={() => setShowNotifSettingsModal(true)}
-                className="px-2.5 py-1 rounded-xl bg-white/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs hover:bg-white transition cursor-pointer"
+                className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 font-bold text-xs hover:bg-slate-50 transition cursor-pointer whitespace-nowrap"
               >
                 Réglages
               </button>
@@ -723,6 +915,31 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </header>
 
+      {/* Modal Recherche Globale (Ctrl+K / Loupe) */}
+      <GlobalSearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        currentUser={currentUser}
+        onSelectResult={(item) => {
+          if (onSelectSearchResult) {
+            onSelectSearchResult(item);
+            return;
+          }
+          if (onNavigateTab && item.url) {
+            try {
+              const urlObj = new URL(item.url, window.location.origin);
+              const tab = urlObj.searchParams.get('tab');
+              if (tab) {
+                onNavigateTab(tab);
+                return;
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }}
+      />
+
       {/* Modal Réglages des Notifications */}
       {showNotifSettingsModal && (
         <NotificationSettingsPanel
@@ -734,46 +951,19 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Notification Message Detail Modal — Opens when tapping any notification on Mobile or Desktop */}
       {selectedNotification && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-xs overflow-y-auto"
-          onClick={() => setSelectedNotification(null)}
+        <FormModal
+          title={selectedNotification.title}
+          subtitle={`Message reçu le ${formatNotifDateTime(selectedNotification.created_at)}`}
+          icon={<Bell className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />}
+          onClose={() => setSelectedNotification(null)}
+          submitLabel="Fermer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setSelectedNotification(null);
+          }}
         >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 my-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-10 h-10 rounded-2xl bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 flex items-center justify-center shrink-0">
-                  <Bell className="w-5 h-5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
-                      Message de Notification
-                    </span>
-                    {selectedNotification.reference && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        {selectedNotification.reference}
-                      </span>
-                    )}
-                  </div>
-                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white leading-snug break-words mt-0.5">
-                    {selectedNotification.title}
-                  </h3>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedNotification(null)}
-                className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer"
-                aria-label="Fermer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Date & Destinataire info */}
+          <div className="space-y-4 text-xs">
+            {/* Destinataire info */}
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 px-3 py-2 rounded-xl">
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#008DA9]" />
@@ -858,35 +1048,28 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
 
-            {/* Footer Actions */}
-            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              {(() => {
-                const action = getNotificationActionTarget(selectedNotification);
-                if (!action || !onNavigateTab) return null;
-                return (
+            {/* Action buttons if available */}
+            {(() => {
+              const action = getNotificationActionTarget(selectedNotification);
+              if (!action || !onNavigateTab) return null;
+              return (
+                <div className="pt-2">
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedNotification(null);
                       onNavigateTab(action.tab);
                     }}
-                    className="px-4 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    className="w-full min-h-[48px] py-2.5 px-4 rounded-[12px] bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-xs cursor-pointer"
                   >
                     {action.icon}
                     <span>{action.label}</span>
                   </button>
-                );
-              })()}
-              <button
-                type="button"
-                onClick={() => setSelectedNotification(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer"
-              >
-                Fermer
-              </button>
-            </div>
+                </div>
+              );
+            })()}
           </div>
-        </div>
+        </FormModal>
       )}
     </>
   );

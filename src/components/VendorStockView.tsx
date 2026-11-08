@@ -22,6 +22,11 @@ import {
   Download
 } from 'lucide-react';
 import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
+import { exportTableToCsv } from '../utils/csvExport';
+import { FormModal } from './FormModal';
+import { InfoTooltip } from './InfoTooltip';
+import { FieldError, ConfirmDestructiveButton } from './FormControls';
+import { DataTable } from './DataTable';
 
 interface Product {
   id: string;
@@ -226,7 +231,10 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
       }
 
       const mySales = sales.filter(
-        (s) => s.vendor_id === currentUser?.id && (s.date || '') >= activeCycleStartDate
+        (s) =>
+          s.vendor_id === currentUser?.id &&
+          s.status !== 'annulee' &&
+          (s.date || '') >= activeCycleStartDate
       );
       let soldBoxes = 0;
       for (const s of mySales) {
@@ -569,13 +577,46 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
     });
   };
 
+  const handleExportVendorStockCsv = () => {
+    const displayedItems = filteredCategoryGroups.flatMap((g) => g.items);
+    exportTableToCsv({
+      filename: `stock_vendeur_${currentUser?.code || 'baobab'}_${new Date().toISOString().split('T')[0]}.csv`,
+      columns: [
+        'Code SKU',
+        'Designation Produit',
+        'Conditionnement',
+        'Categorie (Gamme)',
+        'Cartons Charges',
+        'Cartons Vendus',
+        'Cartons Retournes',
+        'Stock Disponible (Cartons)',
+        'Stock Disponible (Unites)',
+        'Prix Carton (FCFA)',
+        'Valeur Stock (FCFA)',
+      ],
+      rows: displayedItems.map((it) => [
+        it.code,
+        it.name,
+        it.packaging,
+        it.gamme,
+        it.chargedBoxes,
+        it.soldBoxes,
+        it.returnedBoxes,
+        it.theoreticalQty,
+        it.theoreticalQty * it.units_per_box,
+        it.price_box,
+        it.stockValue,
+      ]),
+    });
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header : Mon Stock par Catégorie + Bouton Faire une demande de stock */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-sm">
+            <div className="w-10 h-10 rounded-xl bg-[var(--marque-fonce)] text-white flex items-center justify-center shadow-sm">
               <Boxes className="w-5 h-5" />
             </div>
             <div>
@@ -583,30 +624,24 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                 <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
                   Mon Stock par Catégorie
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
-                  {currentUser?.code} &bull; {currentUser?.name}
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white">
+                  Vendeur
                 </span>
               </div>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                Consultez votre stock disponible en camionnette classé par catégorie (gamme) et effectuez vos demandes de réapprovisionnement.
-              </p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+                  Stock camionnette par gamme et réapprovisionnement.
+                </p>
+                <InfoTooltip text="Consultez votre stock disponible en camionnette classé par catégorie (gamme) et effectuez vos demandes de réapprovisionnement." />
+              </div>
             </div>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
-            type="button"
-            onClick={handleExportVendorStockPdf}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exporter Mon Stock (PDF)</span>
-          </button>
-
-          <button
             onClick={() => handleOpenStockRequestModal()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer"
           >
             <PlusCircle className="w-4 h-4" />
             <span>Faire une demande de stock</span>
@@ -615,9 +650,9 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
           {onNavigateTab && (
             <button
               onClick={() => onNavigateTab('nouvelle-vente')}
-              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
             >
-              <ShoppingBag className="w-4 h-4 text-teal-400" />
+              <ShoppingBag className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
               <span>Nouvelle vente</span>
             </button>
           )}
@@ -870,196 +905,189 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                 </div>
               </div>
 
-              {/* Mobile Cards (< 640px) */}
-              <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
-                {group.items.map((item) => {
+              <DataTable
+                data={group.items}
+                rowKey={(item) => item.productId}
+                pageSize={20}
+                emptyMessage="Aucun produit dans cette gamme."
+                mobileTitle={(item) => (
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
+                      <span>{item.name}</span>
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                        {item.code}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {item.packaging} ({item.units_per_box} u/ctn) &bull; Dépôt : {item.stock_depot} ctn
+                    </div>
+                  </div>
+                )}
+                mobileBadge={(item) => {
                   const isOut = item.theoreticalQty <= 0;
                   const isLow = item.theoreticalQty > 0 && item.theoreticalQty <= 5;
                   return (
-                    <div key={item.productId} className="p-3.5 space-y-2.5 text-xs">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-black inline-flex items-center gap-1 shrink-0 whitespace-nowrap ${
+                        isOut
+                          ? 'bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300'
+                          : isLow
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                      }`}
+                    >
+                      {item.theoreticalQty} ctn
+                    </span>
+                  );
+                }}
+                mobileActions={(item) => (
+                  <button
+                    onClick={() =>
+                      handleOpenStockRequestModal({
+                        category: item.gamme,
+                        productId: item.productId,
+                      })
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Demander</span>
+                  </button>
+                )}
+                totalsFooter={
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      Total {group.gamme} :{' '}
+                      {group.items.reduce((s, it) => s + Number(it.theoreticalQty || 0), 0)} cartons disponibles
+                    </span>
+                    <span className="whitespace-nowrap font-black text-[var(--marque-fonce)] dark:text-teal-300">
+                      Valeur : {group.items.reduce((s, it) => s + Number(it.stockValue || 0), 0).toLocaleString('fr-FR')} FCFA
+                    </span>
+                  </div>
+                }
+                columns={[
+                  {
+                    key: 'product',
+                    header: 'Produit & Conditionnement',
+                    hideOnMobileCard: true,
+                    render: (item) => (
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-teal-600 font-bold shrink-0">
+                          <Package className="w-4 h-4" />
+                        </div>
+                        <div>
                           <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
                             <span>{item.name}</span>
                             <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
                               {item.code}
                             </span>
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-0.5">
-                            {item.packaging} ({item.units_per_box} u/ctn) &bull; Dépôt : {item.stock_depot} ctn
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {item.packaging} ({item.units_per_box} u/ctn) &bull; Dépôt :{' '}
+                            <span className="font-semibold text-slate-700 dark:text-slate-300">
+                              {item.stock_depot} ctn
+                            </span>
                           </div>
                         </div>
-
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[11px] font-black inline-flex items-center gap-1 shrink-0 ${
-                            isOut
-                              ? 'bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300'
-                              : isLow
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
-                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                          }`}
-                        >
-                          {item.theoreticalQty} ctn
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'movements',
+                    header: 'Mouvements (Chg / Vnd / Ret)',
+                    mobileLabel: 'Mouvements',
+                    align: 'center',
+                    render: (item) => (
+                      <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-100 dark:border-slate-800 text-[11px]">
+                        <span className="font-semibold text-slate-600 dark:text-slate-300" title="Chargé">
+                          Chg: <strong>{item.chargedBoxes}</strong>
+                        </span>
+                        <span className="text-slate-300 dark:text-slate-700">|</span>
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400" title="Vendu">
+                          Vnd: <strong>{item.soldBoxes}</strong>
+                        </span>
+                        <span className="text-slate-300 dark:text-slate-700">|</span>
+                        <span className="font-semibold text-amber-600 dark:text-amber-400" title="Retourné">
+                          Ret: <strong>{item.returnedBoxes}</strong>
                         </span>
                       </div>
-
-                      <div className="grid grid-cols-3 gap-1.5 text-center p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-[11px]">
-                        <div>
-                          <span className="text-slate-400 block text-[10px]">Chargé</span>
-                          <span className="font-bold text-slate-700 dark:text-slate-200">{item.chargedBoxes} ctn</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400 block text-[10px]">Vendu</span>
-                          <span className="font-bold text-emerald-600 dark:text-emerald-400">{item.soldBoxes} ctn</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400 block text-[10px]">Retourné</span>
-                          <span className="font-bold text-amber-600 dark:text-amber-400">{item.returnedBoxes} ctn</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2 pt-1">
-                        <div>
-                          <div className="text-[10px] text-slate-400">
-                            Prix/ctn : {item.price_box.toLocaleString('fr-FR')} FCFA
-                          </div>
-                          <div className="font-black text-slate-900 dark:text-white">
-                            Valeur : {item.stockValue.toLocaleString('fr-FR')} FCFA
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() =>
-                            handleOpenStockRequestModal({
-                              category: item.gamme,
-                              productId: item.productId,
-                            })
-                          }
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Demander</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Tablet & Desktop Table (>= 640px) — Sans débordement */}
-              <div className="hidden sm:block">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold uppercase text-slate-400 bg-slate-50/30 dark:bg-slate-900/40">
-                      <th className="py-3 px-3">Produit &amp; Conditionnement</th>
-                      <th className="py-3 px-2.5 text-center">Mouvements (Chg / Vnd / Ret)</th>
-                      <th className="py-3 px-3 text-center">Mon Stock Disponible</th>
-                      <th className="py-3 px-3 text-right">Prix &amp; Valeur Stock</th>
-                      <th className="py-3 px-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                    {group.items.map((item) => {
+                    ),
+                  },
+                  {
+                    key: 'available',
+                    header: 'Mon Stock Disponible',
+                    align: 'center',
+                    isNumeric: true,
+                    hideOnMobileCard: true,
+                    render: (item) => {
                       const isOut = item.theoreticalQty <= 0;
                       const isLow = item.theoreticalQty > 0 && item.theoreticalQty <= 5;
                       return (
-                        <tr
-                          key={item.productId}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition"
-                        >
-                          <td className="py-3 px-3">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-teal-600 font-bold shrink-0">
-                                <Package className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
-                                  <span>{item.name}</span>
-                                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
-                                    {item.code}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                                  {item.packaging} ({item.units_per_box} u/ctn) &bull; Dépôt :{' '}
-                                  <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                    {item.stock_depot} ctn
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-2.5 text-center">
-                            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-100 dark:border-slate-800 text-[11px]">
-                              <span className="font-semibold text-slate-600 dark:text-slate-300" title="Chargé">
-                                Chg: <strong>{item.chargedBoxes}</strong>
-                              </span>
-                              <span className="text-slate-300 dark:text-slate-700">|</span>
-                              <span className="font-semibold text-emerald-600 dark:text-emerald-400" title="Vendu">
-                                Vnd: <strong>{item.soldBoxes}</strong>
-                              </span>
-                              <span className="text-slate-300 dark:text-slate-700">|</span>
-                              <span className="font-semibold text-amber-600 dark:text-amber-400" title="Retourné">
-                                Ret: <strong>{item.returnedBoxes}</strong>
-                              </span>
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-3 text-center">
-                            <div className="inline-flex flex-col items-center">
-                              <span
-                                className={`px-2.5 py-1 rounded-full text-xs font-black inline-flex items-center gap-1 ${
-                                  isOut
-                                    ? 'bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300'
-                                    : isLow
-                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
-                                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                }`}
-                              >
-                                {isOut ? (
-                                  <XCircle className="w-3.5 h-3.5" />
-                                ) : isLow ? (
-                                  <AlertTriangle className="w-3.5 h-3.5" />
-                                ) : (
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                )}
-                                {item.theoreticalQty} carton{item.theoreticalQty > 1 ? 's' : ''}
-                              </span>
-                              <span className="text-[10px] text-slate-400 mt-0.5">
-                                {item.theoreticalQty * item.units_per_box} unités
-                              </span>
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-3 text-right">
-                            <div className="font-black text-slate-900 dark:text-white">
-                              {item.stockValue.toLocaleString('fr-FR')} FCFA
-                            </div>
-                            <div className="text-[10px] text-slate-500">
-                              {item.price_box.toLocaleString('fr-FR')} FCFA / ctn
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() =>
-                                handleOpenStockRequestModal({
-                                  category: item.gamme,
-                                  productId: item.productId,
-                                })
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Demander</span>
-                            </button>
-                          </td>
-                        </tr>
+                        <div className="inline-flex flex-col items-center">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-xs font-black inline-flex items-center gap-1 whitespace-nowrap ${
+                              isOut
+                                ? 'bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300'
+                                : isLow
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                                : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                            }`}
+                          >
+                            {isOut ? (
+                              <XCircle className="w-3.5 h-3.5" />
+                            ) : isLow ? (
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                            ) : (
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                            )}
+                            {item.theoreticalQty} carton{item.theoreticalQty > 1 ? 's' : ''}
+                          </span>
+                          <span className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
+                            {item.theoreticalQty * item.units_per_box} unités
+                          </span>
+                        </div>
                       );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                    },
+                  },
+                  {
+                    key: 'value',
+                    header: 'Prix & Valeur Stock',
+                    mobileLabel: 'Valeur stock',
+                    align: 'right',
+                    isNumeric: true,
+                    render: (item) => (
+                      <div className="whitespace-nowrap">
+                        <div className="font-black text-slate-900 dark:text-white">
+                          {item.stockValue.toLocaleString('fr-FR')} FCFA
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {item.price_box.toLocaleString('fr-FR')} FCFA / ctn
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'actions',
+                    header: 'Action',
+                    align: 'right',
+                    hideOnMobileCard: true,
+                    render: (item) => (
+                      <button
+                        onClick={() =>
+                          handleOpenStockRequestModal({
+                            category: item.gamme,
+                            productId: item.productId,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Demander</span>
+                      </button>
+                    ),
+                  },
+                ]}
+              />
             </div>
           ))
         )}
@@ -1070,7 +1098,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-              <Truck className="w-5 h-5 text-teal-600" />
+              <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
               <span>Suivi de Mes Demandes de Stock ({myStockRequests.length})</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1079,7 +1107,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
           </div>
           <button
             onClick={() => handleOpenStockRequestModal()}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-xs transition cursor-pointer self-start sm:self-auto"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer self-start sm:self-auto"
           >
             <PlusCircle className="w-4 h-4" />
             <span>Nouvelle demande de stock</span>
@@ -1165,12 +1193,11 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                       </div>
 
                       {status === 'Demandée' && (
-                        <button
-                          onClick={() => handleCancelStockRequest(chg.id)}
-                          className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-800 text-xs font-bold transition cursor-pointer"
-                        >
-                          Annuler
-                        </button>
+                        <ConfirmDestructiveButton
+                          label="Annuler"
+                          confirmLabel="Confirmer l'annulation ?"
+                          onConfirm={() => handleCancelStockRequest(chg.id)}
+                        />
                       )}
                     </div>
                   </div>
@@ -1183,281 +1210,250 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
 
       {/* MODAL : FAIRE UNE DEMANDE DE STOCK (PAR CATÉGORIE & MULTI-PRODUITS) */}
       {showRequestModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-5 my-8 max-h-[92vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+        <FormModal
+          title="Faire une Demande de Stock"
+          subtitle="Sélectionnez vos produits par catégorie, validez chaque ligne puis transmettez votre demande au Magasinier."
+          icon={<Boxes className="w-5 h-5 text-teal-600" />}
+          onClose={() => setShowRequestModal(false)}
+          onSubmit={handleSubmitStockRequest}
+          submitLabel={
+            <>
+              <Send className="w-4 h-4" />
+              <span>
+                {isSubmittingRequest
+                  ? 'Envoi en cours...'
+                  : 'Envoyer la demande de stock au Magasinier'}
+              </span>
+            </>
+          }
+          submitDisabled={isSubmittingRequest || validatedLines.length === 0}
+          isDirty={validatedLines.length > 0 || Boolean(currentLineProductId)}
+        >
+          <div className="space-y-4">
+            {requestError && <FieldError message={requestError} />}
+
+            {/* Desired Date */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <Boxes className="w-5 h-5 text-teal-600" />
-                  <span>Faire une Demande de Stock</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Sélectionnez vos produits par catégorie, validez chaque ligne puis transmettez votre demande au Magasinier.
-                </p>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Date souhaitée de chargement *
+                </label>
+                <input
+                  type="date"
+                  value={desiredDate}
+                  onChange={(e) => setDesiredDate(e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  required
+                />
               </div>
-              <button
-                onClick={() => setShowRequestModal(false)}
-                className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center font-bold text-lg cursor-pointer"
-              >
-                &times;
-              </button>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Filtrer par catégorie (gamme)
+                </label>
+                <select
+                  value={modalCategoryFilter}
+                  onChange={(e) => setModalCategoryFilter(e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                >
+                  <option value="all">Toutes les catégories ({categoriesSummary.length})</option>
+                  {categoriesSummary.map((cat) => (
+                    <option key={cat.gamme} value={cat.gamme}>
+                      {cat.gamme} (Mon stock : {cat.totalAvailableBoxes} ctn)
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {requestError && (
-              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs font-semibold flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{requestError}</span>
+            {/* Validated lines list */}
+            {validatedLines.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Produits validés dans votre demande ({validatedLines.length})
+                </p>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+                  {validatedLines.map((line, idx) => (
+                    <div
+                      key={line.productId}
+                      className="p-3 bg-emerald-50/40 dark:bg-emerald-950/20 flex flex-col gap-2 text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 font-bold text-[10px]">
+                            {line.gamme}
+                          </span>
+                          <span className="font-bold text-slate-900 dark:text-white">
+                            {line.name}
+                          </span>
+                          <span className="font-mono text-slate-400">({line.code})</span>
+                        </div>
+                        <div className="text-slate-500 mt-1">
+                          Quantité demandée :{' '}
+                          <strong className="text-emerald-700 dark:text-emerald-400">
+                            {line.requestedBoxes} cartons
+                          </strong>{' '}
+                          &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA ={' '}
+                          <strong className="text-slate-800 dark:text-slate-200">
+                            {line.total.toLocaleString('fr-FR')} FCFA
+                          </strong>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                        <ConfirmDestructiveButton
+                          label="Supprimer"
+                          confirmLabel="Supprimer ?"
+                          onConfirm={() => handleRemoveValidatedLine(idx)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            <form onSubmit={handleSubmitStockRequest} className="space-y-4">
-              {/* Desired Date */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Date souhaitée de chargement *
-                  </label>
-                  <input
-                    type="date"
-                    value={desiredDate}
-                    onChange={(e) => setDesiredDate(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Filtrer par catégorie (gamme)
-                  </label>
-                  <select
-                    value={modalCategoryFilter}
-                    onChange={(e) => setModalCategoryFilter(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                  >
-                    <option value="all">Toutes les catégories ({categoriesSummary.length})</option>
-                    {categoriesSummary.map((cat) => (
-                      <option key={cat.gamme} value={cat.gamme}>
-                        {cat.gamme} (Mon stock : {cat.totalAvailableBoxes} ctn)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Validated lines list */}
-              {validatedLines.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Produits validés dans votre demande ({validatedLines.length})
+            {/* Line Builder by Category */}
+            {isAddingLine ? (
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-teal-500/40 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black uppercase tracking-wider text-teal-700 dark:text-teal-400">
+                    Sélectionner un produit à demander
                   </p>
-                  <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-                    {validatedLines.map((line, idx) => (
-                      <div
-                        key={line.productId}
-                        className="p-3 bg-emerald-50/40 dark:bg-emerald-950/20 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 font-bold text-[10px]">
-                              {line.gamme}
-                            </span>
-                            <span className="font-bold text-slate-900 dark:text-white">
-                              {line.name}
-                            </span>
-                            <span className="font-mono text-slate-400">({line.code})</span>
-                          </div>
-                          <div className="text-slate-500 mt-1">
-                            Quantité demandée :{' '}
-                            <strong className="text-emerald-700 dark:text-emerald-400">
-                              {line.requestedBoxes} cartons
-                            </strong>{' '}
-                            &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA ={' '}
-                            <strong className="text-slate-800 dark:text-slate-200">
-                              {line.total.toLocaleString('fr-FR')} FCFA
-                            </strong>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveValidatedLine(idx)}
-                          className="text-red-500 hover:text-red-700 p-1.5 cursor-pointer"
-                          title="Retirer ce produit"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Line Builder by Category (Quantité + Valider directement dans le bloc du produit sélectionné) */}
-              {isAddingLine ? (
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-teal-500/40 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-black uppercase tracking-wider text-teal-700 dark:text-teal-400">
-                      Sélectionner un produit à demander
-                    </p>
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      {availableProductsForRequest.length} produit(s) disponible(s)
-                    </span>
-                  </div>
-
-                  {availableProductsForRequest.length === 0 ? (
-                    <p className="text-xs text-slate-500">
-                      Aucun autre produit disponible dans cette catégorie. Changez de catégorie ci-dessus.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-96 overflow-y-auto pr-1">
-                      {availableProductsForRequest.map((p) => {
-                        const isSelected = p.productId === currentLineProductId;
-                        return (
-                          <div
-                            key={p.productId}
-                            onClick={() => handleSelectProductInBuilder(p.productId)}
-                            className={`text-left p-3 rounded-xl border transition flex flex-col justify-between gap-1.5 ${
-                              isSelected
-                                ? 'border-2 border-teal-600 bg-teal-50/90 dark:bg-teal-950/60 shadow-xs'
-                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-400 cursor-pointer'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300 mb-1">
-                                  {p.gamme}
-                                </span>
-                                <p className="text-xs font-black text-slate-900 dark:text-white leading-tight">
-                                  {p.name}
-                                </p>
-                              </div>
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
-                                  isSelected
-                                    ? 'bg-teal-600 text-white'
-                                    : 'text-teal-700 dark:text-teal-400 underline'
-                                }`}
-                              >
-                                {isSelected ? 'Sélectionné' : 'Choisir'}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-slate-800">
-                              <span className="text-slate-600 dark:text-slate-300">
-                                Mon stock :{' '}
-                                <strong className="text-teal-700 dark:text-teal-400">
-                                  {p.theoreticalQty} ctn
-                                </strong>
-                              </span>
-                              <span className="text-slate-500">
-                                Dépôt : <strong>{p.stock_depot} ctn</strong>
-                              </span>
-                            </div>
-
-                            {isSelected && (
-                              <div
-                                onClick={(e) => e.stopPropagation()}
-                                className="mt-2 pt-2.5 border-t border-teal-500/30 space-y-2.5"
-                              >
-                                <div>
-                                  <div className="flex items-center justify-between text-[11px] mb-1">
-                                    <label className="font-bold text-slate-700 dark:text-slate-200">
-                                      Quantité (Max {p.stock_depot} ctn) :
-                                    </label>
-                                    <span className="font-black text-teal-700 dark:text-teal-300">
-                                      {(Math.max(0, Number(currentLineQty) || 0) * p.price_box).toLocaleString('fr-FR')} FCFA
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => setCurrentLineQty((q) => Math.max(1, (Number(q) || 1) - 1))}
-                                      className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
-                                    >
-                                      -
-                                    </button>
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={p.stock_depot}
-                                      value={currentLineQty}
-                                      onChange={(e) => {
-                                        const val = parseInt(e.target.value, 10);
-                                        if (Number.isNaN(val)) {
-                                          setCurrentLineQty(0);
-                                        } else {
-                                          setCurrentLineQty(Math.min(p.stock_depot, Math.max(0, val)));
-                                        }
-                                      }}
-                                      className="w-full h-9 px-3 text-sm font-black text-center rounded-lg border-2 border-teal-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setCurrentLineQty((q) => Math.min(p.stock_depot, (Number(q) || 0) + 1))}
-                                      className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={handleValidateProductChoice}
-                                  className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 active:scale-[0.99] text-white font-black text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
-                                >
-                                  <Check className="w-4 h-4 stroke-[2.5]" />
-                                  <span>Valider</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-300 dark:border-slate-700">
-                  <span className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                    Ligne validée. Souhaitez-vous ajouter un autre produit ?
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    {availableProductsForRequest.length} produit(s) disponible(s)
                   </span>
-                  <button
-                    type="button"
-                    onClick={handleStartNextProductLine}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-black text-white dark:bg-teal-700 dark:hover:bg-teal-600 text-xs font-bold transition cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ Ajouter un produit</span>
-                  </button>
                 </div>
-              )}
 
-              {/* Footer Actions */}
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                {availableProductsForRequest.length === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    Aucun autre produit disponible dans cette catégorie. Changez de catégorie ci-dessus.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-96 overflow-y-auto pr-1">
+                    {availableProductsForRequest.map((p) => {
+                      const isSelected = p.productId === currentLineProductId;
+                      return (
+                        <div
+                          key={p.productId}
+                          onClick={() => handleSelectProductInBuilder(p.productId)}
+                          className={`text-left p-3 rounded-xl border transition flex flex-col justify-between gap-1.5 ${
+                            isSelected
+                              ? 'border-2 border-teal-600 bg-teal-50/90 dark:bg-teal-950/60 shadow-xs'
+                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-400 cursor-pointer'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300 mb-1">
+                                {p.gamme}
+                              </span>
+                              <p className="text-xs font-black text-slate-900 dark:text-white leading-tight">
+                                {p.name}
+                              </p>
+                            </div>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                isSelected
+                                  ? 'bg-[var(--marque-fonce)] text-white'
+                                  : 'text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] underline'
+                              }`}
+                            >
+                              {isSelected ? 'Sélectionné' : 'Choisir'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-slate-800">
+                            <span className="text-slate-600 dark:text-slate-300">
+                              Mon stock :{' '}
+                              <strong className="text-teal-700 dark:text-teal-400">
+                                {p.theoreticalQty} ctn
+                              </strong>
+                            </span>
+                            <span className="text-slate-500">
+                              Dépôt : <strong>{p.stock_depot} ctn</strong>
+                            </span>
+                          </div>
+
+                          {isSelected && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-2 pt-2.5 border-t border-teal-500/30 space-y-2.5"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between text-[11px] mb-1">
+                                  <label className="font-bold text-slate-700 dark:text-slate-200">
+                                    Quantité (Max {p.stock_depot} ctn) :
+                                  </label>
+                                  <span className="font-black text-teal-700 dark:text-teal-300">
+                                    {(Math.max(0, Number(currentLineQty) || 0) * p.price_box).toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentLineQty((q) => Math.max(1, (Number(q) || 1) - 1))}
+                                    className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={p.stock_depot}
+                                    value={currentLineQty}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value, 10);
+                                      if (Number.isNaN(val)) {
+                                        setCurrentLineQty(0);
+                                      } else {
+                                        setCurrentLineQty(Math.min(p.stock_depot, Math.max(0, val)));
+                                      }
+                                    }}
+                                    className="w-full h-9 px-3 text-sm font-black text-center rounded-lg border-2 border-[var(--marque-fonce)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentLineQty((q) => Math.min(p.stock_depot, (Number(q) || 0) + 1))}
+                                    className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black text-sm flex items-center justify-center hover:bg-slate-100 active:scale-95 transition shrink-0 cursor-pointer"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={handleValidateProductChoice}
+                                className="w-full h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:scale-[0.99] text-white font-black text-sm shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                              >
+                                <Check className="w-4 h-4 stroke-[2.5]" />
+                                <span>Valider</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-300 dark:border-slate-700">
+                <span className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  Ligne validée. Souhaitez-vous ajouter un autre produit ?
+                </span>
                 <button
                   type="button"
-                  onClick={() => setShowRequestModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                  onClick={handleStartNextProductLine}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white text-xs font-bold transition cursor-pointer"
                 >
-                  Fermer
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingRequest || validatedLines.length === 0}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-bold shadow-xs transition flex items-center gap-2 cursor-pointer"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>
-                    {isSubmittingRequest
-                      ? 'Envoi en cours...'
-                      : 'Envoyer la demande de stock au Magasinier'}
-                  </span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Ajouter un produit</span>
                 </button>
               </div>
-            </form>
+            )}
           </div>
-        </div>
+        </FormModal>
       )}
     </div>
   );

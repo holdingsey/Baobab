@@ -13,9 +13,16 @@ import {
   ShieldCheck,
   Package,
   Calculator,
+  Printer,
   X,
 } from 'lucide-react';
 import { UserSession } from './LoginScreen';
+import { InfoTooltip } from './InfoTooltip';
+import { FormModal } from './FormModal';
+import { ConfirmDestructiveButton } from './FormControls';
+import { DataTable } from './DataTable';
+import { ExportViewButton } from './ExtractionsView';
+import { InvoiceData } from './PrintableDocument';
 
 interface PurchaseRequestItem {
   code: string;
@@ -50,6 +57,7 @@ interface DemandesAchatViewProps {
   products?: any[];
   purchaseRequests?: PurchaseRequestRecord[];
   onRefreshData?: () => void;
+  onOpenDocument?: (doc: InvoiceData) => void;
 }
 
 export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
@@ -57,16 +65,17 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
   products = [],
   purchaseRequests: externalRequests,
   onRefreshData,
+  onOpenDocument,
 }) => {
   const isAdmin = currentUser.role === 'Administrateur';
-  const isMagasinier = currentUser.role === 'Magasinier';
+  const isMagasinier = currentUser.role === 'Gestionnaire de stock' || currentUser.role === 'Magasinier';
   const isComptable = currentUser.role === 'Comptable';
-  const canCreateRequest = isMagasinier || isComptable;
+  const canCreateRequest = isMagasinier || isComptable || isAdmin;
 
   const [requests, setRequests] = useState<PurchaseRequestRecord[]>(externalRequests || []);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | 'en_attente' | 'validee' | 'rejetee'>('all');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'Magasinier' | 'Comptable'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable'>('all');
   const [feedbackBanner, setFeedbackBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Create Modal state (Magasinier & Comptable)
@@ -305,19 +314,33 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
 
   const visibleRequests = useMemo(() => {
     return requests.filter((r) => {
-      if (!isAdmin && r.requester_role !== currentUser.role && r.requester_id !== currentUser.id) {
+      const sameRole =
+        r.requester_role === currentUser.role ||
+        (isMagasinier && (r.requester_role === 'Gestionnaire de stock' || r.requester_role === 'Magasinier'));
+      if (!isAdmin && !sameRole && r.requester_id !== currentUser.id) {
         return false;
       }
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
-      if (isAdmin && roleFilter !== 'all' && r.requester_role !== roleFilter) return false;
+      if (isAdmin && roleFilter !== 'all') {
+        if (roleFilter === 'Gestionnaire de stock' || roleFilter === 'Magasinier') {
+          if (r.requester_role !== 'Gestionnaire de stock' && r.requester_role !== 'Magasinier') return false;
+        } else if (r.requester_role !== roleFilter) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [requests, isAdmin, currentUser.role, currentUser.id, statusFilter, roleFilter]);
+  }, [requests, isAdmin, isMagasinier, currentUser.role, currentUser.id, statusFilter, roleFilter]);
 
   const counts = useMemo(() => {
     const base = isAdmin
       ? requests
-      : requests.filter((r) => r.requester_role === currentUser.role || r.requester_id === currentUser.id);
+      : requests.filter(
+          (r) =>
+            r.requester_role === currentUser.role ||
+            (isMagasinier && (r.requester_role === 'Gestionnaire de stock' || r.requester_role === 'Magasinier')) ||
+            r.requester_id === currentUser.id
+        );
     return {
       total: base.length,
       pending: base.filter((r) => r.status === 'en_attente').length,
@@ -327,7 +350,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         .filter((r) => r.status === 'validee')
         .reduce((acc, r) => acc + Number(r.total_amount || 0), 0),
     };
-  }, [requests, isAdmin, currentUser.role, currentUser.id]);
+  }, [requests, isAdmin, isMagasinier, currentUser.role, currentUser.id]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
@@ -337,43 +360,61 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
               {isAdmin
-                ? "Validation des Demandes d'Achat (Magasinier & Comptable)"
-                : `Mes Demandes d'Achat • ${currentUser.role}`}
+                ? "Validation des Demandes d'Achat"
+                : "Mes Demandes d'Achat"}
             </h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300">
-              {isAdmin ? 'Approbation Direction Générale' : `Compte ${currentUser.role} (${currentUser.code})`}
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white">
+              {isAdmin
+                ? 'Administrateur'
+                : currentUser.role === 'Gestionnaire de stock'
+                ? 'Magasinier'
+                : currentUser.role}
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {isAdmin
-              ? "Examinez, validez ou rejetez les demandes d'achat soumises par le Magasinier et le Comptable (avec motif optionnel). Le demandeur reçoit immédiatement une notification de votre décision."
-              : "Soumettez vos demandes d'achat (avec motif optionnel) à l'Administrateur et recevez une notification dès validation ou rejet."}
-          </p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              Suivi et validation des demandes d&apos;achat.
+            </p>
+            <InfoTooltip
+              text={
+                isAdmin
+                  ? "Examinez, validez ou rejetez les demandes d'achat soumises par le Gestionnaire de stock et le Comptable (avec motif optionnel). Le demandeur reçoit immédiatement une notification de votre décision."
+                  : "Soumettez vos demandes d'achat (avec motif optionnel) à l'Administrateur et recevez une notification dès validation ou rejet."
+              }
+            />
+          </div>
         </div>
 
-        {canCreateRequest ? (
-          <button
-            type="button"
-            onClick={() => {
-              setTitle(
-                isMagasinier
-                  ? 'Réapprovisionnement cartons dépôt Sotuba'
-                  : 'Commande fournitures comptables & rouleaux thermiques'
-              );
-              setRequestMotif('');
-              setShowCreateModal(true);
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-sm transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nouvelle Demande d&apos;Achat</span>
-          </button>
-        ) : (
-          <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold">
-            <ShieldCheck className="w-4 h-4 text-[#008DA9]" />
-            <span>Validation / Rejet Administrateur (Motif optionnel)</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <ExportViewButton
+            currentUser={currentUser as any}
+            jeu="demandes_achat"
+            label="Exporter"
+          />
+          {canCreateRequest ? (
+            <button
+              type="button"
+              onClick={() => {
+                setTitle(
+                  isMagasinier
+                    ? 'Réapprovisionnement cartons dépôt Sotuba'
+                    : 'Commande fournitures comptables & rouleaux thermiques'
+                );
+                setRequestMotif('');
+                setShowCreateModal(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-sm transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nouvelle Demande d&apos;Achat</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold">
+              <ShieldCheck className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              <span>Validation / Rejet Administrateur (Motif optionnel)</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Feedback Banner */}
@@ -683,78 +724,94 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
                   </div>
                 </div>
 
-                {/* Items Presentation (Mobile Cards <640px, Desktop Table >=640px) */}
-                {/* Mobile Cards View */}
-                <div className="block sm:hidden space-y-2">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 flex items-center justify-between">
-                    <span>Articles / Besoins ({req.items?.length || 0})</span>
-                    <span>Sous-total</span>
-                  </div>
-                  <div className="space-y-2">
-                    {(req.items || []).map((it, i) => (
-                      <div
-                        key={i}
-                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 space-y-2"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
-                            {it.code || `ART-0${i + 1}`}
-                          </span>
-                          <span className="font-black text-xs text-[#008DA9] whitespace-nowrap">
-                            {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
-                          </span>
-                        </div>
-                        <p className="text-xs font-semibold text-slate-900 dark:text-white break-words">
-                          {it.name}
-                        </p>
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-700/60 text-[11px] text-slate-500 dark:text-slate-400">
-                          <span className="font-medium">
-                            Quantité : <strong className="text-slate-800 dark:text-slate-200 font-bold">{it.qty}</strong>
-                          </span>
-                          <span className="font-medium whitespace-nowrap">
-                            P.U. : <strong className="text-slate-800 dark:text-slate-200 font-semibold">{Number(it.unitPrice || 0).toLocaleString('fr-FR')} FCFA</strong>
-                          </span>
-                        </div>
+                <DataTable
+                  data={(req.items || []).map((it, idx) => ({ ...it, idx }))}
+                  rowKey={(it) => `${req.id}-item-${it.idx}`}
+                  pageSize={20}
+                  emptyMessage="Aucun article dans cette demande."
+                  mobileTitle={(it) => (
+                    <div>
+                      <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                        {it.code || `ART-0${it.idx + 1}`}
+                      </span>
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white mt-1">
+                        {it.name}
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Desktop / Tablet Table */}
-                <div className="hidden sm:block rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30">
-                  <table className="w-full text-xs text-left">
-                    <thead>
-                      <tr className="border-b border-slate-200/70 dark:border-slate-800 text-[10px] uppercase font-bold text-slate-400">
-                        <th className="py-2.5 px-3">Réf.</th>
-                        <th className="py-2.5 px-3">Désignation de l&apos;article / besoin</th>
-                        <th className="py-2.5 px-3 text-center">Quantité</th>
-                        <th className="py-2.5 px-3 text-right">Prix Unitaire</th>
-                        <th className="py-2.5 px-3 text-right">Sous-total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                      {(req.items || []).map((it, i) => (
-                        <tr key={i} className="hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors">
-                          <td className="py-2.5 px-3 font-mono font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                            {it.code || `ART-0${i + 1}`}
-                          </td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
-                            {it.name}
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                            {it.qty}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-slate-600 dark:text-slate-400 whitespace-nowrap font-medium">
-                            {Number(it.unitPrice || 0).toLocaleString('fr-FR')} FCFA
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-black text-slate-900 dark:text-white whitespace-nowrap">
-                            {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </div>
+                  )}
+                  mobileBadge={(it) => (
+                    <span className="font-black text-xs text-[#008DA9] whitespace-nowrap">
+                      {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
+                    </span>
+                  )}
+                  totalsFooter={
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>Total articles : {(req.items || []).length}</span>
+                      <span className="whitespace-nowrap font-black text-[var(--marque-fonce)] dark:text-teal-300">
+                        Total : {Number(req.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                  }
+                  columns={[
+                    {
+                      key: 'code',
+                      header: 'Réf.',
+                      hideOnMobileCard: true,
+                      render: (it) => (
+                        <span className="font-mono font-bold text-slate-600 dark:text-slate-400">
+                          {it.code || `ART-0${it.idx + 1}`}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'name',
+                      header: "Désignation de l'article / besoin",
+                      hideOnMobileCard: true,
+                      render: (it) => (
+                        <span className="font-semibold text-slate-900 dark:text-white">
+                          {it.name}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'qty',
+                      header: 'Quantité',
+                      mobileLabel: 'Quantité',
+                      align: 'center',
+                      isNumeric: true,
+                      render: (it) => (
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          {it.qty}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'unitPrice',
+                      header: 'Prix Unitaire',
+                      mobileLabel: 'Prix Unitaire',
+                      align: 'right',
+                      isNumeric: true,
+                      render: (it) => (
+                        <span className="text-slate-600 dark:text-slate-400 font-medium">
+                          {Number(it.unitPrice || 0).toLocaleString('fr-FR')} FCFA
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'total',
+                      header: 'Sous-total',
+                      mobileLabel: 'Sous-total',
+                      align: 'right',
+                      isNumeric: true,
+                      hideOnMobileCard: true,
+                      render: (it) => (
+                        <span className="font-black text-slate-900 dark:text-white">
+                          {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
+                        </span>
+                      ),
+                    },
+                  ]}
+                />
 
                 {/* Motifs (Motif de la demande optionnel + Motif de décision Admin optionnel) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -814,41 +871,98 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
                   )}
                 </div>
 
-                {/* Admin Action Buttons */}
-                {isAdmin && (
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
-                    <span className="text-[11px] text-slate-500">
-                      {isPending
+                {/* Action Buttons (Aperçu / Imprimer A4 + Validation Admin si applicable) */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-[11px] text-slate-500">
+                    {isAdmin
+                      ? isPending
                         ? `Cette demande de ${req.requester_name} (${req.requester_role}) attend votre validation ou rejet.`
-                        : `Demande déjà ${isValidee ? 'validée' : 'rejetée'} — vous pouvez modifier votre décision si nécessaire.`}
-                    </span>
-                    <div className="flex items-center gap-2">
+                        : `Demande déjà ${isValidee ? 'validée' : 'rejetée'} — vous pouvez modifier votre décision si nécessaire.`
+                      : `Document officiel de demande d'achat • Catégorie : ${req.category}`}
+                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {onOpenDocument && (
                       <button
                         type="button"
-                        onClick={() => {
-                          setDecisionTarget({ request: req, decision: 'validee' });
-                          setAdminMotif(req.admin_motif || '');
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                        onClick={() =>
+                          onOpenDocument({
+                            id: req.id,
+                            number: req.reference,
+                            date: `${createdDate} à ${createdTime}`,
+                            type: 'demande_achat',
+                            docTypeTitle: "DEMANDE D'ACHAT FOURNISSEUR",
+                            emitterTitle: `DEMANDEUR (${req.requester_role.toUpperCase()} BAOBAB)`,
+                            recipientTitle: 'FOURNISSEUR / DIRECTION ACHATS',
+                            vendorName: req.requester_name,
+                            vendorCode: req.requester_code,
+                            vendorTeam: `Service ${req.requester_role} — Baobab Distribution`,
+                            clientName: req.supplier_name || 'Fournisseur Partenaire',
+                            pdvName: req.supplier_name || 'Fournisseur Partenaire',
+                            pdvNeighborhood: `Catégorie : ${req.category}`,
+                            pdvManager: req.title,
+                            items: (req.items || []).map((it, idx) => ({
+                              id: `${req.id}-${idx}`,
+                              code: it.code || `ART-0${idx + 1}`,
+                              description: it.name,
+                              quantity: Number(it.qty || 1),
+                              unitPrice: Number(it.unitPrice || 0),
+                              total: Number(it.total || 0),
+                            })),
+                            subtotal: Number(req.total_amount || 0),
+                            taxRate: 0,
+                            taxAmount: 0,
+                            total: Number(req.total_amount || 0),
+                            paymentMethod: 'Bon de commande fournisseur',
+                            status: isValidee
+                              ? 'Validée par la Direction'
+                              : isRejetee
+                              ? 'Rejetée par la Direction'
+                              : 'En attente de validation Admin',
+                            isAcquittee: isValidee,
+                            notes: req.request_motif
+                              ? `Motif : ${req.request_motif}${req.admin_motif ? ` | Décision Admin : ${req.admin_motif}` : ''}`
+                              : req.admin_motif || undefined,
+                            sigLeftLabel: `Le Demandeur (${req.requester_role})`,
+                            sigCenterLabel: 'Service Comptabilité / Budget',
+                            sigRightLabel: 'Direction Générale (Validation)',
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 h-[48px] px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
                       >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Accepter / Valider (Motif optionnel)</span>
+                        <Printer className="w-4 h-4 shrink-0" />
+                        <span className="whitespace-nowrap">Imprimer</span>
                       </button>
+                    )}
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDecisionTarget({ request: req, decision: 'rejetee' });
-                          setAdminMotif(req.admin_motif || '');
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs transition cursor-pointer"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        <span>Rejeter (Motif optionnel)</span>
-                      </button>
-                    </div>
+                    {isAdmin && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDecisionTarget({ request: req, decision: 'validee' });
+                            setAdminMotif(req.admin_motif || '');
+                          }}
+                          className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Accepter / Valider (Motif optionnel)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDecisionTarget({ request: req, decision: 'rejetee' });
+                            setAdminMotif(req.admin_motif || '');
+                          }}
+                          className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Rejeter (Motif optionnel)</span>
+                        </button>
+                      </>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             );
           })
@@ -857,354 +971,273 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
 
       {/* MODAL: Create Purchase Request (Magasinier & Comptable) */}
       {canCreateRequest && showCreateModal && (
-        <div
-          onClick={() => setShowCreateModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto"
+        <FormModal
+          title={`Nouvelle Demande d'Achat (${currentUser.role})`}
+          subtitle={`Soumise par ${currentUser.name} (${currentUser.code}) • Validation requise par l'Administrateur`}
+          icon={<ShoppingBag className="w-5 h-5 text-[#008DA9]" />}
+          onClose={() => setShowCreateModal(false)}
+          onSubmit={handleSubmitCreate}
+          submitLabel={isSubmittingCreate ? 'Envoi en cours...' : "Soumettre la Demande d'Achat à l'Admin"}
+          submitDisabled={isSubmittingCreate}
+          isDirty={Boolean(title.trim() || supplierName.trim() || requestMotif.trim())}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-3xl max-h-[92vh] flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
-          >
-            <div className="shrink-0 flex items-center justify-between px-5 py-4 bg-slate-900 text-white border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <ShoppingBag className="w-5 h-5 text-[#008DA9]" />
-                <div>
-                  <h2 className="text-sm sm:text-base font-black">
-                    Nouvelle Demande d&apos;Achat ({currentUser.role})
-                  </h2>
-                  <p className="text-[11px] text-slate-300">
-                    Soumise par {currentUser.name} ({currentUser.code}) • Validation requise par l&apos;Administrateur
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateModal(false)}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmitCreate} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Objet / Intitulé de la demande d&apos;achat *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Ex: Réapprovisionnement cartons Lait Bennor / Rouleaux papier thermique..."
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Catégorie d&apos;achat
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                  >
-                    <option value="Réapprovisionnement Stock Dépôt">Réapprovisionnement Stock Dépôt</option>
-                    <option value="Emballages & Logistique">Emballages &amp; Logistique</option>
-                    <option value="Fournitures Comptables & Caisse">Fournitures Comptables &amp; Caisse</option>
-                    <option value="Équipements & Maintenance">Équipements &amp; Maintenance</option>
-                    <option value="Autre besoin opérationnel">Autre besoin opérationnel</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Fournisseur / Prestataire
-                  </label>
-                  <input
-                    type="text"
-                    value={supplierName}
-                    onChange={(e) => setSupplierName(e.target.value)}
-                    placeholder="Nom du fournisseur..."
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Lines */}
-              <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-bold text-slate-700 dark:text-slate-200">
-                    Articles / Lignes de la demande d&apos;achat
-                  </span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {products.length > 0 && (
-                      <select
-                        defaultValue=""
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            handleAddCatalogProductLine(e.target.value);
-                            e.target.value = '';
-                          }
-                        }}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold"
-                      >
-                        <option value="">+ Ajouter un produit du catalogue...</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.code} — {p.name} ({Number(p.price_box || 0).toLocaleString('fr-FR')} FCFA)
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleAddLine}
-                      className="px-2.5 py-1.5 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 font-bold text-[11px] hover:bg-[#008DA9]/25 cursor-pointer"
-                    >
-                      + Ajouter une ligne libre
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {items.map((it, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700 flex flex-col sm:grid sm:grid-cols-12 gap-2 sm:items-center"
-                    >
-                      {/* Row 1 / Code & Name */}
-                      <div className="flex items-center gap-2 sm:contents">
-                        <div className="w-24 sm:w-auto sm:col-span-2">
-                          <label className="text-[10px] text-slate-400 block">Code</label>
-                          <input
-                            type="text"
-                            value={it.code}
-                            onChange={(e) => handleUpdateLine(idx, 'code', e.target.value)}
-                            className="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-[11px]"
-                          />
-                        </div>
-                        <div className="flex-1 sm:col-span-5">
-                          <label className="text-[10px] text-slate-400 block">Désignation *</label>
-                          <input
-                            type="text"
-                            required
-                            value={it.name}
-                            onChange={(e) => handleUpdateLine(idx, 'name', e.target.value)}
-                            placeholder="Nom de l'article ou fourniture"
-                            className="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-semibold text-[11px]"
-                          />
-                        </div>
-                        <div className="sm:hidden flex items-end pt-3">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveLine(idx)}
-                            disabled={items.length <= 1}
-                            className="p-2 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 disabled:opacity-30 cursor-pointer"
-                            title="Supprimer la ligne"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Row 2 / Qté & P.U. */}
-                      <div className="flex items-center gap-2 sm:contents">
-                        <div className="w-24 sm:w-auto sm:col-span-2">
-                          <label className="text-[10px] text-slate-400 block">Qté</label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={it.qty}
-                            onChange={(e) => handleUpdateLine(idx, 'qty', Number(e.target.value))}
-                            className="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-center text-[11px]"
-                          />
-                        </div>
-                        <div className="flex-1 sm:col-span-2">
-                          <label className="text-[10px] text-slate-400 block">P.U. (FCFA)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="100"
-                            value={it.unitPrice}
-                            onChange={(e) => handleUpdateLine(idx, 'unitPrice', Number(e.target.value))}
-                            className="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-right text-[11px]"
-                          />
-                        </div>
-                        <div className="hidden sm:flex sm:col-span-1 flex-col items-end justify-end pt-4">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveLine(idx)}
-                            disabled={items.length <= 1}
-                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 disabled:opacity-30 cursor-pointer"
-                            title="Supprimer la ligne"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between p-3 rounded-xl bg-[#008DA9]/10 border border-[#008DA9]/30">
-                  <span className="font-bold text-slate-700 dark:text-slate-200">
-                    Montant Total de la Demande d&apos;Achat :
-                  </span>
-                  <span className="text-lg font-black text-[#008DA9]">
-                    {computedTotal.toLocaleString('fr-FR')} FCFA
-                  </span>
-                </div>
-              </div>
-
-              {/* Optional Motif */}
-              <div>
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
                 <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                  Motif de la demande <span className="text-slate-400 font-normal">(Optionnel)</span>
+                  Objet / Intitulé de la demande d&apos;achat *
                 </label>
-                <textarea
-                  rows={3}
-                  value={requestMotif}
-                  onChange={(e) => setRequestMotif(e.target.value)}
-                  placeholder="Expliquez le motif ou l'urgence de cette demande d'achat (facultatif)..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Ex: Réapprovisionnement cartons Lait Bennor / Rouleaux papier thermique..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
                 />
               </div>
 
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold cursor-pointer"
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                  Catégorie d&apos;achat
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
                 >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingCreate}
-                  className="px-5 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
-                >
-                  {isSubmittingCreate ? 'Envoi en cours...' : "Soumettre la Demande d'Achat à l'Admin"}
-                </button>
+                  <option value="Réapprovisionnement Stock Dépôt">Réapprovisionnement Stock Dépôt</option>
+                  <option value="Emballages & Logistique">Emballages &amp; Logistique</option>
+                  <option value="Fournitures Comptables & Caisse">Fournitures Comptables &amp; Caisse</option>
+                  <option value="Équipements & Maintenance">Équipements &amp; Maintenance</option>
+                  <option value="Autre besoin opérationnel">Autre besoin opérationnel</option>
+                </select>
               </div>
-            </form>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                  Fournisseur / Prestataire
+                </label>
+                <input
+                  type="text"
+                  value={supplierName}
+                  onChange={(e) => setSupplierName(e.target.value)}
+                  placeholder="Nom du fournisseur..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            {/* Lines */}
+            <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-slate-700 dark:text-slate-200">
+                  Articles / Lignes de la demande d&apos;achat
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {products.length > 0 && (
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          handleAddCatalogProductLine(e.target.value);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold"
+                    >
+                      <option value="">+ Ajouter un produit du catalogue...</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.code} — {p.name} ({Number(p.price_box || 0).toLocaleString('fr-FR')} FCFA)
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddLine}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#008DA9]/15 text-[#008DA9] dark:text-cyan-300 font-bold text-[11px] hover:bg-[#008DA9]/25 cursor-pointer"
+                  >
+                    + Ajouter une ligne libre
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {items.map((it, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700 flex flex-col gap-3"
+                  >
+                    {/* Row 1 / Code & Name */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">Code</label>
+                        <input
+                          type="text"
+                          value={it.code}
+                          onChange={(e) => handleUpdateLine(idx, 'code', e.target.value)}
+                          className="w-full h-[48px] px-3 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-[14px]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">Désignation *</label>
+                        <input
+                          type="text"
+                          required
+                          value={it.name}
+                          onChange={(e) => handleUpdateLine(idx, 'name', e.target.value)}
+                          placeholder="Nom de l'article ou fourniture"
+                          className="w-full h-[48px] px-3 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-semibold text-[14px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 2 / Qté & P.U. */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">Quantité</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={it.qty}
+                          onChange={(e) => handleUpdateLine(idx, 'qty', Number(e.target.value))}
+                          className="w-full h-[48px] px-3 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-center text-[14px]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">P.U. (FCFA)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="100"
+                          value={it.unitPrice}
+                          onChange={(e) => handleUpdateLine(idx, 'unitPrice', Number(e.target.value))}
+                          className="w-full h-[48px] px-3 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-right text-[14px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ligne séparée pour la suppression */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Total : {(it.qty * it.unitPrice).toLocaleString('fr-FR')} FCFA
+                      </span>
+                      <ConfirmDestructiveButton
+                        disabled={items.length <= 1}
+                        label="Supprimer la ligne"
+                        confirmLabel="Supprimer ?"
+                        onConfirm={() => handleRemoveLine(idx)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-[#008DA9]/10 border border-[#008DA9]/30">
+                <span className="font-bold text-slate-700 dark:text-slate-200">
+                  Montant Total de la Demande d&apos;Achat :
+                </span>
+                <span className="text-lg font-black text-[#008DA9]">
+                  {computedTotal.toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
+            </div>
+
+            {/* Optional Motif */}
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Motif de la demande <span className="text-slate-400 font-normal">(Optionnel)</span>
+              </label>
+              <textarea
+                rows={3}
+                value={requestMotif}
+                onChange={(e) => setRequestMotif(e.target.value)}
+                placeholder="Expliquez le motif ou l'urgence de cette demande d'achat (facultatif)..."
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              />
+            </div>
           </div>
-        </div>
+        </FormModal>
       )}
 
       {/* MODAL: Admin Decision (Accept / Reject with Optional Motif) */}
       {isAdmin && decisionTarget && (
-        <div
-          onClick={() => setDecisionTarget(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
+        <FormModal
+          title={
+            decisionTarget.decision === 'validee'
+              ? "Valider la Demande d'Achat"
+              : "Rejeter la Demande d'Achat"
+          }
+          icon={
+            decisionTarget.decision === 'validee' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            ) : (
+              <XCircle className="w-5 h-5 text-rose-600" />
+            )
+          }
+          onClose={() => setDecisionTarget(null)}
+          onSubmit={handleConfirmAdminDecision}
+          submitLabel={
+            isSubmittingDecision
+              ? 'Traitement...'
+              : decisionTarget.decision === 'validee'
+              ? 'Confirmer la Validation & Notifier'
+              : 'Confirmer le Rejet & Notifier'
+          }
+          submitDisabled={isSubmittingDecision}
+          isDirty={Boolean(adminMotif.trim())}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
-          >
-            <div
-              className={`px-5 py-4 text-white flex items-center justify-between ${
-                decisionTarget.decision === 'validee' ? 'bg-emerald-600' : 'bg-rose-600'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {decisionTarget.decision === 'validee' ? (
-                  <CheckCircle2 className="w-5 h-5" />
-                ) : (
-                  <XCircle className="w-5 h-5" />
-                )}
-                <h3 className="text-sm sm:text-base font-black">
-                  {decisionTarget.decision === 'validee'
-                    ? "Valider la Demande d'Achat"
-                    : "Rejeter la Demande d'Achat"}
-                </h3>
+          <div className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-mono font-bold text-[#008DA9]">
+                  {decisionTarget.request.reference}
+                </span>
+                <span className="font-bold text-slate-600 dark:text-slate-300">
+                  {decisionTarget.request.requester_role} • {decisionTarget.request.requester_name}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setDecisionTarget(null)}
-                className="p-1 rounded-lg bg-black/20 hover:bg-black/40 text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="font-black text-sm text-slate-900 dark:text-white">
+                {decisionTarget.request.title}
+              </div>
+              <div className="text-slate-500">
+                Montant :{' '}
+                <strong className="text-slate-900 dark:text-white">
+                  {Number(decisionTarget.request.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                </strong>
+              </div>
+              {decisionTarget.request.request_motif && (
+                <div className="pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300">
+                  <strong>Motif du demandeur :</strong> {decisionTarget.request.request_motif}
+                </div>
+              )}
             </div>
 
-            <form onSubmit={handleConfirmAdminDecision} className="p-5 space-y-4 text-xs">
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-[#008DA9]">
-                    {decisionTarget.request.reference}
-                  </span>
-                  <span className="font-bold text-slate-600 dark:text-slate-300">
-                    {decisionTarget.request.requester_role} • {decisionTarget.request.requester_name}
-                  </span>
-                </div>
-                <div className="font-black text-sm text-slate-900 dark:text-white">
-                  {decisionTarget.request.title}
-                </div>
-                <div className="text-slate-500">
-                  Montant :{' '}
-                  <strong className="text-slate-900 dark:text-white">
-                    {Number(decisionTarget.request.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                  </strong>
-                </div>
-                {decisionTarget.request.request_motif && (
-                  <div className="pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300">
-                    <strong>Motif du demandeur :</strong> {decisionTarget.request.request_motif}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                  Motif de {decisionTarget.decision === 'validee' ? 'validation' : 'rejet'}{' '}
-                  <span className="text-slate-400 font-normal">(Optionnel)</span>
-                </label>
-                <textarea
-                  rows={3}
-                  value={adminMotif}
-                  onChange={(e) => setAdminMotif(e.target.value)}
-                  placeholder={
-                    decisionTarget.decision === 'validee'
-                      ? 'Commentaire ou motif de validation (optionnel)...'
-                      : 'Précisez le motif du rejet si souhaité (optionnel)...'
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Le {decisionTarget.request.requester_role} ({decisionTarget.request.requester_name}) recevra immédiatement une notification de{' '}
-                  {decisionTarget.decision === 'validee' ? 'validation' : 'rejet'} avec ce motif.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setDecisionTarget(null)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingDecision}
-                  className={`px-5 py-2 rounded-xl text-white font-bold shadow-sm transition cursor-pointer disabled:opacity-50 ${
-                    decisionTarget.decision === 'validee'
-                      ? 'bg-emerald-600 hover:bg-emerald-700'
-                      : 'bg-rose-600 hover:bg-rose-700'
-                  }`}
-                >
-                  {isSubmittingDecision
-                    ? 'Traitement...'
-                    : decisionTarget.decision === 'validee'
-                    ? 'Confirmer la Validation & Notifier'
-                    : 'Confirmer le Rejet & Notifier'}
-                </button>
-              </div>
-            </form>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Motif de {decisionTarget.decision === 'validee' ? 'validation' : 'rejet'}{' '}
+                <span className="text-slate-400 font-normal">(Optionnel)</span>
+              </label>
+              <textarea
+                rows={3}
+                value={adminMotif}
+                onChange={(e) => setAdminMotif(e.target.value)}
+                placeholder={
+                  decisionTarget.decision === 'validee'
+                    ? 'Commentaire ou motif de validation (optionnel)...'
+                    : 'Précisez le motif du rejet si souhaité (optionnel)...'
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Le {decisionTarget.request.requester_role} ({decisionTarget.request.requester_name}) recevra immédiatement une notification de{' '}
+                {decisionTarget.decision === 'validee' ? 'validation' : 'rejet'} avec ce motif.
+              </p>
+            </div>
           </div>
-        </div>
+        </FormModal>
       )}
     </div>
   );

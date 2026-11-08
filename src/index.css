@@ -6,36 +6,303 @@
   --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Échelle typographique optimisée et agrandie pour une lecture confortable partout */
-  --text-xs: 0.875rem;
-  --text-xs--line-height: 1.35rem;
-  --text-sm: 0.96875rem;
+  /* Échelle typographique confortable et lisible sans débordement */
+  --text-xs: 0.85rem;
+  --text-xs--line-height: 1.3rem;
+  --text-sm: 0.95rem;
   --text-sm--line-height: 1.45rem;
-  --text-base: 1.0625rem;
+  --text-base: 1.05rem;
   --text-base--line-height: 1.6rem;
-  --text-lg: 1.2rem;
-  --text-lg--line-height: 1.75rem;
+  --text-lg: 1.1875rem;
+  --text-lg--line-height: 1.7rem;
   --text-xl: 1.35rem;
   --text-xl--line-height: 1.85rem;
-  --text-2xl: 1.625rem;
-  --text-2xl--line-height: 2.1rem;
-  --text-3xl: 2rem;
-  --text-3xl--line-height: 2.4rem;
+  --text-2xl: 1.6rem;
+  --text-2xl--line-height: 2.05rem;
+  --text-3xl: 1.95rem;
+  --text-3xl--line-height: 2.35rem;
 }
 
 @layer base {
+  :root {
+    --marque: #008DA9;
+    --marque-noir: #000000;
+    --marque-nuit: #000000;
+    --marque-fonce: #006B82;
+    --marque-fonce-survol: #00586B;
+    --marque-8pct: rgba(0, 141, 169, 0.08);
+    --marque-eclaircie: #38CAE6;
+    --marque-clair: rgba(0, 141, 169, 0.12);
+    --marque-texte-sur-plein: #FFFFFF;
+    --marque-texte: #006B82;
+  }
+
+  html.dark {
+    --marque: #008DA9;
+    --marque-noir: #000000;
+    --marque-nuit: #000000;
+    --marque-fonce: #006B82;
+    --marque-fonce-survol: #00586B;
+    --marque-8pct: rgba(0, 141, 169, 0.08);
+    --marque-eclaircie: #38CAE6;
+    --marque-clair: rgba(56, 202, 230, 0.14);
+    --marque-texte-sur-plein: #FFFFFF;
+    --marque-texte: #38CAE6;
+  }
+
+  /* 1. Box-sizing universel */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  /* 2. html, body, #root : width 100%, max-width 100%, overflow-x hidden */
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
   html {
     font-family: var(--font-sans);
-    font-size: 16.5px;
+    font-size: 16px;
     line-height: 1.5;
-    letter-spacing: -0.008em;
+    letter-spacing: -0.006em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+    overflow-y: auto;
+  }
+
+  @media (min-width: 640px) {
+    html {
+      font-size: 16.25px;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    html {
+      font-size: 16.5px;
+    }
   }
 
   body {
     font-family: var(--font-sans);
     font-size: 1rem;
+  }
+
+  /* 3. Images, vidéos, canvas, svg, iframe : max-width 100%, height auto */
+  img,
+  video,
+  canvas,
+  svg,
+  iframe {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* 4. Tous les enfants de flex et de grid : min-width 0. Conteneurs flex avec texte long : min-width 0 */
+  :where(.flex, .inline-flex, .grid, .inline-grid) {
+    min-width: 0;
+  }
+
+  :where(.flex, .inline-flex, .grid, .inline-grid) > * {
+    min-width: 0;
+  }
+
+  /* 5. Textes : overflow-wrap anywhere, word-break normal, max-width 100% */
+  p,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  span,
+  label,
+  li,
+  dt,
+  dd,
+  blockquote,
+  small,
+  strong,
+  em {
+    overflow-wrap: anywhere;
+    word-break: normal;
+    max-width: 100%;
+  }
+
+  /* 6. Nombres et montants : white-space nowrap, taille de police adaptative (clamp) */
+  .baobab-amount {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    font-size: clamp(0.875rem, 2.2vw + 0.35rem, 1.35rem);
+    line-height: 1.25;
+  }
+
+  .text-2xl .baobab-amount,
+  .sm\:text-2xl .baobab-amount {
+    font-size: clamp(0.95rem, 2.5vw + 0.4rem, 1.55rem);
+  }
+
+  /* 7. Cartes et panneaux : overflow visible pour les bulles de compteur, overflow-x hidden sur le conteneur de page */
+  main {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  :where(.rounded-2xl, .rounded-xl, .rounded-3xl):not(.overflow-hidden):not(.overflow-y-auto):not(.overflow-x-auto) {
+    overflow: visible;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--marque-fonce);
+  }
+
+  html.dark input[type="checkbox"],
+  html.dark input[type="radio"] {
+    accent-color: var(--marque-eclaircie);
+  }
+
+  input,
+  select,
+  textarea {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  select,
+  input[type="date"],
+  input[type="time"],
+  input[type="search"] {
+    max-width: calc(100vw - 32px);
+  }
+
+  @media (min-width: 768px) {
+    select,
+    input[type="date"],
+    input[type="time"],
+    input[type="search"] {
+      max-width: 100%;
+    }
+  }
+
+  select option {
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]),
+  select {
+    height: 48px !important;
+    min-height: 48px !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+    border-radius: 12px !important;
+    opacity: 1 !important;
+  }
+
+  input.baobab-search-input-52 {
+    height: 52px !important;
+    min-height: 52px !important;
+    padding-left: 46px !important;
+    padding-right: 46px !important;
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+    border-radius: 12px !important;
+    opacity: 1 !important;
+  }
+
+  textarea {
+    min-height: 96px !important;
+    padding: 12px 14px !important;
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+    border-radius: 12px !important;
+    opacity: 1 !important;
+  }
+
+  html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]),
+  html:not(.dark) select,
+  html:not(.dark) textarea {
+    background-color: #FFFFFF !important;
+    border: 1.5px solid #64748B !important;
+    color: #0F172A !important;
+  }
+
+  html.dark input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]),
+  html.dark select,
+  html.dark textarea {
+    background-color: #1E293B !important;
+    border: 1.5px solid #94A3B8 !important;
+    color: #F8FAFC !important;
+  }
+
+  html:not(.dark) input::placeholder,
+  html:not(.dark) textarea::placeholder {
+    color: #475569 !important;
+    opacity: 1 !important;
+  }
+
+  html.dark input::placeholder,
+  html.dark textarea::placeholder {
+    color: #CBD5E1 !important;
+    opacity: 1 !important;
+  }
+
+  html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):focus,
+  html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):focus-visible,
+  html:not(.dark) select:focus,
+  html:not(.dark) select:focus-visible,
+  html:not(.dark) textarea:focus,
+  html:not(.dark) textarea:focus-visible {
+    outline: none !important;
+    border-color: var(--marque-fonce) !important;
+    box-shadow: 0 0 0 3px rgba(0, 107, 130, 0.35) !important;
+  }
+
+  html.dark input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):focus,
+  html.dark input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):focus-visible,
+  html.dark select:focus,
+  html.dark select:focus-visible,
+  html.dark textarea:focus,
+  html.dark textarea:focus-visible {
+    outline: none !important;
+    border-color: var(--marque-eclaircie) !important;
+    box-shadow: 0 0 0 3px rgba(56, 202, 230, 0.45) !important;
+  }
+
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"],
+  .field-invalid-border {
+    border-color: #B91C1C !important;
+    box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.25) !important;
+  }
+
+  html:not(.dark) form label {
+    color: #0F172A;
+  }
+
+  html.dark form label {
+    color: #F8FAFC;
   }
 
   code,
@@ -79,7 +346,12 @@
   line-height: 1.3rem !important;
 }
 
-/* Optimisation globale des tableaux sur Mobile & Tablette : préserver le scroll horizontal et la lisibilité */
+/* Optimisation globale des tableaux sur Mobile & Tablette : préserver le scroll horizontal fluide et la lisibilité */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
 @media (max-width: 1023px) {
   table {
     border-collapse: collapse;
@@ -88,57 +360,149 @@
   /* Pour les tableaux standard non scrollables */
   table:not([class*="min-w-"]) th,
   table:not([class*="min-w-"]) td {
-    padding-left: 0.45rem;
-    padding-right: 0.45rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
     padding-top: 0.55rem;
     padding-bottom: 0.55rem;
   }
 }
 
-/* Empêche formellement tout écrasement ou découpage vertical lettre par lettre */
-.overflow-x-auto table,
-table[class*="min-w-"],
-table.whitespace-nowrap,
-table.whitespace-nowrap th,
-table.whitespace-nowrap td {
+/* Empêche formellement tout écrasement ou découpage vertical lettre par lettre dans les tableaux et boutons */
+table th,
+table td,
+table th *,
+table td *,
+button,
+button * {
   overflow-wrap: normal !important;
   word-break: normal !important;
 }
 
-/* Styles de la feuille A4 (proportions certifiées 210mm x 297mm) */
+table th,
+button,
+.whitespace-nowrap {
+  white-space: nowrap;
+}
+
+/* Styles de la feuille A4 portrait (210 x 297 mm = 794 x 1123 px à 96 dpi, marges de 15 mm = 57 px) */
 .a4-page-sheet {
-  background: white;
+  width: 794px !important;
+  min-width: 794px !important;
+  max-width: 794px !important;
+  height: 1123px !important;
+  min-height: 1123px !important;
+  max-height: 1123px !important;
+  padding: 15mm !important;
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
+  box-sizing: border-box !important;
   margin-left: auto;
   margin-right: auto;
+  position: relative;
+  overflow: hidden;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+.a4-page-sheet,
+.a4-page-sheet * {
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+.a4-page-sheet table th,
+.a4-page-sheet table td {
+  padding: 6px 8px !important;
 }
 
 /* Styles d'impression officielle Format A4 */
 @page {
-  size: A4 portrait;
-  margin: 6mm 8mm;
+  size: A4;
+  margin: 0;
 }
 
 @media print {
+  html,
   body {
-    background: white !important;
-    color: black !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 210mm !important;
+    height: auto !important;
+    overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  .print\:hidden {
+  body.baobab-printing-doc > *:not(.baobab-print-portal) {
     display: none !important;
+  }
+
+  .print\:hidden,
+  .a4-preview-toolbar,
+  .a4-preview-floating-controls {
+    display: none !important;
+  }
+
+  .baobab-print-portal {
+    position: static !important;
+    inset: auto !important;
+    width: 210mm !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #FFFFFF !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .a4-scroll-viewport,
+  .a4-pan-surface,
+  .a4-pages-stack {
+    position: static !important;
+    width: 210mm !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    transform: none !important;
+    display: block !important;
+  }
+
+  .a4-scale-wrapper {
+    width: 210mm !important;
+    height: 297mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    overflow: hidden !important;
+  }
+
+  .a4-scale-wrapper:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 
   .a4-invoice-container,
   .a4-page-sheet {
+    width: 210mm !important;
+    min-width: 210mm !important;
+    max-width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    padding: 15mm !important;
+    margin: 0 !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
     box-shadow: none !important;
     border: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    width: 100% !important;
-    max-width: none !important;
+    transform: none !important;
   }
 }
+
 
 

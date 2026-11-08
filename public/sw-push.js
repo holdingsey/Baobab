@@ -1,28 +1,7 @@
-/* Service Worker — Mise en cache de l'interface PWA, Notifications Système & Badge d'icône Baobab Distribution */
+/* Service Worker — Notifications Système & Badge d'icône Baobab Distribution (v8) */
 
-const CACHE_NAME = 'baobab-ui-cache-v1';
-const APP_SHELL_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/logo.png',
-  '/pwa-192x192.png',
-  '/pwa-512x512.png',
-  '/pwa-maskable-512x512.png',
-  '/apple-touch-icon.png',
-  '/badge-72x72.png',
-  '/favicon.ico',
-  '/favicon-32x32.png',
-];
-
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => {
   self.skipWaiting();
-  event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL_ASSETS))
-      .catch(() => {})
-  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -30,72 +9,10 @@ self.addEventListener('activate', (event) => {
     Promise.all([
       self.clients.claim(),
       caches.keys().then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key.startsWith('baobab-ui-cache-') && key !== CACHE_NAME)
-            .map((key) => caches.delete(key))
-        )
+        Promise.all(keys.map((key) => caches.delete(key)))
       ),
     ])
   );
-});
-
-self.addEventListener('fetch', (event) => {
-  const req = event.request;
-  if (req.method !== 'GET') return;
-
-  const url = new URL(req.url);
-
-  // Ne pas intercepter les routes API ou Digital Asset Links
-  if (
-    url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/bons/') ||
-    url.pathname.startsWith('/.well-known/')
-  ) {
-    return;
-  }
-
-  // Navigation HTML : Network-First avec repli sur le cache de l'interface
-  if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req)
-        .then((networkRes) => {
-          if (networkRes && networkRes.ok) {
-            const copy = networkRes.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put('/', copy)).catch(() => {});
-          }
-          return networkRes;
-        })
-        .catch(async () => {
-          const cached = (await caches.match(req)) || (await caches.match('/')) || (await caches.match('/index.html'));
-          return cached || Response.error();
-        })
-    );
-    return;
-  }
-
-  // Ressources de l'interface (JS, CSS, icônes, images, polices) : Stale-While-Revalidate
-  if (
-    url.origin === self.location.origin ||
-    url.hostname === 'fonts.googleapis.com' ||
-    url.hostname === 'fonts.gstatic.com'
-  ) {
-    event.respondWith(
-      caches.match(req).then((cachedRes) => {
-        const networkFetch = fetch(req)
-          .then((networkRes) => {
-            if (networkRes && (networkRes.status === 200 || networkRes.type === 'opaque')) {
-              const copy = networkRes.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
-            }
-            return networkRes;
-          })
-          .catch(() => cachedRes);
-
-        return cachedRes || networkFetch;
-      })
-    );
-  }
 });
 
 self.addEventListener('push', (event) => {

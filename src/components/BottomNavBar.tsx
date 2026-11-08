@@ -13,7 +13,9 @@ import {
   Receipt,
   DollarSign,
   PlusCircle,
-  Boxes
+  Boxes,
+  ShoppingCart,
+  ClipboardList
 } from 'lucide-react';
 import { UserSession } from './LoginScreen';
 
@@ -47,7 +49,31 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       { id: 'pdvs', label: 'PDV', icon: Store },                  // 3 chars
       { id: 'reglages', label: 'Réglages', icon: Settings },      // 8 chars
     ];
-  } else if (role === 'Magasinier') {
+  } else if (role === 'Directeur des opérations de vente' || /directeur|op[eé]ration|dov/i.test(role || '')) {
+    items = [
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },    // 7 chars
+      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },           // 6 chars
+      { id: 'historique-sku', label: 'Par SKU', icon: BarChart3 },     // 7 chars
+      { id: 'validation-pdv', label: 'Valid.', icon: Store },          // 6 chars
+      { id: 'demande-stock-vendeur', label: 'Stock', icon: Truck },    // 5 chars
+    ];
+  } else if (role === 'Sales Admin') {
+    items = [
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard }, // 7 chars
+      { id: 'receptions', label: 'Entrées', icon: ArrowDownLeft },  // 7 chars
+      { id: 'chargements', label: 'Appros', icon: Truck },          // 6 chars
+      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },        // 6 chars
+      { id: 'inventaire', label: 'Invent.', icon: ClipboardList },  // 7 chars
+    ];
+  } else if (role === 'Gestionnaire grossiste' || /grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')) {
+    items = [
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },           // 7 chars
+      { id: 'commandes-gros', label: 'Cmd Gros', icon: ShoppingCart },        // 8 chars
+      { id: 'nouvelle-commande-gros', label: '+ Cmd', icon: PlusCircle },     // 5 chars
+      { id: 'clients-gros', label: 'Clients', icon: Store },                  // 7 chars
+      { id: 'stock-depot', label: 'Dépôt', icon: Package },                   // 5 chars
+    ];
+  } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
     items = [
       { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard }, // 7 chars
       { id: 'stock-depot', label: 'Dépôt', icon: Package },        // 5 chars
@@ -75,7 +101,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 left-0 lg:left-64 right-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md shadow-2xl transition-colors">
+    <div className="fixed bottom-0 left-0 lg:left-72 right-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg transform-gpu">
       <nav className="grid grid-cols-5 w-full h-16 max-w-7xl mx-auto">
         {items.map((it) => {
           const Icon = it.icon;
@@ -94,14 +120,20 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
               onClick={() => setActiveTab(it.id)}
               className={`flex flex-col items-center justify-center w-full h-full transition relative text-center px-1 cursor-pointer ${
                 isActive
-                  ? 'text-[#008DA9] dark:text-teal-400 font-extrabold'
-                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-semibold'
+                  ? 'bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-semibold'
               }`}
             >
               {isActive && (
-                <span className="absolute top-0 left-3 right-3 h-0.5 bg-[#008DA9] dark:bg-teal-400 rounded-full" />
+                <span className="absolute top-0 left-3 right-3 h-0.5 bg-[var(--marque-fonce)] dark:bg-[var(--marque-eclaircie)] rounded-full" />
               )}
-              <Icon className={`w-4 h-4 mb-1 shrink-0 ${isActive ? 'text-[#008DA9] dark:text-teal-400 stroke-[2.5]' : 'text-slate-400 dark:text-slate-400'}`} />
+              <Icon
+                className={`w-4 h-4 mb-1 shrink-0 ${
+                  isActive
+                    ? 'text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] stroke-[2.5]'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              />
               <span className="text-[11px] truncate w-full text-center tracking-tight leading-none">
                 {it.label}
               </span>

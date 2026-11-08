@@ -244,7 +244,7 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
         }).addTo(group);
 
         const popupHtml = `
-          <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; min-width: 190px;">
+          <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; max-width: 100%; overflow-wrap: anywhere;">
             <div style="font-weight: 800; color: #0f172a;">Étape #${pt.stepNumber} — ${pt.title}</div>
             ${pt.subtitle ? `<div style="color: #475569; font-size: 11px; margin-top: 2px;">${pt.subtitle}</div>` : ''}
             <div style="margin-top: 4px; font-family: monospace; font-size: 11px; color: #008DA9; font-weight: 700;">
@@ -280,7 +280,7 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
         }).addTo(group);
 
         const popupHtml = `
-          <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; min-width: 170px;">
+          <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; max-width: 100%; overflow-wrap: anywhere;">
             <div style="font-weight: 800; color: #0f172a; margin-bottom: 2px;">${m.title}</div>
             ${m.subtitle ? `<div style="color: #475569; font-size: 11px;">${m.subtitle}</div>` : ''}
             <div style="margin-top: 4px; font-family: monospace; font-size: 11px; color: #008DA9; font-weight: 700;">
@@ -317,7 +317,7 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
         }).addTo(group);
 
         const popupHtml = `
-          <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; min-width: 195px;">
+          <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; max-width: 100%; overflow-wrap: anywhere;">
             <div style="font-weight: 900; color: #0284C7;">Vendeur : ${v.vendorName} (${v.vendorCode})</div>
             ${v.team ? `<div style="color: #475569; font-size: 11px;">${v.team}</div>` : ''}
             ${v.activityLabel ? `<div style="color: #0f172a; font-size: 11px; font-weight: 700; margin-top: 3px;">${v.activityLabel}</div>` : ''}
@@ -372,7 +372,7 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
       }).addTo(group);
 
       const popupHtml = `
-        <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; min-width: 180px;">
+        <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4; max-width: 100%; overflow-wrap: anywhere;">
           <div style="font-weight: 800; color: #0f172a;">${label}</div>
           ${sublabel ? `<div style="color: #475569; font-size: 11px; margin-top: 2px;">${sublabel}</div>` : ''}
           <div style="margin-top: 4px; font-family: monospace; font-size: 11px; color: #008DA9; font-weight: 700;">

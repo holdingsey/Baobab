@@ -9,7 +9,7 @@
     <meta property="og:description" content="Système de Distribution et Gestion Commerciale - Baobab Distribution Mali" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0284c7" />
+    <meta name="theme-color" content="#008DA9" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -26,6 +26,70 @@
     />
     <script>
       (function() {
+        try {
+          var NativeWebSocket = window.WebSocket;
+          if (NativeWebSocket && ! NativeWebSocket.__viteShimApplied) {
+            var ShimmedWebSocket = function(url, protocols) {
+              var protoStr = Array.isArray(protocols) ? protocols.join(',') : String(protocols || '');
+              if (protoStr.indexOf('vite-hmr') !== -1 || protoStr.indexOf('vite-ping') !== -1) {
+                var fakeSocket = {
+                  url: String(url || ''),
+                  protocol: protoStr,
+                  readyState: 1,
+                  CONNECTING: 0,
+                  OPEN: 1,
+                  CLOSING: 2,
+                  CLOSED: 3,
+                   bufferedAmount: 0,
+                  extensions: '',
+                  binaryType: 'blob',
+                  onopen: null,
+                  onerror: null,
+                  onclose: null,
+                  onmessage: null,
+                  send: function() {},
+                  close: function() {},
+                  addEventListener: function(type, listener) {
+                    if (type === 'open' && typeof listener === 'function') {
+                      setTimeout(function() {
+                        try { listener({ type: 'open', target: fakeSocket }); } catch (_e) {}
+                      }, 0);
+                    }
+                  },
+                  removeEventListener: function() {},
+                  dispatchEvent: function() { return true; }
+                };
+                return fakeSocket;
+              }
+              return protocols !== undefined
+                ? new NativeWebSocket(url, protocols)
+                : new NativeWebSocket(url);
+            };
+            ShimmedWebSocket.prototype = NativeWebSocket.prototype;
+            ShimmedWebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+            ShimmedWebSocket.OPEN = NativeWebSocket.OPEN;
+            ShimmedWebSocket.CLOSING = NativeWebSocket.CLOSING;
+            ShimmedWebSocket.CLOSED = NativeWebSocket.CLOSED;
+            ShimmedWebSocket.__viteShimApplied = true;
+            window.WebSocket = ShimmedWebSocket;
+          }
+        } catch (_err) {}
+
+        try {
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              keys.forEach(function(k) { caches.delete(k).catch(function() {}); });
+            }).catch(function() {});
+          }
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              regs.forEach(function(r) {
+                try { r.update(); } catch (_e) {}
+              });
+            }).catch(function() {});
+          }
+        } catch (_cacheErr) {}
+
         try {
           var saved = localStorage.getItem('baobab_theme');
           var isDark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);

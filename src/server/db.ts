@@ -11,6 +11,13 @@ if (!fs.existsSync(dataDir)) {
 
 const dbPath = path.join(dataDir, 'baobab.db');
 export const db = new DatabaseSync(dbPath);
+try {
+  db.exec('PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA synchronous = NORMAL;');
+} catch (_err) {
+  // Ignore pragma errors if any
+}
 
 export function initDatabase() {
   // 1. Settings table
@@ -30,7 +37,7 @@ export function initDatabase() {
       email TEXT NOT NULL UNIQUE,
       role TEXT NOT NULL,
       phone TEXT,
-      team TEXT, -- Champ libre Équipe sur le vendeur
+      team TEXT,
       must_change_password INTEGER DEFAULT 0, -- 1 = mot de passe provisoire à changer
       password_hash TEXT,
       created_at TEXT NOT NULL
@@ -116,6 +123,10 @@ export function initDatabase() {
       date TEXT NOT NULL,
       items TEXT NOT NULL,
       total_boxes INTEGER NOT NULL,
+      bl_number TEXT,
+      bl_photo TEXT,
+      bl_filename TEXT,
+      notes TEXT,
       created_at TEXT NOT NULL
     );
   `);
@@ -377,6 +388,110 @@ export function initDatabase() {
     );
   `);
 
+  // 20. Inventaires Physiques Dépôt Central (Gérés par le Sales Admin / Contrôleur ou Magasinier)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS depot_inventories (
+      id TEXT PRIMARY KEY,
+      reference TEXT NOT NULL UNIQUE,
+      date TEXT NOT NULL,
+      items TEXT NOT NULL, -- JSON [{ productId, productCode, productName, countedQty, theoreticalQty, diffQty, unitPrice, diffAmount }]
+      total_ecart_boxes INTEGER NOT NULL DEFAULT 0,
+      total_ecart_fcfa INTEGER NOT NULL DEFAULT 0,
+      performed_by TEXT NOT NULL,
+      performed_role TEXT NOT NULL DEFAULT 'Sales Admin',
+      notes TEXT,
+      applied_adjustment INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // Safe migrations for Sales Admin (Contrôleur) & Gestionnaire de stock features:
+  // - Receptions validation, cancellation, supplier BL photo attachment & optional reception notes
+  try { db.exec("ALTER TABLE receptions ADD COLUMN status TEXT NOT NULL DEFAULT 'valide';"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN submitted_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN validated_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN validated_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN cancel_reason TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN cancelled_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN cancelled_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN bl_number TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN bl_photo TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN bl_filename TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE receptions ADD COLUMN notes TEXT;"); } catch {}
+
+  // - Chargements cancellation by Sales Admin (Contrôleur)
+  try { db.exec("ALTER TABLE chargements ADD COLUMN cancel_reason TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE chargements ADD COLUMN cancelled_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE chargements ADD COLUMN cancelled_at TEXT;"); } catch {}
+
+  // - Sales cancellation by Sales Admin (Contrôleur) & Demandes d'annulation vendeur soumises au Directeur des opérations de vente (DOV)
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_reason TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancelled_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancelled_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_request_status TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_request_reason TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_requested_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_requested_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_reviewed_at TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_reviewed_by TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cancel_rejection_reason TEXT;"); } catch {}
+
+  // 21. Clients en Gros (Gérés par le Gestionnaire grossiste / Administrateur)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wholesale_clients (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      company_name TEXT NOT NULL,
+      manager_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      email TEXT,
+      neighborhood TEXT NOT NULL,
+      city TEXT NOT NULL DEFAULT 'Bamako',
+      address TEXT,
+      nif TEXT,
+      rccm TEXT,
+      category TEXT NOT NULL DEFAULT 'Demi-grossiste',
+      default_discount_percent REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'actif',
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // 22. Commandes en Gros (Gérées par le Gestionnaire grossiste / Administrateur)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wholesale_orders (
+      id TEXT PRIMARY KEY,
+      reference TEXT NOT NULL UNIQUE,
+      client_id TEXT NOT NULL,
+      client_code TEXT NOT NULL,
+      client_name TEXT NOT NULL,
+      client_manager TEXT,
+      client_phone TEXT,
+      client_neighborhood TEXT,
+      client_city TEXT DEFAULT 'Bamako',
+      date TEXT NOT NULL,
+      order_time TEXT,
+      items_json TEXT NOT NULL DEFAULT '[]',
+      total_boxes INTEGER NOT NULL DEFAULT 0,
+      subtotal_ht INTEGER NOT NULL DEFAULT 0,
+      discount_percent REAL NOT NULL DEFAULT 0,
+      discount_amount INTEGER NOT NULL DEFAULT 0,
+      total_amount INTEGER NOT NULL DEFAULT 0,
+      payment_mode TEXT NOT NULL DEFAULT 'Virement Bancaire',
+      payment_status TEXT NOT NULL DEFAULT 'paye',
+      delivery_status TEXT NOT NULL DEFAULT 'livree',
+      notes TEXT,
+      created_by TEXT,
+      created_by_code TEXT,
+      cancel_reason TEXT,
+      cancelled_by TEXT,
+      cancelled_at TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+
   // Check if initial demo seed has already been loaded via 'seeded_at'
   const seededCheck = db.prepare("SELECT value FROM settings WHERE key = 'seeded_at'").get() as { value: string } | undefined;
   if (seededCheck && seededCheck.value) {
@@ -390,6 +505,9 @@ export function initDatabase() {
     ensureSemesterBonsAndScores();
     ensureVendorGpsTrajectories();
     ensureComptableInvoicesAndPurchaseRequests();
+    ensureSalesAdminProfileAndSampleData();
+    ensureGrossisteProfileAndSampleData();
+    ensureVendorSaleCancelRequestSampleData();
     return;
   }
 
@@ -442,7 +560,7 @@ export function initDatabase() {
     'BAO-MAG',
     'Moussa Diarra',
     'magasin@baobab.ml',
-    'Magasinier',
+    'Gestionnaire de stock',
     '+223 66 12 34 56',
     'Dépôt Central Sotuba',
     0,
@@ -463,7 +581,46 @@ export function initDatabase() {
     '2026-04-15'
   );
 
-  // 3 Vendeurs initiaux avec champ libre "Équipe"
+  insertUser.run(
+    'usr-sad',
+    'BAO-SAD',
+    'Salif Keïta',
+    'controleur@baobab.ml',
+    'Sales Admin',
+    '+223 76 55 88 99',
+    'Contrôle & Inventaires',
+    0,
+    'hash_sad',
+    '2026-04-15'
+  );
+
+  insertUser.run(
+    'usr-dov',
+    'BAO-DOV',
+    'Ibrahim Sangaré',
+    'dov@baobab.ml',
+    'Directeur des opérations de vente',
+    '+223 76 40 50 60',
+    'Direction des Opérations de Vente',
+    0,
+    'hash_dov',
+    '2026-04-15'
+  );
+
+  insertUser.run(
+    'usr-grs',
+    'BAO-GRS',
+    'Cheick Oumar Diallo',
+    'grossiste@baobab.ml',
+    'Gestionnaire grossiste',
+    '+223 76 80 90 10',
+    'Département Ventes en Gros & Grands Comptes',
+    0,
+    'hash_grs',
+    '2026-04-15'
+  );
+
+  // 3 Vendeurs initiaux
   insertUser.run(
     'usr-vnd-1',
     'BAO-VND-001',
@@ -796,6 +953,8 @@ export function initDatabase() {
   ensureSemesterBonsAndScores();
   ensureVendorGpsTrajectories();
   ensureComptableInvoicesAndPurchaseRequests();
+  ensureSalesAdminProfileAndSampleData();
+  ensureGrossisteProfileAndSampleData();
 }
 
 export function ensureZeroSalesPdvs() {
@@ -1628,4 +1787,539 @@ export function ensureComptableInvoicesAndPurchaseRequests() {
   }
 }
 
+export function ensureSalesAdminProfileAndSampleData() {
+  try {
+    // 1. Ensure default Sales Admin (Contrôleur) user exists
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, code, name, email, role, phone, team, must_change_password, password_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'usr-sad',
+      'BAO-SAD',
+      'Salif Keïta',
+      'controleur@baobab.ml',
+      'Sales Admin',
+      '+223 76 55 88 99',
+      'Contrôle & Inventaires',
+      0,
+      'hash_sad',
+      '2026-04-15'
+    );
+
+    // 1b. Ensure default Directeur des opérations de vente user exists
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, code, name, email, role, phone, team, must_change_password, password_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'usr-dov',
+      'BAO-DOV',
+      'Ibrahim Sangaré',
+      'dov@baobab.ml',
+      'Directeur des opérations de vente',
+      '+223 76 40 50 60',
+      'Direction des Opérations de Vente',
+      0,
+      'hash_dov',
+      '2026-04-15'
+    );
+
+    // 1c. Le Magasinier devient Gestionnaire de stock : migrer le rôle sur les comptes, demandes d'achat et notifications
+    db.prepare(`
+      UPDATE users
+      SET role = 'Gestionnaire de stock'
+      WHERE code = 'BAO-MAG' OR role = 'Magasinier'
+    `).run();
+
+    db.prepare(`
+      UPDATE purchase_requests
+      SET requester_role = 'Gestionnaire de stock'
+      WHERE requester_role = 'Magasinier'
+    `).run();
+
+    db.prepare(`
+      UPDATE notifications
+      SET role = 'Gestionnaire de stock'
+      WHERE role = 'Magasinier'
+    `).run();
+
+    const sampleBlSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="560" viewBox="0 0 800 560"><rect width="800" height="560" fill="#f8fafc"/><rect x="28" y="28" width="744" height="504" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><rect x="28" y="28" width="744" height="86" rx="16" fill="#008DA9"/><text x="56" y="68" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#ffffff">BON DE LIVRAISON FOURNISSEUR (BL)</text><text x="56" y="94" font-family="Arial, sans-serif" font-size="13" fill="#e0f2fe">Usines Partenaires Agroalimentaires Mali • Zone Industrielle Sotuba, Bamako</text><text x="560" y="72" font-family="monospace" font-size="16" font-weight="bold" fill="#ffffff">N° BL-UPAM-2026-1029</text><text x="56" y="150" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">Destinataire : Baobab Distribution SARL — Dépôt Central Sotuba</text><text x="56" y="174" font-family="Arial, sans-serif" font-size="13" fill="#475569">Réceptionné par : Moussa Diarra (Gestionnaire de stock) • Date : 29/10/2026</text><line x1="56" y1="196" x2="744" y2="196" stroke="#e2e8f0" stroke-width="2"/><text x="56" y="226" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">DÉSIGNATION PRODUIT</text><text x="360" y="226" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">LOT &amp; EXPIRATION</text><text x="560" y="226" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">COMMANDÉ</text><text x="665" y="226" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#008DA9">LIVRÉ / REÇU</text><line x1="56" y1="238" x2="744" y2="238" stroke="#cbd5e1" stroke-width="1"/><text x="56" y="272" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">1. Jus Cajoucy (Carton de 12)</text><text x="360" y="272" font-family="monospace" font-size="13" fill="#0f766e">LOT-CAJ-2026-CTRL1 (15/11/2027)</text><text x="575" y="272" font-family="Arial, sans-serif" font-size="14" fill="#64748b">150 ctn</text><text x="675" y="272" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">120 ctn</text><text x="56" y="314" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">2. Eau minérale Nora (Pack 6x1,5L)</text><text x="360" y="314" font-family="monospace" font-size="13" fill="#0f766e">LOT-NOR-2026-CTRL2 (30/04/2028)</text><text x="575" y="314" font-family="Arial, sans-serif" font-size="14" fill="#64748b">200 ctn</text><text x="675" y="314" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">200 ctn</text><rect x="56" y="352" width="688" height="62" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/><text x="72" y="376" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#92400e">OBSERVATION GESTIONNAIRE DE STOCK (ÉCART DE LIVRAISON) :</text><text x="72" y="398" font-family="Arial, sans-serif" font-size="12" fill="#78350f">120 cartons de Jus Cajoucy reçus sur 150 commandés (-30 cartons manquants signalés au chauffeur, reliquat prévu demain).</text><text x="56" y="468" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#475569">Visa Fournisseur : UPAM Bamako [Signé]</text><text x="450" y="468" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#008DA9">Visa Gestionnaire de stock : Moussa Diarra [Signé]</text></svg>`;
+    const sampleBlDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(sampleBlSvg)}`;
+
+    // 2. Ensure existing receptions have valid status, submitted_by, and sample BL populated
+    db.prepare(`
+      UPDATE receptions
+      SET status = COALESCE(NULLIF(status, ''), 'valide'),
+          submitted_by = 'Moussa Diarra (Gestionnaire de stock)',
+          validated_by = CASE WHEN COALESCE(status, 'valide') = 'valide' AND validated_by IS NULL THEN 'Salif Keïta (Sales Admin / Contrôleur)' ELSE validated_by END,
+          bl_number = COALESCE(bl_number, 'BL-FOURN-' || substr(date, 1, 10)),
+          bl_photo = COALESCE(bl_photo, ?),
+          bl_filename = COALESCE(bl_filename, 'photo_bl_fournisseur.jpg')
+    `).run(sampleBlDataUrl);
+
+    // 3. Seed one sample reception submitted by the Gestionnaire de stock in 'en_attente' status for Sales Admin validation
+    const checkSeed = db.prepare("SELECT value FROM settings WHERE key = 'seeded_sales_admin_v1'").get() as { value: string } | undefined;
+    if (!checkSeed || !checkSeed.value) {
+      db.prepare(`
+        INSERT OR IGNORE INTO receptions (
+          id, reference, supplier_name, date, items, total_boxes, status, submitted_by, bl_number, bl_photo, bl_filename, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'en_attente', ?, ?, ?, ?, ?, ?)
+      `).run(
+        'recp-03-pending',
+        'REC-FOURN-2026-10-29',
+        'Usines Partenaires Agroalimentaires Mali',
+        '2026-10-29',
+        JSON.stringify([
+          { productId: 'prod-caj', code: 'JUS-CAJ-12', name: 'Jus Cajoucy', requestedBoxes: 150, boxes: 120, lot_number: 'LOT-CAJ-2026-CTRL1', expiry_date: '2027-11-15' },
+          { productId: 'prod-nor', code: 'EAU-NOR-06', name: 'Eau minérale Nora', requestedBoxes: 200, boxes: 200, lot_number: 'LOT-NOR-2026-CTRL2', expiry_date: '2028-04-30' }
+        ]),
+        320,
+        'Moussa Diarra (Gestionnaire de stock)',
+        'BL-UPAM-2026-1029',
+        sampleBlDataUrl,
+        'photo_bl_upam_2026_1029.jpg',
+        'Écart constaté : 120 cartons de Jus Cajoucy reçus sur 150 commandés (-30 cartons non livrés par le transporteur). Stock reçu validé.',
+        '2026-10-29'
+      );
+
+      db.prepare(`
+        INSERT OR IGNORE INTO notifications (id, role, target_user_id, title, message, type, reference, is_read, created_at)
+        VALUES (?, 'Sales Admin', 'usr-sad', ?, ?, 'reception', ?, 0, ?)
+      `).run(
+        'notif-sad-recp-01',
+        'Réception de stock à valider : REC-FOURN-2026-10-29',
+        'Moussa Diarra (Gestionnaire de stock) a soumis une réception de 320 cartons avec photo du BL (BL-UPAM-2026-1029) et note d\'écart en attente de validation.',
+        'REC-FOURN-2026-10-29',
+        '2026-10-29T09:15:00'
+      );
+
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('seeded_sales_admin_v1', ?)").run(new Date().toISOString());
+    } else {
+      // Ensure recp-03-pending also has the sample note and requestedBoxes if already seeded
+      db.prepare(`
+        UPDATE receptions
+        SET bl_number = COALESCE(bl_number, 'BL-UPAM-2026-1029'),
+            bl_photo = COALESCE(bl_photo, ?),
+            bl_filename = COALESCE(bl_filename, 'photo_bl_upam_2026_1029.jpg'),
+            notes = COALESCE(notes, 'Écart constaté : 120 cartons de Jus Cajoucy reçus sur 150 commandés (-30 cartons non livrés par le transporteur). Stock reçu validé.')
+        WHERE id = 'recp-03-pending'
+      `).run(sampleBlDataUrl);
+    }
+  } catch (e) {
+    console.warn('ensureSalesAdminProfileAndSampleData warning:', e);
+  }
+}
+
+export function ensureGrossisteProfileAndSampleData() {
+  try {
+    // 1. Ensure default Gestionnaire grossiste user exists
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, code, name, email, role, phone, team, must_change_password, password_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'usr-grs',
+      'BAO-GRS',
+      'Cheick Oumar Diallo',
+      'grossiste@baobab.ml',
+      'Gestionnaire grossiste',
+      '+223 76 80 90 10',
+      'Département Ventes en Gros & Grands Comptes',
+      0,
+      'hash_grs',
+      '2026-04-15'
+    );
+
+    const checkSeed = db.prepare("SELECT value FROM settings WHERE key = 'seeded_grossiste_v1'").get() as { value: string } | undefined;
+    if (checkSeed && checkSeed.value) return;
+
+    // 2. Seed realistic sample Wholesale Clients (Clients en gros)
+    const insertClient = db.prepare(`
+      INSERT OR IGNORE INTO wholesale_clients (
+        id, code, company_name, manager_name, phone, email,
+        neighborhood, city, address, nif, rccm, category,
+        default_discount_percent, status, notes, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const sampleClients = [
+      {
+        id: 'grs-cli-01',
+        code: 'GRS-BKO-001',
+        company_name: 'Établissements Simpara & Frères (Grand Marché)',
+        manager_name: 'Alhousseini Simpara',
+        phone: '+223 76 20 31 42',
+        email: 'contact@simpara-negoce.ml',
+        neighborhood: 'Grand Marché Dabanani',
+        city: 'Bamako',
+        address: 'Rue Testard, Immeuble Simpara, Dabanani',
+        nif: '081452390A',
+        rccm: 'MA.BKO.2015.B.2104',
+        category: 'Grossiste Régional',
+        default_discount_percent: 5,
+        status: 'actif',
+        notes: 'Principal distributeur grossiste au Grand Marché de Bamako. Enlèvement par camion 10 tonnes.',
+        created_by: 'Cheick Oumar Diallo (BAO-GRS)',
+        created_at: '2026-05-10',
+      },
+      {
+        id: 'grs-cli-02',
+        code: 'GRS-BKO-002',
+        company_name: 'Centrale d’Achat Halles de Bamako SARL',
+        manager_name: 'Mamadou Lamine Sylla',
+        phone: '+223 66 44 55 88',
+        email: 'appro@halles-bamako.ml',
+        neighborhood: 'Niamakoro / Halles de Bamako',
+        city: 'Bamako',
+        address: 'Avenue de l’OUA, Hangar Grossistes N°14',
+        nif: '083910442K',
+        rccm: 'MA.BKO.2019.B.5512',
+        category: 'Demi-grossiste',
+        default_discount_percent: 3,
+        status: 'actif',
+        notes: 'Commandes hebdomadaires pour approvisionner les demi-grossistes de la Rive Droite.',
+        created_by: 'Cheick Oumar Diallo (BAO-GRS)',
+        created_at: '2026-05-18',
+      },
+      {
+        id: 'grs-cli-03',
+        code: 'GRS-BKO-003',
+        company_name: 'Supermarché Azar & Distribution ACI 2000',
+        manager_name: 'Karim Coulibaly',
+        phone: '+223 70 12 98 34',
+        email: 'direction@supermarche-aci.ml',
+        neighborhood: 'ACI 2000',
+        city: 'Bamako',
+        address: 'Boulevard de l’Indépendance, ACI 2000',
+        nif: '085621908P',
+        rccm: 'MA.BKO.2020.B.7810',
+        category: 'Supermarché / Centrale',
+        default_discount_percent: 4,
+        status: 'actif',
+        notes: 'Règlement par virement bancaire ou chèque certifié à la livraison.',
+        created_by: 'Cheick Oumar Diallo (BAO-GRS)',
+        created_at: '2026-06-05',
+      },
+      {
+        id: 'grs-cli-04',
+        code: 'GRS-BKO-004',
+        company_name: 'Société Malienne de Demi-Gros (SOMADEG Médina)',
+        manager_name: 'Hadjia Djénéba Traoré',
+        phone: '+223 79 33 21 09',
+        email: 'somadeg.medina@baobab-partenaire.ml',
+        neighborhood: 'Médina Coura',
+        city: 'Bamako',
+        address: 'Près du Stade Omnisports Modibo Keïta',
+        nif: '082109874C',
+        rccm: 'MA.BKO.2017.B.3390',
+        category: 'Demi-grossiste',
+        default_discount_percent: 3,
+        status: 'actif',
+        notes: 'Forte rotation sur Jus Cajoucy et Eau minérale Nora.',
+        created_by: 'Cheick Oumar Diallo (BAO-GRS)',
+        created_at: '2026-07-12',
+      },
+      {
+        id: 'grs-cli-05',
+        code: 'GRS-REG-005',
+        company_name: 'Comptoir Commercial du Bani (Ségou & Sikasso)',
+        manager_name: 'Sékouba Tangara',
+        phone: '+223 75 91 02 64',
+        email: 'comptoir.bani@segou-negoce.ml',
+        neighborhood: 'Quartier Commercial',
+        city: 'Ségou',
+        address: 'Route Nationale RN6, Entrepôt Bani',
+        nif: '087412365M',
+        rccm: 'MA.SEG.2021.B.1109',
+        category: 'Grossiste Régional',
+        default_discount_percent: 5,
+        status: 'actif',
+        notes: 'Expédition inter-régionale depuis le Dépôt Central Sotuba.',
+        created_by: 'Cheick Oumar Diallo (BAO-GRS)',
+        created_at: '2026-08-20',
+      },
+      {
+        id: 'grs-cli-06',
+        code: 'GRS-BKO-006',
+        company_name: 'Groupe Hôtelier & Catering Mandé',
+        manager_name: 'Aïssata Maïga',
+        phone: '+223 65 80 41 22',
+        email: 'achats@mande-catering.ml',
+        neighborhood: 'Badalabougou',
+        city: 'Bamako',
+        address: 'Corniche du Fleuve Niger, Badalabougou',
+        nif: '089012478T',
+        rccm: 'MA.BKO.2022.B.6401',
+        category: 'Institution / Horeca',
+        default_discount_percent: 2,
+        status: 'actif',
+        notes: 'Approvisionnement mensuel en boissons, eau minérale et condiments.',
+        created_by: 'Cheick Oumar Diallo (BAO-GRS)',
+        created_at: '2026-09-14',
+      },
+    ];
+
+    for (const c of sampleClients) {
+      insertClient.run(
+        c.id,
+        c.code,
+        c.company_name,
+        c.manager_name,
+        c.phone,
+        c.email,
+        c.neighborhood,
+        c.city,
+        c.address,
+        c.nif,
+        c.rccm,
+        c.category,
+        c.default_discount_percent,
+        c.status,
+        c.notes,
+        c.created_by,
+        c.created_at
+      );
+    }
+
+    // 3. Seed realistic sample Wholesale Orders (Commandes en gros)
+    const insertOrder = db.prepare(`
+      INSERT OR IGNORE INTO wholesale_orders (
+        id, reference, client_id, client_code, client_name, client_manager,
+        client_phone, client_neighborhood, client_city, date, order_time,
+        items_json, total_boxes, subtotal_ht, discount_percent, discount_amount,
+        total_amount, payment_mode, payment_status, delivery_status, notes,
+        created_by, created_by_code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const sampleOrders = [
+      {
+        id: 'grs-ord-01',
+        reference: 'CMD-GROS-2026-001',
+        client_id: 'grs-cli-01',
+        client_code: 'GRS-BKO-001',
+        client_name: 'Établissements Simpara & Frères (Grand Marché)',
+        client_manager: 'Alhousseini Simpara',
+        client_phone: '+223 76 20 31 42',
+        client_neighborhood: 'Grand Marché Dabanani',
+        client_city: 'Bamako',
+        date: '2026-10-12',
+        order_time: '09:30',
+        items: [
+          { productId: 'prod-caj', code: 'JUS-CAJ-12', name: 'Jus Cajoucy', qtyBoxes: 80, unitPrice: 9600, total: 768000 },
+          { productId: 'prod-ben', code: 'MAY-BEN-12', name: 'Mayonnaise Bennor', qtyBoxes: 50, unitPrice: 14400, total: 720000 },
+          { productId: 'prod-nor', code: 'EAU-NOR-06', name: 'Eau minérale Nora', qtyBoxes: 120, unitPrice: 2700, total: 324000 },
+          { productId: 'prod-saf', code: 'SAU-SAF-24', name: 'Sauce Piment Safie', qtyBoxes: 40, unitPrice: 12000, total: 480000 },
+        ],
+        total_boxes: 290,
+        subtotal_ht: 2292000,
+        discount_percent: 5,
+        discount_amount: 114600,
+        total_amount: 2177400,
+        payment_mode: 'Virement Bancaire',
+        payment_status: 'paye',
+        delivery_status: 'livree',
+        notes: 'Livraison complète effectuée au dépôt Dabanani.',
+        created_by: 'Cheick Oumar Diallo',
+        created_by_code: 'BAO-GRS',
+      },
+      {
+        id: 'grs-ord-02',
+        reference: 'CMD-GROS-2026-002',
+        client_id: 'grs-cli-02',
+        client_code: 'GRS-BKO-002',
+        client_name: 'Centrale d’Achat Halles de Bamako SARL',
+        client_manager: 'Mamadou Lamine Sylla',
+        client_phone: '+223 66 44 55 88',
+        client_neighborhood: 'Niamakoro / Halles de Bamako',
+        client_city: 'Bamako',
+        date: '2026-10-19',
+        order_time: '11:15',
+        items: [
+          { productId: 'prod-caj', code: 'JUS-CAJ-12', name: 'Jus Cajoucy', qtyBoxes: 60, unitPrice: 9600, total: 576000 },
+          { productId: 'prod-nor', code: 'EAU-NOR-06', name: 'Eau minérale Nora', qtyBoxes: 100, unitPrice: 2700, total: 270000 },
+          { productId: 'prod-saf', code: 'SAU-SAF-24', name: 'Sauce Piment Safie', qtyBoxes: 30, unitPrice: 12000, total: 360000 },
+        ],
+        total_boxes: 190,
+        subtotal_ht: 1206000,
+        discount_percent: 3,
+        discount_amount: 36180,
+        total_amount: 1169820,
+        payment_mode: 'Espèces',
+        payment_status: 'paye',
+        delivery_status: 'livree',
+        notes: 'Enlèvement direct au Dépôt Central Sotuba.',
+        created_by: 'Cheick Oumar Diallo',
+        created_by_code: 'BAO-GRS',
+      },
+      {
+        id: 'grs-ord-03',
+        reference: 'CMD-GROS-2026-003',
+        client_id: 'grs-cli-03',
+        client_code: 'GRS-BKO-003',
+        client_name: 'Supermarché Azar & Distribution ACI 2000',
+        client_manager: 'Karim Coulibaly',
+        client_phone: '+223 70 12 98 34',
+        client_neighborhood: 'ACI 2000',
+        client_city: 'Bamako',
+        date: '2026-10-23',
+        order_time: '14:40',
+        items: [
+          { productId: 'prod-ben', code: 'MAY-BEN-12', name: 'Mayonnaise Bennor', qtyBoxes: 45, unitPrice: 14400, total: 648000 },
+          { productId: 'prod-caj', code: 'JUS-CAJ-12', name: 'Jus Cajoucy', qtyBoxes: 50, unitPrice: 9600, total: 480000 },
+          { productId: 'prod-saf', code: 'SAU-SAF-24', name: 'Sauce Piment Safie', qtyBoxes: 25, unitPrice: 12000, total: 300000 },
+        ],
+        total_boxes: 120,
+        subtotal_ht: 1428000,
+        discount_percent: 4,
+        discount_amount: 57120,
+        total_amount: 1370880,
+        payment_mode: 'Chèque Certifié',
+        payment_status: 'paye',
+        delivery_status: 'livree',
+        notes: 'Livré à l’entrepôt central ACI 2000.',
+        created_by: 'Cheick Oumar Diallo',
+        created_by_code: 'BAO-GRS',
+      },
+      {
+        id: 'grs-ord-04',
+        reference: 'CMD-GROS-2026-004',
+        client_id: 'grs-cli-05',
+        client_code: 'GRS-REG-005',
+        client_name: 'Comptoir Commercial du Bani (Ségou & Sikasso)',
+        client_manager: 'Sékouba Tangara',
+        client_phone: '+223 75 91 02 64',
+        client_neighborhood: 'Quartier Commercial',
+        client_city: 'Ségou',
+        date: '2026-10-25',
+        order_time: '10:05',
+        items: [
+          { productId: 'prod-caj', code: 'JUS-CAJ-12', name: 'Jus Cajoucy', qtyBoxes: 100, unitPrice: 9600, total: 960000 },
+          { productId: 'prod-ben', code: 'MAY-BEN-12', name: 'Mayonnaise Bennor', qtyBoxes: 60, unitPrice: 14400, total: 864000 },
+          { productId: 'prod-nor', code: 'EAU-NOR-06', name: 'Eau minérale Nora', qtyBoxes: 150, unitPrice: 2700, total: 405000 },
+          { productId: 'prod-saf', code: 'SAU-SAF-24', name: 'Sauce Piment Safie', qtyBoxes: 50, unitPrice: 12000, total: 600000 },
+        ],
+        total_boxes: 360,
+        subtotal_ht: 2829000,
+        discount_percent: 5,
+        discount_amount: 141450,
+        total_amount: 2687550,
+        payment_mode: 'Virement Bancaire',
+        payment_status: 'en_attente_paiement',
+        delivery_status: 'en_preparation',
+        notes: 'Commande expédition Ségou — chargement camion prévu à 15h00.',
+        created_by: 'Cheick Oumar Diallo',
+        created_by_code: 'BAO-GRS',
+      },
+      {
+        id: 'grs-ord-05',
+        reference: 'CMD-GROS-2026-005',
+        client_id: 'grs-cli-04',
+        client_code: 'GRS-BKO-004',
+        client_name: 'Société Malienne de Demi-Gros (SOMADEG Médina)',
+        client_manager: 'Hadjia Djénéba Traoré',
+        client_phone: '+223 79 33 21 09',
+        client_neighborhood: 'Médina Coura',
+        client_city: 'Bamako',
+        date: '2026-10-26',
+        order_time: '08:50',
+        items: [
+          { productId: 'prod-caj', code: 'JUS-CAJ-12', name: 'Jus Cajoucy', qtyBoxes: 45, unitPrice: 9600, total: 432000 },
+          { productId: 'prod-nor', code: 'EAU-NOR-06', name: 'Eau minérale Nora', qtyBoxes: 80, unitPrice: 2700, total: 216000 },
+          { productId: 'prod-ben', code: 'MAY-BEN-12', name: 'Mayonnaise Bennor', qtyBoxes: 30, unitPrice: 14400, total: 432000 },
+        ],
+        total_boxes: 155,
+        subtotal_ht: 1080000,
+        discount_percent: 3,
+        discount_amount: 32400,
+        total_amount: 1047600,
+        payment_mode: 'Orange Money',
+        payment_status: 'paye',
+        delivery_status: 'livree',
+        notes: 'Commande demi-gros du jour livrée à Médina Coura.',
+        created_by: 'Cheick Oumar Diallo',
+        created_by_code: 'BAO-GRS',
+      },
+    ];
+
+    for (const o of sampleOrders) {
+      insertOrder.run(
+        o.id,
+        o.reference,
+        o.client_id,
+        o.client_code,
+        o.client_name,
+        o.client_manager,
+        o.client_phone,
+        o.client_neighborhood,
+        o.client_city,
+        o.date,
+        o.order_time,
+        JSON.stringify(o.items),
+        o.total_boxes,
+        o.subtotal_ht,
+        o.discount_percent,
+        o.discount_amount,
+        o.total_amount,
+        o.payment_mode,
+        o.payment_status,
+        o.delivery_status,
+        o.notes,
+        o.created_by,
+        o.created_by_code,
+        `${o.date}T${o.order_time}:00`
+      );
+    }
+
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('seeded_grossiste_v1', ?)").run(new Date().toISOString());
+  } catch (e) {
+    console.warn('ensureGrossisteProfileAndSampleData warning:', e);
+  }
+}
+
+function ensureVendorSaleCancelRequestSampleData() {
+  try {
+    const check = db.prepare("SELECT value FROM settings WHERE key = 'seeded_sale_cancel_req_v1'").get() as { value: string } | undefined;
+    if (check && check.value) return;
+
+    const targetSale = db.prepare(`
+      SELECT s.id, s.number, s.vendor_id, s.total_amount, u.name AS vendor_name, u.code AS vendor_code, p.name AS pdv_name
+      FROM sales s
+      JOIN users u ON s.vendor_id = u.id
+      JOIN points_de_vente p ON s.pdv_id = p.id
+      WHERE s.vendor_id = 'usr-vnd-1' AND COALESCE(s.status, 'livree') != 'annulee' AND s.cancel_request_status IS NULL
+      ORDER BY s.date DESC, s.created_at DESC
+      LIMIT 1
+    `).get() as any;
+
+    if (targetSale) {
+      const reqReason = 'Erreur de saisie sur la quantité : 2 cartons saisis en trop par rapport à la livraison réelle au client PDV.';
+      const reqAt = '2026-10-30T09:20:00.000Z';
+
+      db.prepare(`
+        UPDATE sales
+        SET cancel_request_status = 'en_attente',
+            cancel_request_reason = ?,
+            cancel_requested_at = ?,
+            cancel_requested_by = ?
+        WHERE id = ?
+      `).run(reqReason, reqAt, `${targetSale.vendor_name} (${targetSale.vendor_code})`, targetSale.id);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO notifications (id, role, title, message, type, reference, is_read, created_at)
+        VALUES (?, 'Directeur des opérations de vente', ?, ?, 'demande_annulation_vente', ?, 0, ?)
+      `).run(
+        `notif-cancel-req-${targetSale.id}`,
+        `Demande d'annulation de vente (${targetSale.number}) — ${targetSale.vendor_name}`,
+        `Le vendeur ${targetSale.vendor_name} (${targetSale.vendor_code}) a soumis une demande d'annulation pour la vente ${targetSale.number} (${Number(targetSale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${targetSale.pdv_name}). Motif déclaré : "${reqReason}". En attente de votre validation.`,
+        targetSale.number,
+        reqAt
+      );
+    }
+
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('seeded_sale_cancel_req_v1', ?)").run(new Date().toISOString());
+  } catch (e) {
+    console.warn('ensureVendorSaleCancelRequestSampleData warning:', e);
+  }
+}
+
 initDatabase();
+

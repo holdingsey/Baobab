@@ -10,11 +10,111 @@ import {
   Sun,
   Moon,
   Building2,
-  FileText
+  FileText,
+  Palette
 } from 'lucide-react';
 import { BaobabLogo } from './BaobabLogo';
 import { UserSession } from './LoginScreen';
 import { NotificationSettingsPanel } from './NotificationSettingsPanel';
+import { InfoTooltip } from './InfoTooltip';
+import { ExtractionPermissionsMatrix } from './ExtractionsView';
+import { DatabaseBackupSection } from './DatabaseBackupSection';
+
+export const BRAND_LOGO_PALETTE = [
+  {
+    variable: '--marque',
+    name: 'Bleu-turquoise du logo (Dominante)',
+    hex: '#008DA9',
+    rgb: 'rgb(0, 141, 169)',
+    swatchBg: '#008DA9',
+    swatchText: '#FFFFFF',
+    usage: 'Couleur source extraite du feuillage du logo officiel (/logo.png)',
+    contrast: '3,88:1 sur blanc (utilisée pour graphiques, bordures et accents)',
+  },
+  {
+    variable: '--marque-nuit',
+    name: 'Noir / Bleu nuit du logo (Seconde dominante)',
+    hex: '#000000',
+    rgb: 'rgb(0, 0, 0) / #0F172A',
+    swatchBg: '#000000',
+    swatchText: '#FFFFFF',
+    usage: 'Couleur extraite du tronc et de la courbe du logo officiel',
+    contrast: '21:1 sur blanc • Surface sombre #0F172A (17,4:1)',
+  },
+  {
+    variable: '--marque-fonce',
+    name: 'Marque foncée (Boutons pleins & Texte clair)',
+    hex: '#006B82',
+    rgb: 'rgb(0, 107, 130)',
+    swatchBg: '#006B82',
+    swatchText: '#FFFFFF',
+    usage: 'Boutons principaux pleins, pastille de rôle, onglets actifs et texte de marque en thème clair',
+    contrast: '6,02:1 avec texte blanc #FFFFFF (≥ 4,5:1 WCAG AA)',
+  },
+  {
+    variable: '--marque-clair',
+    name: 'Marque claire (Fond discret 12 %)',
+    hex: 'rgba(0, 141, 169, 0.12)',
+    rgb: '#008DA9 à 12 % (#E0F1F5 sur blanc)',
+    swatchBg: 'rgba(0, 141, 169, 0.12)',
+    swatchText: '#006B82',
+    usage: 'Fond discret de l’élément actif du menu, cartes sélectionnées et survols',
+    contrast: '5,05:1 avec texte --marque-fonce #006B82',
+  },
+  {
+    variable: '--marque-texte-sur-plein',
+    name: 'Texte sur bouton plein',
+    hex: '#FFFFFF',
+    rgb: 'rgb(255, 255, 255)',
+    swatchBg: '#006B82',
+    swatchText: '#FFFFFF',
+    usage: 'Texte et icônes affichés sur les boutons principaux et pastilles pleines (--marque-fonce)',
+    contrast: '6,02:1 sur #006B82 (≥ 4,5:1 WCAG AA)',
+  },
+  {
+    variable: '--marque-eclaircie',
+    name: 'Marque éclaircie (Textes & Icônes en thème sombre)',
+    hex: '#38CAE6',
+    rgb: 'rgb(56, 202, 230)',
+    swatchBg: '#0F172A',
+    swatchText: '#38CAE6',
+    usage: 'Textes, liens, anneaux de focus et icônes d’accent sur fond sombre (#0F172A / #1E293B)',
+    contrast: '8,92:1 sur #0F172A et 7,04:1 sur #1E293B (≥ 4,5:1 WCAG AA)',
+  },
+] as const;
+
+export const STATUS_PALETTE_UNCHANGED = [
+  {
+    label: 'Bulles de notification',
+    hex: '#DC2626',
+    textHex: '#FFFFFF',
+    usage: 'Compteurs non lus (cloche, menu, actions)',
+  },
+  {
+    label: 'Succès • Niveau normal • Payé • Chargée',
+    hex: '#15803D',
+    textHex: '#FFFFFF',
+    usage: 'États validés, paiements soldés, stock normal',
+  },
+  {
+    label: 'Attente & Stock bas',
+    hex: '#92400E',
+    textHex: '#FFFFFF',
+    usage: 'En attente de validation, seuil de stock bas',
+  },
+  {
+    label: 'Rejet & Rupture',
+    hex: '#B91C1C',
+    textHex: '#FFFFFF',
+    usage: 'Rejets, ruptures de stock, erreurs et actions destructives',
+  },
+  {
+    label: 'Neutre',
+    hex: '#E2E8F0',
+    textHex: '#0F172A',
+    usage: 'Badges neutres, surstock, états archivés',
+  },
+] as const;
 
 interface IdentitySettingsProps {
   currentRole: string;
@@ -22,6 +122,100 @@ interface IdentitySettingsProps {
   logoUrl: string;
   onLogoUpdated: (newUrl: string) => void;
 }
+
+const BrandPaletteSection: React.FC = () => (
+  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-xs space-y-5">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
+      <div className="flex items-center gap-2.5">
+        <div className="p-2 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0">
+          <Palette className="w-5 h-5" />
+        </div>
+        <div>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            Palette extraite du logo officiel (Source unique)
+          </h2>
+          <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+            Codes hexadécimaux extraits de <code>/logo.png</code> : Bleu-turquoise <strong>#008DA9</strong> et Noir / Bleu nuit <strong>#000000</strong> (surface sombre <strong>#0F172A</strong>).
+          </p>
+        </div>
+      </div>
+      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] shrink-0 self-start sm:self-center">
+        Contraste WCAG ≥ 4,5:1 vérifié
+      </span>
+    </div>
+
+    {/* Pastilles des variables CSS de marque */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+      {BRAND_LOGO_PALETTE.map((item) => (
+        <div
+          key={item.variable}
+          className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 flex flex-col justify-between gap-2.5"
+        >
+          <div className="flex items-start gap-3">
+            {/* Pastille de couleur */}
+            <div
+              className="w-12 h-12 rounded-xl border border-slate-300 dark:border-slate-600 shadow-xs shrink-0 flex items-center justify-center font-mono text-[11px] font-extrabold select-all"
+              style={{ backgroundColor: item.swatchBg, color: item.swatchText }}
+              title={`${item.variable} : ${item.hex}`}
+            >
+              Aa
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-mono text-xs font-extrabold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] break-words">
+                {item.variable}
+              </div>
+              <div className="text-xs font-bold text-slate-900 dark:text-white leading-snug mt-0.5 break-words">
+                {item.name}
+              </div>
+              <div className="mt-1 inline-flex items-center gap-1.5 flex-wrap">
+                <code className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs font-bold text-slate-900 dark:text-white">
+                  {item.hex}
+                </code>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                  {item.rgb}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/60 space-y-1 text-[11px]">
+            <div className="text-slate-600 dark:text-slate-300 leading-snug">{item.usage}</div>
+            <div className="font-semibold text-slate-700 dark:text-slate-200">{item.contrast}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {/* Rappel des couleurs d'état inchangées */}
+    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+      <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        Couleurs d&apos;état sémantiques inchangées (la couleur de marque n&apos;est jamais utilisée pour un état)
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+        {STATUS_PALETTE_UNCHANGED.map((st) => (
+          <div
+            key={st.hex + st.label}
+            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center gap-2.5"
+          >
+            <span
+              className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center font-mono text-[10px] font-bold border border-black/10"
+              style={{ backgroundColor: st.hex, color: st.textHex }}
+            >
+              Aa
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-slate-900 dark:text-white leading-tight break-words">
+                {st.label}
+              </div>
+              <div className="font-mono text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                {st.hex} • Texte {st.textHex}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
 
 export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
   currentRole,
@@ -158,16 +352,17 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
 
   if (!isAdmin) {
     return (
-      <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto space-y-6">
+      <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
+        <BrandPaletteSection />
         <NotificationSettingsPanel currentUser={effectiveUser} />
 
         <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900/50 p-6 text-center">
           <ShieldAlert className="w-12 h-12 mx-auto text-amber-600 dark:text-amber-400 mb-3" />
           <h2 className="text-xl font-bold text-amber-900 dark:text-amber-200">
-            Identité de l'entreprise : Accès restreint à l'Administrateur
+            Identité de l&apos;entreprise : Modification réservée à l&apos;Administrateur
           </h2>
           <p className="mt-2 text-sm text-amber-700 dark:text-amber-300 max-w-md mx-auto">
-            La modification de l'identité visuelle et du logo officiel de Baobab Distribution nécessite le rôle <strong>Administrateur</strong>.
+            La modification du fichier logo officiel de Baobab Distribution nécessite le rôle <strong>Administrateur</strong>.
           </p>
           <div className="mt-4 text-xs text-amber-800 dark:text-amber-400">
             Rôle actuel : <span className="font-semibold">{currentRole}</span>
@@ -179,38 +374,50 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-8">
-      {/* Réglages Notifications Système & Badge */}
-      <NotificationSettingsPanel currentUser={effectiveUser} />
-
       {/* Header section */}
       <div className="border-b border-slate-200 dark:border-slate-800 pb-5">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300">
+          <div className="p-2 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
             <Building2 className="w-6 h-6" />
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Réglages &rsaquo; Identité de l'entreprise
+              Réglages &rsaquo; Identité de l&apos;entreprise
             </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Gestion du logo officiel, des mentions légales et de la charte graphique de Baobab Distribution Mali.
-            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Logo officiel, palette extraite et charte de l&apos;entreprise.
+              </p>
+              <InfoTooltip text="Gestion du logo officiel, de la palette de marque extraite du logo et des mentions légales de Baobab Distribution Mali." />
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Réglages > Droits d'extraction (Administrateur seul) : tableau rôle par jeu avec cases à cocher, modifications journalisées */}
+      <ExtractionPermissionsMatrix currentUser={effectiveUser as any} />
+
+      {/* Réglages > Sauvegarde (Administrateur seul) : export SQLite complet compressé, sauvegarde quotidienne 14j dans BACKUP_PATH, confirmation par mot de passe, audit */}
+      <DatabaseBackupSection currentUser={effectiveUser} />
+
+      {/* Aperçu des pastilles de couleur extraites du logo officiel */}
+      <BrandPaletteSection />
+
+      {/* Réglages Notifications Système & Badge */}
+      <NotificationSettingsPanel currentUser={effectiveUser} />
 
       {feedback && (
         <div
           className={`p-4 rounded-xl border flex items-start gap-3 transition-all ${
             feedback.type === 'success'
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
-              : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+              ? 'bg-[#15803D] text-white border-[#15803D]'
+              : 'bg-[#B91C1C] text-white border-[#B91C1C]'
           }`}
         >
           {feedback.type === 'success' ? (
-            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-white mt-0.5" />
           ) : (
-            <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white mt-0.5" />
           )}
           <div className="text-sm font-medium">{feedback.message}</div>
         </div>
@@ -222,17 +429,17 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-              <FileCheck className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+              <FileCheck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
               Logo Actuel en Production
             </h2>
             <button
               onClick={handleResetDefault}
               disabled={isUploading}
               title="Restaurer le logo par défaut"
-              className="text-xs font-medium text-slate-600 hover:text-teal-600 dark:text-slate-400 dark:hover:text-teal-300 flex items-center gap-1 transition"
+              className="text-xs font-medium text-slate-600 hover:text-[var(--marque-fonce)] dark:text-slate-400 dark:hover:text-[var(--marque-eclaircie)] flex items-center gap-1 transition cursor-pointer"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Restaurer logo d'origine
+              <RefreshCw className="w-3.5 h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              Restaurer logo d&apos;origine
             </button>
           </div>
 
@@ -262,10 +469,9 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
                   Mode Sombre
                 </div>
                 <div className="h-20 flex items-center justify-center">
-                  {/* Notice the dark:bg-white/95 light background behind the logo ensuring 100% visibility */}
                   <BaobabLogo logoUrl={logoUrl} size={64} />
                 </div>
-                <span className="text-[10px] text-teal-400 mt-2">Fond clair automatique</span>
+                <span className="text-[10px] text-[#38CAE6] mt-2">Fond clair automatique</span>
               </div>
             </div>
           </div>
@@ -273,15 +479,15 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
           {/* Logo Rules reminder */}
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 space-y-1.5">
             <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
-              <Info className="w-4 h-4 text-teal-600" />
+              <Info className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
               Spécifications techniques de Baobab Distribution :
             </div>
             <ul className="list-disc list-inside space-y-1 pl-1 text-slate-500 dark:text-slate-400">
               <li>Rendu avec <code>object-fit: contain</code> (sans aucune déformation).</li>
               <li>Affiché à 64 px sur la page de connexion.</li>
-              <li>Affiché à 32 px sur l'en-tête (avec texte « Baobab » sur PC).</li>
+              <li>Affiché à 32 px sur l&apos;en-tête (avec texte « Baobab » sur PC).</li>
               <li>En thème sombre, un fond protecteur clair maintient la visibilité du symbole noir.</li>
-              <li>Si absent, l'application bascule automatiquement sur le texte de secours « Baobab ».</li>
+              <li>Le fichier du logo lui-même n&apos;est jamais modifié.</li>
             </ul>
           </div>
         </div>
@@ -290,18 +496,18 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs space-y-6">
           <div>
             <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-              <Upload className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+              <Upload className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
               Remplacer le Logo (Vérification Serveur)
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Téléversez un nouveau logo officiel. Le serveur Express vérifie l'intégrité, le type MIME et les octets magiques.
+              Téléversez un nouveau logo officiel. Le serveur Express vérifie l&apos;intégrité, le type MIME et les octets magiques.
             </p>
           </div>
 
           {/* Upload Dropzone */}
           <div
             onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-teal-500 dark:hover:border-teal-400 rounded-2xl p-6 text-center cursor-pointer transition bg-slate-50/50 dark:bg-slate-950/30 flex flex-col items-center justify-center gap-3"
+            className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[var(--marque-fonce)] dark:hover:border-[var(--marque-eclaircie)] rounded-2xl p-6 text-center cursor-pointer transition bg-slate-50/50 dark:bg-slate-950/30 flex flex-col items-center justify-center gap-3"
           >
             <input
               ref={fileInputRef}
@@ -323,13 +529,13 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
                 <div className="text-xs font-medium text-slate-700 dark:text-slate-200">
                   {selectedFile?.name} ({(selectedFile ? selectedFile.size / 1024 : 0).toFixed(1)} Ko)
                 </div>
-                <span className="text-[11px] text-teal-600 dark:text-teal-400 font-semibold">
+                <span className="text-[11px] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-semibold">
                   Cliquez pour changer de fichier
                 </span>
               </div>
             ) : (
               <>
-                <div className="p-3 rounded-full bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400">
+                <div className="p-3 rounded-full bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
                   <Upload className="w-6 h-6" />
                 </div>
                 <div>
@@ -340,7 +546,7 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
                     ou glissez-déposez le fichier ici
                   </p>
                 </div>
-                <div className="inline-flex items-center gap-1 text-[11px] text-slate-400 font-medium px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800">
+                <div className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 font-medium px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800">
                   PNG, JPEG, WebP ou SVG &bull; 2 Mo maximum
                 </div>
               </>
@@ -355,7 +561,7 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
             <button
               onClick={handleUploadSubmit}
               disabled={!selectedFile || isUploading}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium text-sm text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:pointer-events-none transition shadow-sm"
+              className="inline-flex items-center gap-2 h-[48px] px-5 rounded-[12px] font-bold text-sm text-[var(--marque-texte-sur-plein)] bg-[var(--marque-fonce)] hover:bg-[#00586B] disabled:opacity-50 disabled:pointer-events-none transition shadow-sm cursor-pointer"
             >
               {isUploading ? (
                 <>
@@ -376,7 +582,7 @@ export const IdentitySettings: React.FC<IdentitySettingsProps> = ({
       {/* Company Legal Identity Info (Bamako, Mali) */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs">
         <h3 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
-          <FileText className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+          <FileText className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
           Mentions Légales &amp; Coordonnées (Sur les Factures et Reçus)
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">

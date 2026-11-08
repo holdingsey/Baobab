@@ -15,12 +15,12 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
       <button
         onClick={install}
         title="Installer l'application Baobab Distribution sur votre appareil"
-        className={`inline-flex items-center gap-1.5 font-medium transition rounded-lg bg-teal-600 hover:bg-teal-700 text-white shadow-xs ${
-          compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-xs sm:text-sm'
+        className={`inline-flex items-center gap-1.5 font-medium transition rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] shadow-xs shrink-0 cursor-pointer ${
+          compact ? 'p-2 sm:px-2.5 sm:py-1.5 text-xs' : 'px-3 py-1.5 text-xs sm:text-sm'
         }`}
       >
-        <Download className="w-3.5 h-3.5" />
-        <span>Installer l'App</span>
+        <Download className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
+        <span className={compact ? 'hidden md:inline whitespace-nowrap' : 'whitespace-nowrap'}>Installer l&apos;App</span>
       </button>
     );
   }
@@ -31,12 +31,12 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
         <button
           onClick={() => setShowIOSGuide(true)}
           title="Installer sur iPhone ou iPad"
-          className={`inline-flex items-center gap-1.5 font-medium transition rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 ${
-            compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-xs'
+          className={`inline-flex items-center gap-1.5 font-medium transition rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer ${
+            compact ? 'p-2 sm:px-2.5 sm:py-1.5 text-xs' : 'px-3 py-1.5 text-xs'
           }`}
         >
-          <Smartphone className="w-3.5 h-3.5" />
-          <span>Installer (iOS)</span>
+          <Smartphone className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+          <span className={compact ? 'hidden md:inline whitespace-nowrap' : 'whitespace-nowrap'}>Installer (iOS)</span>
         </button>
 
         {showIOSGuide && (
@@ -55,7 +55,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
               </div>
               <div className="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
                 <div className="flex items-start gap-2.5">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-800 font-bold text-xs dark:bg-teal-900/50 dark:text-teal-300">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-bold text-xs">
                     1
                   </span>
                   <span>
@@ -63,7 +63,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
                   </span>
                 </div>
                 <div className="flex items-start gap-2.5">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-800 font-bold text-xs dark:bg-teal-900/50 dark:text-teal-300">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-bold text-xs">
                     2
                   </span>
                   <span>
@@ -72,7 +72,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
                   </span>
                 </div>
                 <div className="flex items-start gap-2.5">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-800 font-bold text-xs dark:bg-teal-900/50 dark:text-teal-300">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-bold text-xs">
                     3
                   </span>
                   <span>
@@ -82,7 +82,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
               </div>
               <button
                 onClick={() => setShowIOSGuide(false)}
-                className="mt-5 w-full rounded-xl bg-teal-600 py-2.5 text-sm font-medium text-white hover:bg-teal-700 transition"
+                className="mt-5 w-full rounded-xl bg-[var(--marque-fonce)] py-2.5 text-sm font-medium text-[var(--marque-texte-sur-plein)] hover:bg-[#00586B] transition"
               >
                 Compris
               </button>

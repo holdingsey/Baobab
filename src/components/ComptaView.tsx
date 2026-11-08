@@ -20,11 +20,28 @@ import {
   ShoppingBag,
   Eye,
   Send,
+  Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { InvoiceData, InvoiceItem } from './PrintableDocument';
 import { UserSession } from './LoginScreen';
 import { buildMiniThermalReceiptDoc, getThermalTicketNumber } from './VentesView';
 import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
+import { exportTableToCsv } from '../utils/csvExport';
+import { InfoTooltip } from './InfoTooltip';
+import { FormModal } from './FormModal';
+import { DataTable } from './DataTable';
+import { ExportViewButton } from './ExtractionsView';
+import {
+  PaymentMethodSelector,
+  FORM_FIELD_CLASS,
+  FORM_SELECT_CLASS,
+  FORM_TEXTAREA_CLASS,
+  FORM_LABEL_CLASS,
+  FORM_ROW_CLASS,
+  FORM_GROUP_CLASS,
+} from './FormControls';
 
 interface VendorBalance {
   vendorId: string;
@@ -69,15 +86,15 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   onOpenDocument,
   onRefreshData,
 }) => {
-  const isComptable = currentRole === 'Comptable';
   const isAdmin = currentRole === 'Administrateur';
+  const isComptable = currentRole === 'Comptable' || isAdmin;
   const isVendeur = currentRole === 'Vendeur';
 
   const [activeTab, setActiveTab] = useState<'soldes' | 'versements' | 'factures' | 'bons-cadeaux'>(() => {
     if (initialTab === 'versements' || initialTab === 'versements-lecture' || initialTab === 'mes-versements' || initialTab === 'caisse') {
       return 'versements';
     }
-    if ((initialTab === 'factures' || initialTab === 'mes-factures') && !isAdmin) {
+    if (initialTab === 'factures' || initialTab === 'mes-factures') {
       return 'factures';
     }
     if (initialTab === 'rapports') {
@@ -87,6 +104,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   });
 
   const [docTypeFilter, setDocTypeFilter] = useState<'all' | 'facture' | 'recu'>('all');
+  const [facturesPage, setFacturesPage] = useState<number>(1);
   const [bonsCadeaux, setBonsCadeaux] = useState<any[]>([]);
 
   const fetchBonsCadeaux = async () => {
@@ -115,14 +133,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   React.useEffect(() => {
     if (initialTab === 'versements' || initialTab === 'versements-lecture' || initialTab === 'mes-versements' || initialTab === 'caisse') {
       setActiveTab('versements');
-    } else if ((initialTab === 'factures' || initialTab === 'mes-factures') && !isAdmin) {
+    } else if (initialTab === 'factures' || initialTab === 'mes-factures') {
       setActiveTab('factures');
     } else if (initialTab === 'rapports') {
       setActiveTab('bons-cadeaux');
     } else if (initialTab === 'soldes-vendeurs' || initialTab === 'mon-solde') {
       setActiveTab('soldes');
     }
-  }, [initialTab, isAdmin]);
+  }, [initialTab]);
 
   const handleExportBonsCSV = () => {
     const headers = [
@@ -489,6 +507,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
     }
   };
 
+  const openInvoiceGenerationModalForSale = (saleObj: any, currentWithTva: boolean) => {
+    if (!saleObj) return;
+    setCreateInvoiceMode('existing_sale');
+    setSelectedSaleIdForNewInvoice(saleObj.id);
+    setNewInvoiceWithTva(Boolean(currentWithTva));
+    setShowCreateInvoiceModal(true);
+  };
+
   const handleComptableCreateInvoiceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isComptable) return;
@@ -497,11 +523,12 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       if (createInvoiceMode === 'existing_sale') {
         const saleObj = sales.find((s) => s.id === selectedSaleIdForNewInvoice);
         if (!saleObj) return;
+        toggleSaleTva(saleObj.id, newInvoiceWithTva);
         await handleGenerateAndOpenSaleInvoice(saleObj, newInvoiceWithTva);
         setShowCreateInvoiceModal(false);
         setComptaFeedbackBanner({
           type: 'success',
-          text: `Facture créée avec succès pour le vendeur ${saleObj.vendor_name} (${saleObj.pdv_name}). Le vendeur peut désormais la consulter et l'imprimer dans son compte.`,
+          text: `Facture générée/mise à jour avec succès pour le vendeur ${saleObj.vendor_name} (${saleObj.pdv_name}). Le vendeur peut désormais la consulter et l'imprimer dans son compte.`,
         });
       } else {
         const prod = products.find((p) => p.id === newInvoiceProductId) || products[0];
@@ -647,6 +674,21 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
     if (docTypeFilter === 'all') return printableDocuments;
     return printableDocuments.filter((d) => d.docKind === docTypeFilter);
   }, [printableDocuments, docTypeFilter]);
+
+  const FACTURES_PAGE_SIZE = 20;
+  const totalFacturesPages = Math.max(
+    1,
+    Math.ceil(filteredPrintableDocs.length / FACTURES_PAGE_SIZE)
+  );
+  const safeFacturesPage = Math.min(Math.max(1, facturesPage), totalFacturesPages);
+  const paginatedPrintableDocs = useMemo(() => {
+    const start = (safeFacturesPage - 1) * FACTURES_PAGE_SIZE;
+    return filteredPrintableDocs.slice(start, start + FACTURES_PAGE_SIZE);
+  }, [filteredPrintableDocs, safeFacturesPage]);
+
+  useEffect(() => {
+    setFacturesPage(1);
+  }, [docTypeFilter]);
 
   const [showVersementModal, setShowVersementModal] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState(balances[0]?.vendorId || '');
@@ -808,46 +850,186 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
     });
   };
 
+  const handleExportComptaCsv = (targetTab = activeTab) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    if (targetTab === 'soldes') {
+      exportTableToCsv({
+        filename: `soldes_ventes_vendeurs_${todayStr}.csv`,
+        columns: [
+          'Code Vendeur',
+          'Nom Vendeur',
+          'Telephone',
+          'Equipe',
+          'Ventes Realisees (FCFA)',
+          'Versements Valides (FCFA)',
+          'Solde Restant Du (FCFA)',
+          'Valeur Stock Camionnette (FCFA)',
+        ],
+        rows: visibleBalances.map((b) => [
+          b.code,
+          b.name,
+          b.phone || '',
+          b.team || 'Equipe Standard',
+          Number(b.totalSales || 0),
+          Number(b.totalVersements || 0),
+          Number(b.balanceDue || 0),
+          Number(b.stockVanValue || 0),
+        ]),
+      });
+      return;
+    }
+
+    if (targetTab === 'versements') {
+      exportTableToCsv({
+        filename: `journal_versements_caisse_${todayStr}.csv`,
+        columns: [
+          'Reference Versement',
+          'Date',
+          'Nom Vendeur',
+          'Code Vendeur',
+          'Equipe',
+          'Mode de Reglement',
+          'Motif / Notes',
+          'Statut Validation',
+          'Montant Encaisse (FCFA)',
+        ],
+        rows: visibleVersements.map((v) => [
+          v.reference || v.id,
+          v.date || '',
+          v.vendor_name || '',
+          v.vendor_code || '',
+          v.vendor_team || 'Equipe Commerciale',
+          v.payment_mode || 'Especes',
+          v.notes || 'Versement de caisse des ventes PDV',
+          v.status === 'en_attente' ? 'En attente' : 'Valide en Caisse',
+          Number(v.amount || 0),
+        ]),
+      });
+      return;
+    }
+
+    if (targetTab === 'factures') {
+      exportTableToCsv({
+        filename: `factures_recus_baobab_${todayStr}.csv`,
+        columns: [
+          'N° Document',
+          'Type Document',
+          'N° Vente Liee',
+          'Date',
+          'Client PDV / Contrepartie',
+          'Vendeur',
+          'Mode de Reglement',
+          'Montant HT (FCFA)',
+          'TVA 18% (FCFA)',
+          'Montant TTC (FCFA)',
+        ],
+        rows: filteredPrintableDocs.map((d) => [
+          d.number,
+          d.docKind === 'facture' ? 'Facture Vente' : 'Recu Caisse',
+          d.saleNumber || '',
+          d.date || '',
+          d.counterparty || '',
+          d.vendorLabel || '',
+          d.paymentMode || '',
+          Number(d.subtotalHt || 0),
+          Number(d.tvaAmount || 0),
+          Number(d.amount || 0),
+        ]),
+      });
+      return;
+    }
+
+    exportTableToCsv({
+      filename: `rapport_bons_cadeaux_${todayStr}.csv`,
+      columns: [
+        'Reference Bon',
+        'Semestre',
+        'Nom Vendeur',
+        'Code Vendeur',
+        'Note /20',
+        'Plafond Bon (FCFA)',
+        'Valeur Remise (FCFA)',
+        'Statut',
+      ],
+      rows: bonsCadeaux.map((b) => [
+        b.id,
+        b.semester || '',
+        b.vendor_name || '',
+        b.vendor_code || '',
+        b.note_total ?? '',
+        Number(b.amount || 0),
+        Number(b.delivered_total || b.basket_total || 0),
+        b.status || '',
+      ]),
+    });
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
               {isAdmin
-                ? 'Versements & Soldes Vendeurs (Lecture seule)'
+                ? 'Comptabilité, Caisse, Versements & Factures'
                 : isVendeur
-                ? 'Mon Solde Dépôt-Vente, Mes Versements & Mes Factures'
+                ? 'Mon Solde, Mes Versements & Mes Factures'
                 : 'Comptabilité, Caisse & Dépôt-Vente'}
             </h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300">
-              {isAdmin
-                ? 'Consultation Administrateur'
-                : isVendeur && currentUser
-                ? `Espace Personnel • ${currentUser.name} (${currentUser.code})`
-                : 'Module Comptable • FCFA'}
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white">
+              {isAdmin ? 'Administrateur' : isVendeur ? 'Vendeur' : 'Comptable'}
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {isAdmin
-              ? "Consultation des versements et des soldes vendeurs. L'encaissement et la facturation sont strictement réservés au Comptable."
-              : isVendeur
-              ? "Consultez uniquement votre solde dépôt-vente personnel, votre journal de versements de caisse et vos propres factures et reçus imprimables."
-              : "Suivi des soldes des vendeurs en dépôt-vente (ventes réalisées - versements reçus), encaissements et factures officielles."}
-          </p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              {isVendeur
+                ? 'Votre solde, vos versements et vos factures.'
+                : 'Caisse : versements, soldes et factures.'}
+            </p>
+            <InfoTooltip
+              text={
+                isAdmin
+                  ? 'Suivi des soldes vendeurs en dépôt-vente, validation des encaissements, création et rectification des factures et reçus officiels.'
+                  : isVendeur
+                  ? 'Consultez uniquement votre solde dépôt-vente personnel, votre journal de versements de caisse et vos propres factures et reçus imprimables.'
+                  : 'Suivi des soldes des vendeurs en dépôt-vente (ventes réalisées - versements reçus), encaissements et factures officielles.'
+              }
+            />
+          </div>
         </div>
 
         {/* Uniquement le Comptable peut faire l'encaissement et créer des factures */}
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={handleExportComptaPdf}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-sm transition cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exporter Tableau en PDF</span>
-          </button>
+          {!isVendeur && (
+            <>
+              <ExportViewButton
+                currentUser={currentUser}
+                jeu={
+                  activeTab === 'soldes' || initialTab === 'soldes-vendeurs'
+                    ? 'soldes_vendeurs'
+                    : activeTab === 'factures'
+                    ? 'factures'
+                    : initialTab === 'caisse'
+                    ? 'caisse'
+                    : activeTab === 'bons-cadeaux'
+                    ? 'bons_cadeaux'
+                    : 'versements'
+                }
+                label="Exporter"
+              />
+
+              <button
+                type="button"
+                onClick={handleExportComptaPdf}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-bold text-xs shadow-sm transition cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+                <span>Exporter Tableau en PDF</span>
+              </button>
+            </>
+          )}
 
           {isComptable ? (
             <>
@@ -858,15 +1040,15 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                   setSelectedSaleIdForNewInvoice(uninvoiced?.id || '');
                   setShowCreateInvoiceModal(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-sm transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-bold text-xs shadow-sm transition cursor-pointer"
               >
-                <FileText className="w-4 h-4" />
+                <FileText className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
                 <span>Créer Facture Vendeur</span>
               </button>
               <button
                 type="button"
                 onClick={() => setShowVersementModal(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm transition cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-sm transition cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>Encaisser un Versement Vendeur</span>
@@ -965,7 +1147,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       </div>
 
       {/* Sub Tabs — Grille de boutons en rangées et colonnes sans débordement */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 ${!isAdmin && !isVendeur ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-4`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${!isVendeur ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-4`}>
         <button
           onClick={() => setActiveTab('soldes')}
           className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
@@ -1012,30 +1194,28 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           </span>
         </button>
 
-        {!isAdmin && (
-          <button
-            onClick={() => setActiveTab('factures')}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
+        <button
+          onClick={() => setActiveTab('factures')}
+          className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
+            activeTab === 'factures'
+              ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
+              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+          }`}
+        >
+          <span className="flex items-center gap-2 min-w-0">
+            <Printer className="w-4 h-4 shrink-0" />
+            <span className="leading-snug">Factures &amp; Reçus Imprimables</span>
+          </span>
+          <span
+            className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${
               activeTab === 'factures'
-                ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
-                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+                ? 'bg-white/20 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
             }`}
           >
-            <span className="flex items-center gap-2 min-w-0">
-              <Printer className="w-4 h-4 shrink-0" />
-              <span className="leading-snug">Factures &amp; Reçus Imprimables</span>
-            </span>
-            <span
-              className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${
-                activeTab === 'factures'
-                  ? 'bg-white/20 text-white'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              {printableDocuments.length}
-            </span>
-          </button>
-        )}
+            {printableDocuments.length}
+          </span>
+        </button>
 
         {!isVendeur && (
           <button
@@ -1057,132 +1237,227 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       {/* 1. Soldes Vendeurs (Dépôt-Vente) */}
       {activeTab === 'soldes' && (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <strong>Principe comptable du dépôt-vente :</strong>{' '}
-              {isVendeur
-                ? `Vous visualisez uniquement votre propre solde dépôt-vente (${currentUser?.name} • ${currentUser?.code}). Les soldes des autres vendeurs sont masqués.`
-                : "Chaque vendeur charge son véhicule sans payer le stock à l'avance. À chaque livraison au point de vente, la vente est enregistrée à son crédit. Ses versements à la caisse réduisent son solde dû."}
+          <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <span>
+                <strong>Dépôt-vente :</strong> Solde = Ventes réalisées - Versements reçus.
+              </span>
+              <InfoTooltip
+                text={
+                  isVendeur
+                    ? `Vous visualisez uniquement votre propre solde dépôt-vente (${currentUser?.name}). Les soldes des autres vendeurs sont masqués.`
+                    : "Chaque vendeur charge son véhicule sans payer le stock à l'avance. À chaque livraison au point de vente, la vente est enregistrée à son crédit. Ses versements à la caisse réduisent son solde dû."
+                }
+              />
             </div>
             {isVendeur && currentUser && (
-              <span className="px-2.5 py-1 rounded-lg bg-[#008DA9]/10 text-[#008DA9] dark:text-cyan-300 font-bold shrink-0">
-                Vendeur connecté : {currentUser.code}
+              <span className="px-2.5 py-1 rounded-lg bg-[var(--marque-fonce)] text-white font-bold shrink-0">
+                Vendeur
               </span>
             )}
           </div>
 
-          {/* Mobile & Tablet Cards (< 1024px) */}
-          <div className="grid grid-cols-1 gap-3 lg:hidden">
-            {visibleBalances.map((b) => (
-              <div
-                key={b.vendorId}
-                className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3"
+          {/* Soldes Vendeurs — Composant partagé DataTable (7 colonnes => 1re colonne collante) */}
+          <DataTable<VendorBalance>
+            data={visibleBalances}
+            getRowKey={(b) => b.vendorId}
+            emptyMessage="Aucun vendeur trouvé."
+            mobileTitle={(b) => `${b.name} (${b.code})`}
+            mobileSubtitle={(b) => `${b.team || 'Équipe Standard'} • ${b.phone}`}
+            mobileStatusBadge={(b) => (
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  b.balanceDue > 0
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                }`}
               >
-                <div className="flex items-start justify-between gap-2 flex-wrap">
+                {b.balanceDue > 0 ? 'Solde dû' : 'À jour'}
+              </span>
+            )}
+            columns={[
+              {
+                key: 'code',
+                label: 'Code Vendeur',
+                hideOnMobileCard: true,
+                render: (b) => (
+                  <span className="font-mono font-bold text-teal-600 dark:text-teal-400">
+                    {b.code}
+                  </span>
+                ),
+                footer: <span className="uppercase text-[11px]">Totaux</span>,
+              },
+              {
+                key: 'name',
+                label: 'Nom & Contact',
+                hideOnMobileCard: true,
+                render: (b) => (
                   <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300">
-                        {b.code}
-                      </span>
-                      <span className="font-bold text-sm text-slate-900 dark:text-white">
-                        {b.name}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {b.team || 'Équipe Standard'} &bull; {b.phone}
-                    </div>
+                    <div className="font-semibold text-slate-900 dark:text-white">{b.name}</div>
+                    <div className="text-[10px] text-slate-400">{b.phone}</div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-[10px] font-bold uppercase text-slate-400">Solde Restant Dû</div>
-                    <div className="text-base font-black text-amber-600 dark:text-amber-400">
-                      {b.balanceDue.toLocaleString('fr-FR')} FCFA
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-slate-100 dark:border-slate-800 text-xs">
-                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-                    <div className="text-[10px] text-slate-400 font-semibold">Ventes Réalisées</div>
-                    <div className="font-extrabold text-slate-800 dark:text-slate-200 mt-0.5">
-                      {b.totalSales.toLocaleString('fr-FR')} FCFA
-                    </div>
-                  </div>
-                  <div className="p-2 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/30">
-                    <div className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold">Versements</div>
-                    <div className="font-extrabold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                      {b.totalVersements.toLocaleString('fr-FR')} FCFA
-                    </div>
-                  </div>
-                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-                    <div className="text-[10px] text-slate-400 font-semibold">Stock Camionnette</div>
-                    <div className="font-bold text-slate-600 dark:text-slate-300 mt-0.5">
-                      {b.stockVanValue.toLocaleString('fr-FR')} FCFA
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Desktop Table (>= 1024px) */}
-          <div className="hidden lg:block rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">
-                    <th className="py-3 px-3">Code Vendeur</th>
-                    <th className="py-3 px-3">Nom &amp; Contact</th>
-                    <th className="py-3 px-3">Équipe</th>
-                    <th className="py-3 px-3 text-right">Ventes Réalisées</th>
-                    <th className="py-3 px-3 text-right">Versements Validés</th>
-                    <th className="py-3 px-3 text-right">Solde Restant Dû</th>
-                    <th className="py-3 px-3 text-right">Stock Camionnette (3-7j)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {visibleBalances.map((b) => (
-                    <tr key={b.vendorId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                      <td className="py-3 px-3 font-mono font-bold text-teal-600 dark:text-teal-400 whitespace-nowrap">
-                        {b.code}
-                      </td>
-                      <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
-                        <div>{b.name}</div>
-                        <div className="text-[10px] text-slate-400">{b.phone}</div>
-                      </td>
-                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300 font-medium">
-                        {b.team || 'Équipe Standard'}
-                      </td>
-                      <td className="py-3 px-3 text-right font-extrabold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                        {b.totalSales.toLocaleString('fr-FR')} FCFA
-                      </td>
-                      <td className="py-3 px-3 text-right font-extrabold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                        {b.totalVersements.toLocaleString('fr-FR')} FCFA
-                      </td>
-                      <td className="py-3 px-3 text-right font-black text-amber-600 dark:text-amber-400 text-sm whitespace-nowrap">
-                        {b.balanceDue.toLocaleString('fr-FR')} FCFA
-                      </td>
-                      <td className="py-3 px-3 text-right text-slate-500 font-medium whitespace-nowrap">
-                        {b.stockVanValue.toLocaleString('fr-FR')} FCFA
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                ),
+              },
+              {
+                key: 'team',
+                label: 'Équipe',
+                isSecondary: true,
+                hideOnMobileCard: true,
+                render: (b) => (
+                  <span className="text-slate-600 dark:text-slate-300 font-medium">
+                    {b.team || 'Équipe Standard'}
+                  </span>
+                ),
+              },
+              {
+                key: 'sales',
+                label: 'Ventes Réalisées',
+                align: 'right',
+                isNumeric: true,
+                render: (b) => (
+                  <span className="font-extrabold text-slate-800 dark:text-slate-200">
+                    {b.totalSales.toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+                footer: (
+                  <span>
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.totalSales || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'versements',
+                label: 'Versements Validés',
+                align: 'right',
+                isNumeric: true,
+                render: (b) => (
+                  <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                    {b.totalVersements.toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+                footer: (
+                  <span className="text-emerald-600 dark:text-emerald-400">
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.totalVersements || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'balanceDue',
+                label: 'Solde Restant Dû',
+                align: 'right',
+                isNumeric: true,
+                render: (b) => (
+                  <span className="font-black text-amber-600 dark:text-amber-400 text-sm">
+                    {b.balanceDue.toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+                footer: (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.balanceDue || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'stockVan',
+                label: 'Stock Camionnette (3-7j)',
+                align: 'right',
+                isNumeric: true,
+                isSecondary: true,
+                render: (b) => (
+                  <span className="text-slate-500 font-medium">
+                    {b.stockVanValue.toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+                footer: (
+                  <span>
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.stockVanValue || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+            ]}
+            totalsFooter={
+              <>
+                <span>
+                  Vendeurs :{' '}
+                  <strong className="text-slate-900 dark:text-white">
+                    {visibleBalances.length}
+                  </strong>
+                </span>
+                <span>
+                  Total Ventes :{' '}
+                  <strong className="text-slate-900 dark:text-white">
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.totalSales || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+                <span>
+                  Total Versements :{' '}
+                  <strong className="text-emerald-600 dark:text-emerald-400">
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.totalVersements || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+                <span>
+                  Total Solde Dû :{' '}
+                  <strong className="text-amber-600 dark:text-amber-400">
+                    {visibleBalances
+                      .reduce((acc, b) => acc + Number(b.balanceDue || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+              </>
+            }
+          />
         </div>
       )}
 
       {/* 2. Journal des Versements de Caisse */}
       {activeTab === 'versements' && (
         <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+            <div className="text-xs text-slate-600 dark:text-slate-300">
+              <strong className="text-slate-900 dark:text-white">Journal des Versements de Caisse :</strong>{' '}
+              {visibleVersements.length} versement(s) enregistré(s) pour un total de{' '}
+              <strong className="text-emerald-600 dark:text-emerald-400">
+                {visibleVersements.reduce((acc, v) => acc + Number(v.amount || 0), 0).toLocaleString('fr-FR')} FCFA
+              </strong>
+              .
+            </div>
+            {!isVendeur && (
+              <div className="flex items-center gap-2 shrink-0">
+                <ExportViewButton
+                  currentUser={currentUser}
+                  jeu="versements"
+                  label="Exporter Versements"
+                />
+              </div>
+            )}
+          </div>
+
           {isComptable && (
-            <div className="p-4 rounded-2xl bg-cyan-50/80 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/80 text-xs text-slate-700 dark:text-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <strong className="text-[#008DA9] dark:text-cyan-300">
-                  Facturation par Vente PDV lors du Versement Vendeur :
-                </strong>{' '}
-                Lorsque le vendeur effectue un versement, vous pouvez générer la facture <strong>au nom du vendeur avec le PDV acheteur</strong> et choisir d&apos;ajouter ou non la <strong>TVA 18%</strong>. Chaque vente réalisée par le vendeur auprès de son PDV constitue une facture à part.
+            <div className="p-3.5 rounded-2xl bg-cyan-50/80 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/80 text-xs text-slate-700 dark:text-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                <span>
+                  <strong className="text-[#008DA9] dark:text-cyan-300">Facturation PDV :</strong> 1 vente PDV = 1 facture (avec ou sans TVA).
+                </span>
+                <InfoTooltip text="Lorsque le vendeur effectue un versement, vous pouvez générer la facture au nom du vendeur avec le PDV acheteur et choisir d'ajouter ou non la TVA 18%. Chaque vente réalisée par le vendeur auprès de son PDV constitue une facture à part." />
               </div>
               <span className="px-3 py-1 rounded-xl bg-[#008DA9] text-white font-bold text-[11px] shrink-0">
                 1 Vente PDV = 1 Facture à part
@@ -1201,276 +1476,225 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
           )}
 
-          {/* Mobile Cards View (< 640px) */}
-          <div className="space-y-3 sm:hidden">
-            {visibleVersements.length === 0 ? (
-              <div className="p-8 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-xs text-slate-400">
-                Aucun versement de caisse enregistré pour ce compte.
-              </div>
-            ) : (
-              visibleVersements.map((v) => {
-                const vendorSalesForVersement = sales.filter(
-                  (s) => s.vendor_id === v.vendor_id || s.vendor_code === v.vendor_code
-                );
-                return (
-                  <div
-                    key={v.id}
-                    className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2.5 text-xs"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span className="font-mono font-bold text-slate-900 dark:text-white">
-                          {v.reference}
-                        </span>
-                        <div className="text-[11px] text-slate-400">{v.date}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-black text-sm text-emerald-600 dark:text-emerald-400">
-                          {v.amount.toLocaleString('fr-FR')} FCFA
-                        </div>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                          <CheckCircle2 className="w-2.5 h-2.5" /> Validé
-                        </span>
-                      </div>
+          {/* Journal des Versements — Composant partagé DataTable */}
+          <DataTable<any>
+            data={visibleVersements}
+            getRowKey={(v) => v.id}
+            emptyMessage="Aucun versement de caisse enregistré pour ce compte."
+            mobileTitle={(v) => v.reference}
+            mobileSubtitle={(v) => `${v.date} • ${v.vendor_name} (${v.vendor_code})`}
+            mobileStatusBadge={() => (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                <CheckCircle2 className="w-2.5 h-2.5" /> Validé
+              </span>
+            )}
+            columns={[
+              {
+                key: 'ref',
+                label: 'Réf. & Date',
+                hideOnMobileCard: true,
+                render: (v) => (
+                  <div>
+                    <div className="font-mono font-bold text-slate-900 dark:text-white">
+                      {v.reference}
                     </div>
-
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
-                      <div>
-                        <div className="font-semibold text-slate-800 dark:text-slate-200">
-                          {v.vendor_name} ({v.vendor_code})
-                        </div>
-                        <div className="text-[10px] text-teal-600 dark:text-teal-400">{v.vendor_team}</div>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-[11px]">
-                        {v.payment_mode}
+                    <div className="text-[11px] text-slate-400">{v.date}</div>
+                  </div>
+                ),
+                footer: <span className="uppercase text-[11px]">Total encaissé</span>,
+              },
+              {
+                key: 'vendor',
+                label: 'Vendeur & Équipe',
+                render: (v) => (
+                  <div>
+                    <div className="font-semibold text-slate-800 dark:text-slate-200 leading-snug">
+                      {v.vendor_name}{' '}
+                      <span className="font-mono text-[11px] text-slate-500">
+                        ({v.vendor_code})
                       </span>
                     </div>
-
-                    {v.notes && (
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg break-words">
-                        {v.notes}
-                      </p>
-                    )}
-
-                    {!isAdmin && (
-                      <div className="pt-2 flex items-center gap-2 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedVersementForInvoicing(v)}
-                          className="flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
-                        >
-                          <FileText className="w-3.5 h-3.5 shrink-0" />
-                          <span>
-                            {isComptable
-                              ? `Factures PDV (${vendorSalesForVersement.length})`
-                              : `Mes Factures (${vendorSalesForVersement.length})`}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onOpenDocument({
-                              id: v.id,
-                              number: v.reference,
-                              type: 'recu',
-                              date: v.date,
-                              clientName: `${v.vendor_name} (${v.vendor_code}) — ${v.vendor_team || 'Équipe Commerciale'}`,
-                              clientPhone: currentUser?.phone || '+223 75 44 22 11',
-                              items: [
-                                {
-                                  code: v.reference,
-                                  name: v.notes || 'Versement de caisse des ventes PDV (Dépôt-Vente)',
-                                  qty: 1,
-                                  price: Number(v.amount || 0),
-                                  total: Number(v.amount || 0),
-                                },
-                              ],
-                              total: Number(v.amount || 0),
-                              paymentMethod: v.payment_mode || 'Espèces',
-                              cashierName: 'Service Comptabilité & Caisse Baobab',
-                              status: 'Validé en Caisse',
-                            })
-                          }
-                          className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5 shrink-0" />
-                          <span>Reçu</span>
-                        </button>
-                      </div>
-                    )}
+                    <div className="text-[10px] text-teal-600 dark:text-teal-400">
+                      {v.vendor_team}
+                    </div>
                   </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Tablet & Desktop Optimized Table (>= 640px) — Zero Horizontal Overflow */}
-          <div className="hidden sm:block rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">
-                    <th className="py-3 px-2.5 lg:px-4">Réf. &amp; Date</th>
-                    <th className="py-3 px-2.5 lg:px-4">Vendeur &amp; Équipe</th>
-                    <th className="py-3 px-2.5 lg:px-4">Règlement &amp; Motif</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-right">Montant Encaissé</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-center">Validation</th>
-                    {!isAdmin && (
-                      <th className="py-3 px-2.5 lg:px-4 text-center">
-                        Factures PDV &amp; Reçu
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {visibleVersements.length === 0 ? (
-                    <tr>
-                      <td colSpan={isAdmin ? 5 : 6} className="py-8 text-center text-slate-400">
-                        Aucun versement de caisse enregistré pour ce compte.
-                      </td>
-                    </tr>
-                  ) : (
-                    visibleVersements.map((v) => {
-                      const vendorSalesForVersement = sales.filter(
-                        (s) => s.vendor_id === v.vendor_id || s.vendor_code === v.vendor_code
-                      );
-                      return (
-                        <tr key={v.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                          <td className="py-3 px-2.5 lg:px-4 whitespace-nowrap">
-                            <div className="font-mono font-bold text-slate-900 dark:text-white">
-                              {v.reference}
-                            </div>
-                            <div className="text-[11px] text-slate-400">{v.date}</div>
-                          </td>
-                          <td className="py-3 px-2.5 lg:px-4 font-semibold text-slate-800 dark:text-slate-200">
-                            <div className="leading-snug">
-                              {v.vendor_name}{' '}
-                              <span className="font-mono text-[11px] text-slate-500">({v.vendor_code})</span>
-                            </div>
-                            <div className="text-[10px] text-teal-600 dark:text-teal-400">{v.vendor_team}</div>
-                          </td>
-                          <td className="py-3 px-2.5 lg:px-4 max-w-[160px] lg:max-w-[260px]">
-                            <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-semibold text-[11px] text-slate-700 dark:text-slate-300">
-                              {v.payment_mode}
-                            </span>
-                            {v.notes && (
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 break-words whitespace-normal leading-snug">
-                                {v.notes}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3 px-2.5 lg:px-4 text-right font-black text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                            {v.amount.toLocaleString('fr-FR')} FCFA
-                          </td>
-                          <td className="py-3 px-2.5 lg:px-4 text-center whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                              <CheckCircle2 className="w-3 h-3 shrink-0" />
-                              <span className="hidden md:inline">Validé en Caisse</span>
-                              <span className="md:hidden">Validé</span>
-                            </span>
-                          </td>
-                          {!isAdmin && (
-                            <td className="py-3 px-2.5 lg:px-4 text-center">
-                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedVersementForInvoicing(v)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer whitespace-nowrap"
-                                >
-                                  <FileText className="w-3.5 h-3.5 shrink-0" />
-                                  <span>
-                                    {isComptable
-                                      ? `Factures PDV (${vendorSalesForVersement.length})`
-                                      : `Mes Factures (${vendorSalesForVersement.length})`}
-                                  </span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    onOpenDocument({
-                                      id: v.id,
-                                      number: v.reference,
-                                      type: 'recu',
-                                      date: v.date,
-                                      clientName: `${v.vendor_name} (${v.vendor_code}) — ${v.vendor_team || 'Équipe Commerciale'}`,
-                                      clientPhone: currentUser?.phone || '+223 75 44 22 11',
-                                      items: [
-                                        {
-                                          code: v.reference,
-                                          name: v.notes || 'Versement de caisse des ventes PDV (Dépôt-Vente)',
-                                          qty: 1,
-                                          price: Number(v.amount || 0),
-                                          total: Number(v.amount || 0),
-                                        },
-                                      ],
-                                      total: Number(v.amount || 0),
-                                      paymentMethod: v.payment_mode || 'Espèces',
-                                      cashierName: 'Service Comptabilité & Caisse Baobab',
-                                      status: 'Validé en Caisse',
-                                    })
-                                  }
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer whitespace-nowrap"
-                                >
-                                  <Printer className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Reçu</span>
-                                </button>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                ),
+              },
+              {
+                key: 'payment_mode',
+                label: 'Mode de Règlement',
+                render: (v) => (
+                  <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-semibold text-[11px] text-slate-700 dark:text-slate-300">
+                    {v.payment_mode}
+                  </span>
+                ),
+              },
+              {
+                key: 'notes',
+                label: 'Motif / Quittance',
+                isSecondary: true,
+                render: (v) => (
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {v.notes || 'Versement de caisse'}
+                  </span>
+                ),
+              },
+              {
+                key: 'amount',
+                label: 'Montant Encaissé',
+                align: 'right',
+                isNumeric: true,
+                render: (v) => (
+                  <span className="font-black text-emerald-600 dark:text-emerald-400">
+                    {Number(v.amount || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+                footer: (
+                  <span className="text-emerald-600 dark:text-emerald-400">
+                    {visibleVersements
+                      .reduce((acc, v) => acc + Number(v.amount || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'status',
+                label: 'Validation',
+                align: 'center',
+                hideOnMobileCard: true,
+                render: () => (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    <CheckCircle2 className="w-3 h-3 shrink-0" />
+                    <span>Validé en Caisse</span>
+                  </span>
+                ),
+              },
+            ]}
+            renderActions={(v) => {
+              const vendorSalesForVersement = sales.filter(
+                (s) => s.vendor_id === v.vendor_id || s.vendor_code === v.vendor_code
+              );
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVersementForInvoicing(v)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {isComptable
+                        ? `Factures PDV (${vendorSalesForVersement.length})`
+                        : `Mes Factures (${vendorSalesForVersement.length})`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenDocument({
+                        id: v.id,
+                        number: v.reference,
+                        type: 'recu',
+                        date: v.date,
+                        clientName: `${v.vendor_name} (${v.vendor_code}) — ${v.vendor_team || 'Équipe Commerciale'}`,
+                        clientPhone: currentUser?.phone || '+223 75 44 22 11',
+                        items: [
+                          {
+                            code: v.reference,
+                            name:
+                              v.notes ||
+                              'Versement de caisse des ventes PDV (Dépôt-Vente)',
+                            qty: 1,
+                            price: Number(v.amount || 0),
+                            total: Number(v.amount || 0),
+                          },
+                        ],
+                        total: Number(v.amount || 0),
+                        paymentMethod: v.payment_mode || 'Espèces',
+                        cashierName: 'Service Comptabilité & Caisse Baobab',
+                        status: 'Validé en Caisse',
+                      })
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5 shrink-0" />
+                    <span>Reçu</span>
+                  </button>
+                </>
+              );
+            }}
+            totalsFooter={
+              <>
+                <span>
+                  Nombre de versements :{' '}
+                  <strong className="text-slate-900 dark:text-white">
+                    {visibleVersements.length}
+                  </strong>
+                </span>
+                <span>
+                  Total encaissé :{' '}
+                  <strong className="text-emerald-600 dark:text-emerald-400">
+                    {visibleVersements
+                      .reduce((acc, v) => acc + Number(v.amount || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+              </>
+            }
+          />
         </div>
       )}
 
-      {/* 3. Factures & Reçus Imprimables (Seul le Comptable crée les factures ; le Vendeur consulte, imprime et peut demander une rectification avec Mini Facture Thermique en preuve) */}
-      {!isAdmin && activeTab === 'factures' && (
+      {/* 3. Factures & Reçus Imprimables */}
+      {activeTab === 'factures' && (
         <div className="space-y-4">
           {/* Autorisation & Règles Banner */}
           <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <div className="font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <Lock className="w-4 h-4 text-[#008DA9]" />
+                <Lock className="w-4 h-4 text-[#008DA9] shrink-0" />
                 <span>
                   {isVendeur
-                    ? 'Vos Factures Officielles (Lecture seule & Impression • Créées par le Comptable)'
-                    : 'Création & Gestion des Factures Vendeurs (Autorisation exclusive Comptable)'}
+                    ? 'Vos Factures Officielles (Lecture seule & Impression)'
+                    : 'Création & Gestion des Factures Vendeurs'}
                 </span>
               </div>
-              <p>
-                {isVendeur ? (
-                  <>
-                    <strong>Le vendeur ne peut pas créer ni modifier de factures</strong> : seul le Comptable y est autorisé. Vous pouvez <strong>voir et imprimer</strong> vos factures ci-dessous. S&apos;il y a une erreur sur une facture, cliquez sur <strong>« Demander une rectification »</strong> pour joindre votre <strong>Mini Facture Thermique automatique</strong> (issue de votre historique de ventes) comme preuve.
-                  </>
-                ) : (
-                  <>
-                    <strong>Seul le Comptable est autorisé à créer les factures</strong> au nom du vendeur avec le PDV acheteur (avec ou sans TVA 18%). Dès création, la facture apparaît dans le compte du vendeur en lecture seule.
-                  </>
-                )}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p>
+                  {isVendeur
+                    ? 'Consultez, imprimez ou demandez une rectification.'
+                    : 'Création des factures vendeurs avec ou sans TVA 18 %.'}
+                </p>
+                <InfoTooltip
+                  text={
+                    isVendeur
+                      ? "Le vendeur ne peut pas créer ni modifier de factures : seul le Comptable y est autorisé. Vous pouvez voir et imprimer vos factures ci-dessous. S'il y a une erreur sur une facture, cliquez sur « Demander une rectification » pour joindre votre Mini Facture Thermique automatique comme preuve."
+                      : 'Seul le Comptable est autorisé à créer les factures au nom du vendeur avec le PDV acheteur (avec ou sans TVA 18 %). Dès création, la facture apparaît dans le compte du vendeur en lecture seule.'
+                  }
+                />
+              </div>
             </div>
             {isComptable ? (
               <button
                 type="button"
                 onClick={() => {
                   const uninvoiced = sales.find((s) => !s.invoice_generated) || sales[0];
+                  setCreateInvoiceMode('existing_sale');
                   setSelectedSaleIdForNewInvoice(uninvoiced?.id || '');
+                  setNewInvoiceWithTva(uninvoiced ? isTvaEnabledForSale(uninvoiced) : false);
                   setShowCreateInvoiceModal(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs shrink-0 cursor-pointer"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-5 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm shadow-xs shrink-0 whitespace-nowrap cursor-pointer transition"
               >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ Créer une Facture pour un Vendeur</span>
+                <PlusCircle className="w-4 h-4 shrink-0" />
+                <span className="whitespace-nowrap">Générer la facture</span>
               </button>
             ) : (
               <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/30 font-bold text-[11px] shrink-0 flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5" />
-                <span>Lecture seule • Non modifiable</span>
+                <Lock className="w-3.5 h-3.5 shrink-0" />
+                <span className="whitespace-nowrap">Lecture seule • Non modifiable</span>
               </span>
             )}
           </div>
@@ -1480,7 +1704,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             <div className="rounded-2xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/60 dark:bg-amber-950/20 p-4 space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2 text-xs font-black text-amber-950 dark:text-amber-200">
-                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>
                     {isComptable
                       ? `Demandes de Rectification des Vendeurs avec Preuve Mini Facture Thermique (${rectifications.length})`
@@ -1503,17 +1727,17 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                     >
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono font-black text-slate-900 dark:text-white">
+                          <span className="font-mono font-black text-slate-900 dark:text-white whitespace-nowrap">
                             Facture : {rect.invoice_number}
                           </span>
-                          <span className="font-mono text-[11px] font-bold text-[#008DA9]">
+                          <span className="font-mono text-[11px] font-bold text-[#008DA9] whitespace-nowrap">
                             Vente : {rect.sale_number}
                           </span>
-                          <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-200 font-mono font-bold text-[10px]">
+                          <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-200 font-mono font-bold text-[10px] whitespace-nowrap">
                             Preuve : {rect.thermal_ticket_number}
                           </span>
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black whitespace-nowrap ${
                               isPending
                                 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                                 : isRectified
@@ -1562,10 +1786,10 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                               }
                             }
                           }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] shadow-xs transition cursor-pointer"
+                          className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
                         >
-                          <Receipt className="w-3.5 h-3.5" />
-                          <span>Voir Mini Facture Thermique (Preuve)</span>
+                          <Receipt className="w-4 h-4 shrink-0" />
+                          <span className="whitespace-nowrap">Voir Mini Facture Thermique (Preuve)</span>
                         </button>
 
                         {isComptable && isPending && (
@@ -1574,19 +1798,19 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                               type="button"
                               disabled={resolvingRectificationId === rect.id}
                               onClick={() => handleComptableResolveRectification(rect, 'rectifiee', false)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs transition cursor-pointer disabled:opacity-50"
+                              className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Rectifier Facture (HT)</span>
+                              <CheckCircle2 className="w-4 h-4 shrink-0" />
+                              <span className="whitespace-nowrap">Rectifier Facture (HT)</span>
                             </button>
                             <button
                               type="button"
                               disabled={resolvingRectificationId === rect.id}
                               onClick={() => handleComptableResolveRectification(rect, 'rectifiee', true)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer disabled:opacity-50"
+                              className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                             >
-                              <Percent className="w-3.5 h-3.5" />
-                              <span>Rectifier (+ TVA 18%)</span>
+                              <Percent className="w-4 h-4 shrink-0" />
+                              <span className="whitespace-nowrap">Rectifier (+ TVA 18 %)</span>
                             </button>
                           </>
                         )}
@@ -1598,392 +1822,622 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Description + Onglets sur une seule ligne défilable horizontalement (compteurs en nombre seul) */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             {isVendeur && currentUser ? (
               <div className="text-xs text-slate-600 dark:text-slate-300">
-                Factures créées pour vous par le Comptable (<strong>{invoicedOrEditableSales.length} facture(s)</strong>) et vos reçus de versement (<strong>{visibleVersements.length}</strong>).
+                Factures créées pour vous par le Comptable (<strong>{invoicedOrEditableSales.length}</strong>) et vos reçus de versement (<strong>{visibleVersements.length}</strong>).
               </div>
             ) : (
               <div className="text-xs text-slate-600 dark:text-slate-300">
-                Factures individuelles par vente (au nom du vendeur avec le PDV acheteur, option TVA 18%) et reçus de caisse.
+                Factures individuelles par vente (au nom du vendeur avec le PDV acheteur, option TVA 18 %) et reçus de caisse.
               </div>
             )}
 
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div
+              role="tablist"
+              aria-label="Filtres Factures et Reçus"
+              className="flex items-center gap-2 flex-nowrap overflow-x-auto max-w-full pb-1"
+            >
               <button
                 type="button"
+                role="tab"
+                aria-selected={docTypeFilter === 'all'}
                 onClick={() => setDocTypeFilter('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   docTypeFilter === 'all'
-                    ? 'bg-[#008DA9] text-white shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                    ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
                 }`}
               >
-                Tous ({printableDocuments.length})
+                <span className="whitespace-nowrap">Tous ({printableDocuments.length})</span>
               </button>
+
               <button
                 type="button"
+                role="tab"
+                aria-selected={docTypeFilter === 'facture'}
                 onClick={() => setDocTypeFilter('facture')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   docTypeFilter === 'facture'
-                    ? 'bg-[#008DA9] text-white shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                    ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <FileText className="w-3.5 h-3.5" />
-                <span>
-                  {isVendeur
-                    ? `Mes Factures créées par le Comptable (${invoicedOrEditableSales.length})`
-                    : `Factures par Vente PDV (${invoicedOrEditableSales.length})`}
+                <FileText className="w-3.5 h-3.5 shrink-0" />
+                <span className="whitespace-nowrap">
+                  Factures par Vente PDV ({invoicedOrEditableSales.length})
                 </span>
               </button>
+
               <button
                 type="button"
+                role="tab"
+                aria-selected={docTypeFilter === 'recu'}
                 onClick={() => setDocTypeFilter('recu')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   docTypeFilter === 'recu'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                    ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <Receipt className="w-3.5 h-3.5" />
-                <span>Reçus Versements ({visibleVersements.length})</span>
+                <Receipt className="w-3.5 h-3.5 shrink-0" />
+                <span className="whitespace-nowrap">
+                  Reçus Versements ({visibleVersements.length})
+                </span>
               </button>
             </div>
           </div>
 
-          {/* Mobile Cards View (< 640px) */}
-          <div className="space-y-3 sm:hidden">
-            {filteredPrintableDocs.length === 0 ? (
-              <div className="p-8 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-xs text-slate-400">
-                Aucune facture créée par le Comptable pour ce filtre.
-              </div>
-            ) : (
-              filteredPrintableDocs.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2.5 text-xs"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-mono font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
-                        <span>{doc.number}</span>
-                        {doc.docKind === 'facture' && (
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
-                              doc.invoiceGenerated
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                            }`}
-                          >
-                            {doc.invoiceGenerated ? 'Créée' : 'À générer'}
+          {filteredPrintableDocs.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+              Aucune facture ni reçu à afficher pour ce filtre.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* 1. TABLETTE PORTRAIT ET MOBILE (< 1024 px) : Cartes empilées pleine largeur */}
+              <div className="lg:hidden space-y-3.5">
+                {paginatedPrintableDocs.map((doc) => {
+                  const isFacture = doc.docKind === 'facture';
+                  const isPaid =
+                    !isFacture ||
+                    doc.invoiceGenerated ||
+                    String(doc.paymentMode || '').toLowerCase().includes('comptant');
+
+                  return (
+                    <article
+                      key={doc.id}
+                      className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-xs space-y-3"
+                    >
+                      {/* Ligne 1 : numéro de facture (sur UNE ligne, police des codes, taille réduite si besoin, jamais coupé) à gauche, date à droite */}
+                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
+                        <span className="font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap text-[clamp(11px,3.2vw,14px)] leading-tight">
+                          {doc.number}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
+                          {doc.date}
+                          {doc.saleTime ? ` • ${doc.saleTime}` : ''}
+                        </span>
+                      </div>
+
+                      {/* Ligne 2 : vendeur (nom et code) puis PDV acheteur et gérant */}
+                      <div className="space-y-1 text-xs">
+                        <div className="font-bold text-slate-900 dark:text-white">
+                          Vendeur : {doc.vendorLabel}
+                        </div>
+                        <div className="text-slate-700 dark:text-slate-300">
+                          <span className="font-semibold">
+                            {isFacture ? 'PDV acheteur :' : 'Contrepartie :'} {doc.counterparty}
                           </span>
+                          {doc.pdvManager ? ` • Gérant : ${doc.pdvManager}` : ''}
+                        </div>
+                        {doc.saleNumber && (
+                          <div className="font-mono text-[11px] text-[#008DA9]">
+                            Vente : {doc.saleNumber}
+                          </div>
                         )}
                       </div>
-                      {doc.saleNumber && (
-                        <div className="font-mono text-[10px] text-[#008DA9]">Vente : {doc.saleNumber}</div>
-                      )}
-                      <div className="text-[11px] text-slate-400">
-                        {doc.date} {doc.saleTime ? `à ${doc.saleTime}` : ''}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-black text-sm text-slate-900 dark:text-white">
-                        {doc.amount.toLocaleString('fr-FR')} FCFA
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        HT : {doc.subtotalHt.toLocaleString('fr-FR')} FCFA
-                      </div>
-                      {doc.docKind === 'facture' && doc.withTva && (
-                        <div className="text-[10px] font-bold text-amber-600">
-                          TVA 18% : +{doc.tvaAmount.toLocaleString('fr-FR')} FCFA
-                        </div>
-                      )}
-                    </div>
-                  </div>
 
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
-                    <div className="font-bold text-slate-900 dark:text-white">{doc.vendorLabel}</div>
-                    <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                      {doc.counterparty}
-                    </div>
-                    {doc.pdvManager && (
-                      <div className="text-[10px] text-slate-400">
-                        {doc.pdvCode ? `${doc.pdvCode} • ` : ''}Gérant : {doc.pdvManager}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
-                    <div>
-                      {doc.docKind === 'facture' && doc.rawSale ? (
-                        isComptable ? (
-                          <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
-                            <button
-                              type="button"
-                              onClick={() => toggleSaleTva(doc.rawSale.id, false)}
-                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                !doc.withTva
-                                  ? 'bg-[#008DA9] text-white shadow-xs'
-                                  : 'text-slate-600 dark:text-slate-300'
-                              }`}
-                            >
-                              Sans TVA
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => toggleSaleTva(doc.rawSale.id, true)}
-                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                doc.withTva
-                                  ? 'bg-amber-500 text-slate-950 shadow-xs'
-                                  : 'text-slate-600 dark:text-slate-300'
-                              }`}
-                            >
-                              + TVA 18%
-                            </button>
-                          </div>
-                        ) : (
-                          <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold ${
-                              doc.withTva
-                                ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300'
-                                : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                            }`}
-                          >
-                            <Lock className="w-3 h-3 opacity-70" />
-                            <span>{doc.withTva ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
+                      {/* Ligne 3 : badge de régime TVA ("Sans TVA" gris, "TVA 18 %" marron texte blanc) et montants : "HT", "TVA", "Total" chacun sur sa ligne, montant à droite en nowrap, Total en gras */}
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                            Régime TVA
                           </span>
-                        )
-                      ) : (
-                        <span className="text-[10px] text-slate-400 font-semibold">Reçu Caisse</span>
-                      )}
-                    </div>
+                          {isFacture ? (
+                            doc.withTva ? (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white whitespace-nowrap">
+                                TVA 18 %
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                Sans TVA
+                              </span>
+                            )
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200 whitespace-nowrap">
+                              Sans TVA
+                            </span>
+                          )}
+                        </div>
 
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {doc.docKind === 'facture' && doc.rawSale ? (
-                        isComptable ? (
-                          <button
-                            type="button"
-                            disabled={generatingSaleId === doc.rawSale.id}
-                            onClick={() => handleGenerateAndOpenSaleInvoice(doc.rawSale, doc.withTva)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span>{doc.invoiceGenerated ? 'Modifier / Imprimer' : 'Créer Facture'}</span>
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => onOpenDocument(doc.invoicePayload)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>Imprimer</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openVendorRectificationModal(doc.rawSale)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] shadow-xs cursor-pointer"
-                            >
-                              <AlertTriangle className="w-3.5 h-3.5" />
-                              <span>Rectifier</span>
-                            </button>
-                          </>
-                        )
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => onOpenDocument(doc.invoicePayload)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>Imprimer Reçu</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+                        <div className="space-y-1 pt-1 border-t border-slate-200/70 dark:border-slate-700/70 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-slate-400">HT</span>
+                            <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                              {Number(doc.subtotalHt || 0).toLocaleString('fr-FR')} FCFA
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-slate-400">TVA</span>
+                            <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                              {Number(doc.tvaAmount || 0).toLocaleString('fr-FR')} FCFA
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-700/70 text-sm">
+                            <span className="font-bold text-slate-900 dark:text-white">Total</span>
+                            <span className="font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                              {Number(doc.amount || 0).toLocaleString('fr-FR')} FCFA
+                            </span>
+                          </div>
+                        </div>
+                      </div>
 
-          {/* Tablet & Desktop Optimized Table (>= 640px) — Zero Horizontal Overflow */}
-          <div className="hidden sm:block rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">
-                    <th className="py-3 px-2.5 lg:px-4">N° Facture &amp; Date</th>
-                    <th className="py-3 px-2.5 lg:px-4">Vendeur &amp; PDV Acheteur</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-center">Régime TVA 18%</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-right">Montant HT / Total</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {filteredPrintableDocs.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-slate-400">
-                        Aucune facture créée par le Comptable pour ce filtre.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredPrintableDocs.map((doc) => (
-                      <tr key={doc.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                        <td className="py-3 px-2.5 lg:px-4">
-                          <div className="font-mono font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
-                            <span>{doc.number}</span>
-                            {doc.docKind === 'facture' && (
+                      {/* Ligne 4 : statut (Créée, Payée…) en badge */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          Statut
+                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {isFacture ? (
+                            <>
                               <span
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${
                                   doc.invoiceGenerated
-                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                    : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                    ? 'bg-[#15803D] text-white'
+                                    : 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
                                 }`}
                               >
                                 {doc.invoiceGenerated ? 'Créée' : 'À générer'}
                               </span>
-                            )}
-                          </div>
-                          {doc.saleNumber && (
-                            <div className="font-mono text-[10px] text-[#008DA9]">Vente : {doc.saleNumber}</div>
+                              {isPaid && (
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 whitespace-nowrap">
+                                  Payée
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#15803D] text-white whitespace-nowrap">
+                              Payée • Reçu Caisse
+                            </span>
                           )}
-                          <div className="text-[11px] text-slate-400">
-                            {doc.date} {doc.saleTime ? `à ${doc.saleTime}` : ''}
-                          </div>
+
                           {doc.rectificationStatus === 'en_attente' && (
-                            <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                              <AlertTriangle className="w-2.5 h-2.5" /> Rectification demandée
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white whitespace-nowrap">
+                              <AlertTriangle className="w-3 h-3 shrink-0" />
+                              <span>Rectification demandée</span>
                             </span>
                           )}
                           {doc.rectificationStatus === 'rectifiee' && (
-                            <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                              <CheckCircle2 className="w-2.5 h-2.5" /> Facture rectifiée
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#15803D] text-white whitespace-nowrap">
+                              <CheckCircle2 className="w-3 h-3 shrink-0" />
+                              <span>Rectifiée</span>
                             </span>
                           )}
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4">
-                          <div className="font-bold text-slate-900 dark:text-white">{doc.vendorLabel}</div>
-                          <div className="font-semibold text-[11px] text-slate-700 dark:text-slate-300 mt-0.5">
-                            {doc.counterparty}
-                          </div>
-                          {doc.pdvManager && (
-                            <div className="text-[10px] text-slate-400">
-                              {doc.pdvCode ? `${doc.pdvCode} • ` : ''}Gérant : {doc.pdvManager}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-center whitespace-nowrap">
-                          {doc.docKind === 'facture' && doc.rawSale ? (
-                            isComptable ? (
-                              <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSaleTva(doc.rawSale.id, false)}
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                    !doc.withTva
-                                      ? 'bg-[#008DA9] text-white shadow-xs'
-                                      : 'text-slate-600 dark:text-slate-300'
-                                  }`}
-                                >
-                                  Sans TVA
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSaleTva(doc.rawSale.id, true)}
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                    doc.withTva
-                                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                                      : 'text-slate-600 dark:text-slate-300'
-                                  }`}
-                                >
-                                  + TVA 18%
-                                </button>
-                              </div>
-                            ) : (
-                              <span
-                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold ${
-                                  doc.withTva
-                                    ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300'
-                                    : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                                }`}
+                        </div>
+                      </div>
+
+                      {/* Dernière ligne : boutons d'action côte à côte, libellé complet sur une seule ligne et icône, 48 px de haut, flex-wrap */}
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                        {isFacture && doc.rawSale ? (
+                          isComptable ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openInvoiceGenerationModalForSale(doc.rawSale, doc.withTva)
+                                }
+                                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs transition cursor-pointer whitespace-nowrap"
                               >
-                                <Lock className="w-3 h-3 opacity-70" />
-                                <span>{doc.withTva ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-semibold">Reçu Caisse</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-right whitespace-nowrap">
-                          <div className="font-black text-slate-900 dark:text-white">
-                            {doc.amount.toLocaleString('fr-FR')} FCFA
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            HT : {doc.subtotalHt.toLocaleString('fr-FR')} FCFA
-                          </div>
-                          {doc.docKind === 'facture' && doc.withTva && (
-                            <div className="text-[10px] font-bold text-amber-600">
-                              TVA 18% : +{doc.tvaAmount.toLocaleString('fr-FR')} FCFA
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-center">
-                          {doc.docKind === 'facture' && doc.rawSale ? (
-                            isComptable ? (
+                                <Pencil className="w-4 h-4 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+                                <span className="whitespace-nowrap">Modifier</span>
+                              </button>
                               <button
                                 type="button"
                                 disabled={generatingSaleId === doc.rawSale.id}
-                                onClick={() => handleGenerateAndOpenSaleInvoice(doc.rawSale, doc.withTva)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer whitespace-nowrap"
+                                onClick={() =>
+                                  handleGenerateAndOpenSaleInvoice(doc.rawSale, doc.withTva)
+                                }
+                                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
                               >
-                                <Printer className="w-3.5 h-3.5 shrink-0" />
-                                <span>
-                                  {doc.invoiceGenerated ? 'Modifier / Imprimer' : 'Créer Facture'}
-                                </span>
+                                <Printer className="w-4 h-4 shrink-0" />
+                                <span className="whitespace-nowrap">Imprimer</span>
                               </button>
-                            ) : (
-                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenDocument(doc.invoicePayload)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer whitespace-nowrap"
-                                  title="Voir et imprimer la facture (Lecture seule)"
-                                >
-                                  <Printer className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Voir / Imprimer</span>
-                                </button>
+                            </>
+                          ) : (
+                            <>
+                              {isVendeur && (
                                 <button
                                   type="button"
                                   onClick={() => openVendorRectificationModal(doc.rawSale)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] shadow-xs cursor-pointer whitespace-nowrap"
-                                  title="Signaler une erreur sur la facture et soumettre la Mini Facture Thermique comme preuve"
+                                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
                                 >
-                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Rectifier</span>
+                                  <Pencil className="w-4 h-4 shrink-0" />
+                                  <span className="whitespace-nowrap">Modifier</span>
                                 </button>
-                              </div>
-                            )
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => onOpenDocument(doc.invoicePayload)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer whitespace-nowrap"
-                            >
-                              <Printer className="w-3.5 h-3.5 shrink-0" />
-                              <span>Imprimer Reçu</span>
-                            </button>
-                          )}
-                        </td>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => onOpenDocument(doc.invoicePayload)}
+                                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                              >
+                                <Printer className="w-4 h-4 shrink-0" />
+                                <span className="whitespace-nowrap">Imprimer</span>
+                              </button>
+                            </>
+                          )
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onOpenDocument(doc.invoicePayload)}
+                            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                          >
+                            <Printer className="w-4 h-4 shrink-0" />
+                            <span className="whitespace-nowrap">Imprimer le reçu</span>
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              {/* 2. TABLETTE EN PAYSAGE ET PC (>= 1024 px) : Tableau normal dans un conteneur à overflow-x auto */}
+              <div className="hidden lg:block w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+                <div className="w-full max-w-full overflow-x-auto max-h-[70vh] overflow-y-auto">
+                  <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+                    <thead className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
+                      <tr>
+                        <th className="py-3.5 px-4 font-bold whitespace-nowrap min-w-[185px]">
+                          N° Facture &amp; Date
+                        </th>
+                        <th className="py-3.5 px-4 font-bold whitespace-nowrap min-w-[240px]">
+                          Vendeur &amp; PDV Acheteur
+                        </th>
+                        <th
+                          className="py-3.5 px-4 font-bold text-center whitespace-nowrap min-w-[140px]"
+                          style={{ minWidth: '140px' }}
+                        >
+                          Régime TVA
+                        </th>
+                        <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap min-w-[195px]">
+                          Montants (HT / TVA / Total)
+                        </th>
+                        <th
+                          className="py-3.5 px-4 font-bold text-right whitespace-nowrap min-w-[220px]"
+                          style={{ minWidth: '220px' }}
+                        >
+                          Actions
+                        </th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {paginatedPrintableDocs.map((doc) => {
+                        const isFacture = doc.docKind === 'facture';
+                        const isPaid =
+                          !isFacture ||
+                          doc.invoiceGenerated ||
+                          String(doc.paymentMode || '').toLowerCase().includes('comptant');
+
+                        return (
+                          <tr
+                            key={doc.id}
+                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            {/* Col 1 : N° Facture nowrap + Date + Statut */}
+                            <td className="py-3.5 px-4 align-middle min-w-[185px]">
+                              <div className="font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                                {doc.number}
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap mt-0.5">
+                                {doc.date}
+                                {doc.saleTime ? ` à ${doc.saleTime}` : ''}
+                              </div>
+                              {doc.saleNumber && (
+                                <div className="font-mono text-[10px] text-[#008DA9] whitespace-nowrap">
+                                  Vente : {doc.saleNumber}
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                                {isFacture ? (
+                                  <>
+                                    <span
+                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${
+                                        doc.invoiceGenerated
+                                          ? 'bg-[#15803D] text-white'
+                                          : 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
+                                      }`}
+                                    >
+                                      {doc.invoiceGenerated ? 'Créée' : 'À générer'}
+                                    </span>
+                                    {isPaid && (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 whitespace-nowrap">
+                                        Payée
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#15803D] text-white whitespace-nowrap">
+                                    Payée • Reçu Caisse
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Col 2 : Vendeur & PDV Acheteur */}
+                            <td className="py-3.5 px-4 align-middle min-w-[240px]">
+                              <div className="font-bold text-slate-900 dark:text-white">
+                                {doc.vendorLabel}
+                              </div>
+                              <div className="font-semibold text-xs text-slate-700 dark:text-slate-300 mt-0.5">
+                                {doc.counterparty}
+                              </div>
+                              {doc.pdvManager && (
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  {doc.pdvCode ? `${doc.pdvCode} • ` : ''}Gérant : {doc.pdvManager}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Col 3 : Régime TVA (140 px minimum) */}
+                            <td
+                              className="py-3.5 px-4 align-middle text-center min-w-[140px]"
+                              style={{ minWidth: '140px' }}
+                            >
+                              {isFacture && doc.withTva ? (
+                                <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold bg-[#92400E] text-white whitespace-nowrap">
+                                  TVA 18 %
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                  Sans TVA
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Col 4 : Montants HT / TVA / Total (chacun sur sa ligne, montant à droite en nowrap, Total en gras) */}
+                            <td className="py-3.5 px-4 align-middle min-w-[195px]">
+                              <div className="space-y-1 max-w-[210px] ml-auto">
+                                <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-400">
+                                  <span className="whitespace-nowrap">HT</span>
+                                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                    {Number(doc.subtotalHt || 0).toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-400">
+                                  <span className="whitespace-nowrap">TVA</span>
+                                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                    {Number(doc.tvaAmount || 0).toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 text-xs font-bold text-slate-900 dark:text-white pt-0.5 border-t border-slate-100 dark:border-slate-800">
+                                  <span className="whitespace-nowrap">Total</span>
+                                  <span className="font-mono font-bold whitespace-nowrap">
+                                    {Number(doc.amount || 0).toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Col 5 : Actions (min-w 220px, boutons sur une ligne) */}
+                            <td
+                              className="py-3.5 px-4 align-middle text-right min-w-[220px]"
+                              style={{ minWidth: '220px' }}
+                            >
+                              <div className="flex items-center justify-end gap-2 flex-nowrap whitespace-nowrap">
+                                {isFacture && doc.rawSale ? (
+                                  isComptable ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          openInvoiceGenerationModalForSale(
+                                            doc.rawSale,
+                                            doc.withTva
+                                          )
+                                        }
+                                        className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs transition cursor-pointer whitespace-nowrap shrink-0"
+                                      >
+                                        <Pencil className="w-3.5 h-3.5 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+                                        <span className="whitespace-nowrap">Modifier</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={generatingSaleId === doc.rawSale.id}
+                                        onClick={() =>
+                                          handleGenerateAndOpenSaleInvoice(
+                                            doc.rawSale,
+                                            doc.withTva
+                                          )
+                                        }
+                                        className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
+                                      >
+                                        <Printer className="w-3.5 h-3.5 shrink-0" />
+                                        <span className="whitespace-nowrap">Imprimer</span>
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {isVendeur && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            openVendorRectificationModal(doc.rawSale)
+                                          }
+                                          className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
+                                        >
+                                          <Pencil className="w-3.5 h-3.5 shrink-0" />
+                                          <span className="whitespace-nowrap">Modifier</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => onOpenDocument(doc.invoicePayload)}
+                                        className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
+                                      >
+                                        <Printer className="w-3.5 h-3.5 shrink-0" />
+                                        <span className="whitespace-nowrap">Imprimer</span>
+                                      </button>
+                                    </>
+                                  )
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenDocument(doc.invoicePayload)}
+                                    className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
+                                  >
+                                    <Printer className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="whitespace-nowrap">Imprimer le reçu</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-slate-50 dark:bg-slate-800/90 border-t-2 border-slate-200 dark:border-slate-700 font-bold text-slate-900 dark:text-white">
+                      <tr>
+                        <td colSpan={3} className="py-3 px-4 whitespace-nowrap">
+                          Total ({filteredPrintableDocs.length} documents)
+                        </td>
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="space-y-0.5 max-w-[210px] ml-auto">
+                            <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-300">
+                              <span>HT</span>
+                              <span className="font-mono whitespace-nowrap">
+                                {filteredPrintableDocs
+                                  .reduce((acc, d) => acc + Number(d.subtotalHt || 0), 0)
+                                  .toLocaleString('fr-FR')}{' '}
+                                FCFA
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-300">
+                              <span>TVA</span>
+                              <span className="font-mono whitespace-nowrap">
+                                {filteredPrintableDocs
+                                  .reduce((acc, d) => acc + Number(d.tvaAmount || 0), 0)
+                                  .toLocaleString('fr-FR')}{' '}
+                                FCFA
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 text-xs font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
+                              <span>Total</span>
+                              <span className="font-mono whitespace-nowrap">
+                                {filteredPrintableDocs
+                                  .reduce((acc, d) => acc + Number(d.amount || 0), 0)
+                                  .toLocaleString('fr-FR')}{' '}
+                                FCFA
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4" />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Pied de totaux visible + Pagination par 20 */}
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-700 dark:text-slate-200 border-b border-slate-100 dark:border-slate-800 pb-3">
+                  <span className="whitespace-nowrap">
+                    Documents :{' '}
+                    <strong className="text-slate-900 dark:text-white">
+                      {filteredPrintableDocs.length}
+                    </strong>
+                  </span>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span className="whitespace-nowrap">
+                      Total HT :{' '}
+                      <strong className="font-mono text-slate-900 dark:text-white">
+                        {filteredPrintableDocs
+                          .reduce((acc, d) => acc + Number(d.subtotalHt || 0), 0)
+                          .toLocaleString('fr-FR')}{' '}
+                        FCFA
+                      </strong>
+                    </span>
+                    <span className="whitespace-nowrap">
+                      Total TVA :{' '}
+                      <strong className="font-mono text-slate-900 dark:text-white">
+                        {filteredPrintableDocs
+                          .reduce((acc, d) => acc + Number(d.tvaAmount || 0), 0)
+                          .toLocaleString('fr-FR')}{' '}
+                        FCFA
+                      </strong>
+                    </span>
+                    <span className="whitespace-nowrap">
+                      Total TTC :{' '}
+                      <strong className="font-mono text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
+                        {filteredPrintableDocs
+                          .reduce((acc, d) => acc + Number(d.amount || 0), 0)
+                          .toLocaleString('fr-FR')}{' '}
+                        FCFA
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <span className="text-slate-500 dark:text-slate-400">
+                    Affichage de{' '}
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      {(safeFacturesPage - 1) * FACTURES_PAGE_SIZE + 1}
+                    </strong>{' '}
+                    à{' '}
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      {Math.min(
+                        safeFacturesPage * FACTURES_PAGE_SIZE,
+                        filteredPrintableDocs.length
+                      )}
+                    </strong>{' '}
+                    sur{' '}
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      {filteredPrintableDocs.length}
+                    </strong>{' '}
+                    (Pagination par 20)
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={safeFacturesPage <= 1}
+                      onClick={() => setFacturesPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                    >
+                      <ChevronLeft className="w-4 h-4 shrink-0" />
+                      <span>Précédent</span>
+                    </button>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap px-2">
+                      Page {safeFacturesPage} / {totalFacturesPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeFacturesPage >= totalFacturesPages}
+                      onClick={() =>
+                        setFacturesPage((p) => Math.min(totalFacturesPages, p + 1))
+                      }
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                    >
+                      <span>Suivant</span>
+                      <ChevronRight className="w-4 h-4 shrink-0" />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -1991,8 +2445,11 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       {!isVendeur && activeTab === 'bons-cadeaux' && (
         <div className="space-y-4">
           <div className="p-4 rounded-2xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 text-xs text-teal-900 dark:text-teal-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <strong>Rapport Comptable « Bons cadeaux » (Valeur remise) :</strong> Suivi financier des bons cadeaux semestriels remis en marchandises (sortie de stock de type « Bon cadeau » au prix de vente). <strong>Rien en espèces</strong> n&apos;est versé aux vendeurs.
+            <div className="flex items-center gap-1.5">
+              <span>
+                <strong>Bons cadeaux :</strong> Suivi de la valeur remise en marchandises.
+              </span>
+              <InfoTooltip text="Suivi financier des bons cadeaux semestriels remis en marchandises (sortie de stock de type « Bon cadeau » au prix de vente). Rien en espèces n'est versé aux vendeurs." />
             </div>
             <button
               type="button"
@@ -2039,29 +2496,120 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
           </div>
 
-          {/* Mobile Cards View (< 640px) */}
-          <div className="space-y-3 sm:hidden">
-            {bonsCadeaux.map((b) => (
-              <div
-                key={b.id}
-                className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2.5 text-xs"
+          {/* Bons cadeaux — Composant partagé DataTable */}
+          <DataTable<any>
+            data={bonsCadeaux}
+            getRowKey={(b) => b.id}
+            emptyMessage="Aucun bon cadeau enregistré pour ce semestre."
+            mobileTitle={(b) => `${b.id.toUpperCase()} (${b.semester})`}
+            mobileSubtitle={(b) => `${b.vendor_name} (${b.vendor_code})`}
+            mobileStatusBadge={(b) => (
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  b.status === 'Remis' || b.status === 'Reçu'
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                    : b.status === 'À préparer'
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                }`}
               >
-                <div className="flex items-start justify-between gap-2">
+                {b.status}
+              </span>
+            )}
+            columns={[
+              {
+                key: 'ref',
+                label: 'Réf. & Semestre',
+                hideOnMobileCard: true,
+                render: (b) => (
                   <div>
-                    <span className="font-mono font-bold text-slate-900 dark:text-white">
+                    <div className="font-mono font-bold text-slate-900 dark:text-white">
                       {b.id.toUpperCase()}
-                    </span>
-                    <span className="ml-2 font-bold text-teal-700 dark:text-teal-400">{b.semester}</span>
-                    <div className="font-semibold text-slate-900 dark:text-white mt-1">
-                      {b.vendor_name} <span className="font-mono text-[10px] text-slate-400">({b.vendor_code})</span>
+                    </div>
+                    <div className="text-[11px] font-bold text-teal-700 dark:text-teal-400">
+                      {b.semester}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-black text-sm text-emerald-600 dark:text-emerald-400">
-                      {Number(b.delivered_total || 0).toLocaleString('fr-FR')} FCFA
+                ),
+                footer: <span className="uppercase text-[11px]">Totaux</span>,
+              },
+              {
+                key: 'vendor',
+                label: 'Vendeur',
+                hideOnMobileCard: true,
+                render: (b) => (
+                  <div className="font-semibold text-slate-900 dark:text-white">
+                    <div>{b.vendor_name}</div>
+                    <div className="text-[10px] font-mono text-slate-400">{b.vendor_code}</div>
+                  </div>
+                ),
+              },
+              {
+                key: 'note',
+                label: 'Note /20',
+                align: 'center',
+                isNumeric: true,
+                render: (b) => (
+                  <span className="font-black text-slate-800 dark:text-slate-200">
+                    {b.note_total}/20
+                  </span>
+                ),
+              },
+              {
+                key: 'plafond',
+                label: 'Plafond / Panier',
+                align: 'right',
+                isNumeric: true,
+                render: (b) => (
+                  <div>
+                    <div className="font-bold text-slate-700 dark:text-slate-300">
+                      Plafond :{' '}
+                      {b.amount !== undefined
+                        ? `${Number(b.amount).toLocaleString('fr-FR')} FCFA`
+                        : 'Non révélé'}
                     </div>
+                    <div className="text-[11px] text-slate-500">
+                      Panier : {Number(b.basket_total || 0).toLocaleString('fr-FR')} FCFA
+                    </div>
+                  </div>
+                ),
+                footer: (
+                  <span>
+                    {bonsCadeaux
+                      .reduce((acc, b) => acc + Number(b.basket_total || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'delivered',
+                label: 'Valeur Remise',
+                align: 'right',
+                isNumeric: true,
+                render: (b) => (
+                  <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                    {Number(b.delivered_total || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+                footer: (
+                  <span className="text-emerald-600 dark:text-emerald-400">
+                    {bonsCadeaux
+                      .reduce((acc, b) => acc + Number(b.delivered_total || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'status',
+                label: 'Statut',
+                align: 'center',
+                hideOnMobileCard: true,
+                render: (b) => (
+                  <div>
                     <span
-                      className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                         b.status === 'Remis' || b.status === 'Reçu'
                           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
                           : b.status === 'À préparer'
@@ -2071,238 +2619,194 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                     >
                       {b.status}
                     </span>
+                    <div className="text-[10px] font-semibold text-slate-400 mt-0.5">
+                      Rien en espèces
+                    </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
-                  <div>
-                    <span className="text-slate-400 block">Note</span>
-                    <strong className="text-slate-800 dark:text-slate-200">{b.note_total}/20</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block">Plafond</span>
-                    <strong className="text-slate-800 dark:text-slate-200">
-                      {b.amount !== undefined ? `${Number(b.amount).toLocaleString('fr-FR')} F` : 'Non révélé'}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block">Panier</span>
-                    <strong className="text-slate-800 dark:text-slate-200">
-                      {Number(b.basket_total || 0).toLocaleString('fr-FR')} F
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Tablet & Desktop Table (>= 640px) */}
-          <div className="hidden sm:block rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">
-                    <th className="py-3 px-2.5 lg:px-4">Réf. &amp; Semestre</th>
-                    <th className="py-3 px-2.5 lg:px-4">Vendeur</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-center">Note /20</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-right">Plafond / Panier</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-right">Valeur Remise</th>
-                    <th className="py-3 px-2.5 lg:px-4 text-center">Statut</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {bonsCadeaux.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400">
-                        Aucun bon cadeau enregistré pour ce semestre.
-                      </td>
-                    </tr>
-                  ) : (
-                    bonsCadeaux.map((b) => (
-                      <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                        <td className="py-3 px-2.5 lg:px-4 whitespace-nowrap">
-                          <div className="font-mono font-bold text-slate-900 dark:text-white">
-                            {b.id.toUpperCase()}
-                          </div>
-                          <div className="text-[11px] font-bold text-teal-700 dark:text-teal-400">
-                            {b.semester}
-                          </div>
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 font-semibold text-slate-900 dark:text-white">
-                          <div>{b.vendor_name}</div>
-                          <div className="text-[10px] font-mono text-slate-400">{b.vendor_code}</div>
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-center font-black text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                          {b.note_total}/20
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-right whitespace-nowrap">
-                          <div className="font-bold text-slate-700 dark:text-slate-300">
-                            Plafond : {b.amount !== undefined ? `${Number(b.amount).toLocaleString('fr-FR')} FCFA` : 'Non révélé'}
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            Panier : {Number(b.basket_total || 0).toLocaleString('fr-FR')} FCFA
-                          </div>
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-right font-black text-emerald-600 dark:text-emerald-400 text-sm whitespace-nowrap">
-                          {Number(b.delivered_total || 0).toLocaleString('fr-FR')} FCFA
-                        </td>
-                        <td className="py-3 px-2.5 lg:px-4 text-center whitespace-nowrap">
-                          <span
-                            className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              b.status === 'Remis' || b.status === 'Reçu'
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                : b.status === 'À préparer'
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                            }`}
-                          >
-                            {b.status}
-                          </span>
-                          <div className="text-[10px] font-semibold text-slate-400 mt-0.5">
-                            Rien en espèces
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                ),
+              },
+            ]}
+            renderActions={(b) => {
+              const items = Array.isArray(b.items) ? b.items : [];
+              const bonAmount = Number(b.amount || 0);
+              const valTotal = Number(b.delivered_total || b.basket_total || bonAmount || 0);
+              return (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenDocument({
+                      id: b.id,
+                      number: String(b.id || 'BON').toUpperCase(),
+                      date:
+                        String(b.remis_at || b.confirmed_reception_at || b.expires_at || '2026-11-07')
+                          .replace('T', ' ')
+                          .slice(0, 16),
+                      type: 'bon_cadeau',
+                      docTypeTitle: 'BON CADEAU REMIS (SORTIE FEFO)',
+                      emitterTitle: 'MAGASIN CENTRAL BAOBAB (SORTIE FEFO)',
+                      recipientTitle: 'BÉNÉFICIAIRE DU BON CADEAU (VENDEUR)',
+                      vendorName: b.prepared_by || 'Magasin Central Baobab',
+                      vendorCode: 'BAO-MAG',
+                      vendorTeam: 'Dépôt Central & Comptabilité',
+                      clientName: `${b.vendor_name} (${b.vendor_code})`,
+                      pdvName: `${b.vendor_name} (${b.vendor_code})`,
+                      pdvNeighborhood: `Semestre ${b.semester} • Note : ${b.note_total}/20`,
+                      pdvManager: `Plafond Bon : ${bonAmount.toLocaleString('fr-FR')} FCFA (Rien en espèces)`,
+                      items:
+                        items.length > 0
+                          ? items.map((it: any, idx: number) => ({
+                              id: `${b.id}-${idx}`,
+                              code: it.code || `CAD-0${idx + 1}`,
+                              description: `${it.name}${it.lotNumber ? ` (Lot FEFO: ${it.lotNumber})` : ''}`,
+                              quantity: Number(it.qtyBoxes || 1),
+                              unitPrice: Number(it.unitPrice || 0),
+                              total: Number(it.total || 0),
+                            }))
+                          : [
+                              {
+                                id: `${b.id}-0`,
+                                code: String(b.id || 'BON').toUpperCase(),
+                                description: `Dotation Bon Cadeau Semestre ${b.semester} (Plafond ${bonAmount.toLocaleString('fr-FR')} FCFA)`,
+                                quantity: 1,
+                                unitPrice: valTotal,
+                                total: valTotal,
+                              },
+                            ],
+                      subtotal: valTotal,
+                      taxRate: 0,
+                      taxAmount: 0,
+                      total: valTotal,
+                      paymentMethod: 'Bon cadeau en marchandises (0 FCFA espèces)',
+                      status: `Statut : ${b.status}`,
+                      isAcquittee: b.status === 'Remis' || b.status === 'Reçu',
+                      sigLeftLabel: 'Le Bénéficiaire (Vendeur)',
+                      sigCenterLabel: 'Le Magasinier (Sortie FEFO)',
+                      sigRightLabel: 'Direction & Comptabilité',
+                    })
+                  }
+                  className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-xs cursor-pointer whitespace-nowrap"
+                >
+                  <Printer className="w-4 h-4 shrink-0" />
+                  <span className="whitespace-nowrap">Imprimer le bon</span>
+                </button>
+              );
+            }}
+            totalsFooter={
+              <>
+                <span>
+                  Bons cadeaux :{' '}
+                  <strong className="text-slate-900 dark:text-white">
+                    {bonsCadeaux.length}
+                  </strong>
+                </span>
+                <span>
+                  Valeur remise en marchandises :{' '}
+                  <strong className="text-emerald-600 dark:text-emerald-400">
+                    {bonsCadeaux
+                      .reduce((sum, b) => sum + Number(b.delivered_total || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+              </>
+            }
+          />
         </div>
       )}
 
       {/* Modal Encaisser un versement (Comptable uniquement) */}
       {isComptable && showVersementModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-teal-600" />
-              Enregistrement Versement Vendeur (Caisse)
-            </h2>
-            <form onSubmit={handleRecordVersement} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-500 mb-1">Vendeur concerné</label>
-                <select
-                  value={selectedVendorId}
-                  onChange={(e) => setSelectedVendorId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                >
-                  {balances.map((b) => (
-                    <option key={b.vendorId} value={b.vendorId}>
-                      {b.code} - {b.name} (Solde dû : {b.balanceDue.toLocaleString('fr-FR')} FCFA)
-                    </option>
-                  ))}
-                </select>
-              </div>
+        <FormModal
+          title="Enregistrement Versement Vendeur (Caisse)"
+          icon={<DollarSign className="w-5 h-5 text-teal-600" />}
+          onClose={() => setShowVersementModal(false)}
+          onSubmit={handleRecordVersement}
+          submitLabel="Valider le versement"
+          submitDisabled={isSubmitting}
+          isDirty={Boolean(notes.trim())}
+        >
+          <div className={FORM_GROUP_CLASS}>
+            <div>
+              <label className={FORM_LABEL_CLASS}>Vendeur concerné</label>
+              <select
+                value={selectedVendorId}
+                onChange={(e) => setSelectedVendorId(e.target.value)}
+                className={FORM_SELECT_CLASS}
+              >
+                {balances.map((b) => (
+                  <option key={b.vendorId} value={b.vendorId}>
+                    {b.code} - {b.name} (Solde dû : {b.balanceDue.toLocaleString('fr-FR')} FCFA)
+                  </option>
+                ))}
+              </select>
+            </div>
 
-              <div>
-                <label className="block text-slate-500 mb-1">Montant versé (FCFA)</label>
-                <input
-                  type="number"
-                  min="1000"
-                  step="1000"
-                  value={versementAmount}
-                  onChange={(e) => setVersementAmount(Number(e.target.value))}
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-base font-bold"
-                />
-              </div>
+            <div>
+              <label className={FORM_LABEL_CLASS}>Montant versé (FCFA)</label>
+              <input
+                type="number"
+                min="1000"
+                step="1000"
+                value={versementAmount}
+                onChange={(e) => setVersementAmount(Number(e.target.value))}
+                required
+                className={FORM_FIELD_CLASS}
+              />
+            </div>
 
-              <div>
-                <label className="block text-slate-500 mb-1">Mode de règlement</label>
-                <select
-                  value={paymentMode}
-                  onChange={(e) => setPaymentMode(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                >
-                  <option value="Espèces">Espèces (Billetage)</option>
-                  <option value="Orange Money">Orange Money Mali</option>
-                  <option value="Moov Money">Moov Money Mali</option>
-                  <option value="Chèque BDM">Chèque Bancaire (BDM-SA)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-500 mb-1">Notes / Réf. Quittance</label>
-                <input
-                  type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-cyan-50/80 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={openInvoicingOnVersement}
-                  onChange={(e) => setOpenInvoicingOnVersement(e.target.checked)}
-                  className="mt-0.5 rounded border-slate-300 text-[#008DA9] focus:ring-[#008DA9]"
-                />
-                <span className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">
-                  <strong>Générer les factures par vente PDV :</strong> Ouvrir les ventes du vendeur après validation pour générer chaque facture <strong>au nom du vendeur avec le PDV acheteur</strong> (avec option d&apos;ajout ou non de la <strong>TVA 18%</strong>).
-                </span>
+            <div>
+              <label className={FORM_LABEL_CLASS}>
+                Mode de paiement
               </label>
+              <PaymentMethodSelector
+                value={paymentMode}
+                onChange={setPaymentMode}
+                especesValue="Espèces"
+                mobileMoneyValue="Mobile Money"
+                virementValue="Virement"
+              />
+            </div>
 
-              <div className="pt-3 flex gap-2 justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowVersementModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold cursor-pointer"
-                >
-                  Valider le versement
-                </button>
-              </div>
-            </form>
+            <div>
+              <label className={FORM_LABEL_CLASS}>Notes / Réf. Quittance</label>
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Ex: Quittance N°128 / Reçu versement BDM"
+                className={FORM_FIELD_CLASS}
+              />
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3.5 rounded-xl bg-cyan-50/80 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={openInvoicingOnVersement}
+                onChange={(e) => setOpenInvoicingOnVersement(e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-[#008DA9] focus:ring-[#008DA9]"
+              />
+              <span className="text-[12px] text-slate-700 dark:text-slate-200 leading-snug">
+                <strong>Générer les factures par vente PDV :</strong> Ouvrir les ventes du vendeur après validation pour générer chaque facture <strong>au nom du vendeur avec le PDV acheteur</strong> (avec option d&apos;ajout ou non de la <strong>TVA 18%</strong>).
+              </span>
+            </label>
           </div>
-        </div>
+        </FormModal>
       )}
 
       {/* Modal de Génération des Factures par Vente PDV (Suite à un Versement du Vendeur) */}
       {selectedVersementForInvoicing && (
-        <div
-          onClick={() => setSelectedVersementForInvoicing(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-2 sm:p-4 overflow-y-auto"
+        <FormModal
+          title={`Génération Factures • Versement ${selectedVersementForInvoicing.reference}`}
+          subtitle={`Vendeur : ${selectedVersementForInvoicing.vendor_name} (${selectedVersementForInvoicing.vendor_code}) • Versement : ${Number(selectedVersementForInvoicing.amount || 0).toLocaleString('fr-FR')} FCFA`}
+          icon={<FileText className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />}
+          onClose={() => setSelectedVersementForInvoicing(null)}
+          submitLabel="Fermer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setSelectedVersementForInvoicing(null);
+          }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
-          >
-            {/* Header */}
-            <div className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-6 py-4 bg-slate-900 text-white border-b border-slate-800">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <FileText className="w-5 h-5 text-[#008DA9]" />
-                  <h3 className="text-sm sm:text-base font-black">
-                    Génération des Factures par Vente PDV • Versement {selectedVersementForInvoicing.reference}
-                  </h3>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#008DA9] text-white">
-                    1 Vente PDV = 1 Facture à part
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-300 mt-0.5">
-                  Vendeur : <strong>{selectedVersementForInvoicing.vendor_name} ({selectedVersementForInvoicing.vendor_code})</strong> • Versement : <strong>{Number(selectedVersementForInvoicing.amount || 0).toLocaleString('fr-FR')} FCFA</strong> ({selectedVersementForInvoicing.date})
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedVersementForInvoicing(null)}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white text-xs font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
-              >
-                <X className="w-4 h-4" />
-                <span>Fermer</span>
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
+          <div className="space-y-4">
               {(() => {
                 const vendorSalesList = sales.filter(
                   (s) =>
@@ -2349,12 +2853,12 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       </div>
                     ) : (
                       <>
-                        {/* Sélecteur de vue : Cartes vs Tableau */}
+                        {/* Sélecteur de vue : Cartes vs Tableau (Tablette/PC uniquement) */}
                         <div className="flex items-center justify-between gap-2 pb-1 flex-wrap">
                           <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
                             Ventes PDV à facturer ({vendorSalesList.length}) :
                           </div>
-                          <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-300 dark:border-slate-700">
+                          <div className="hidden sm:inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-300 dark:border-slate-700">
                             <button
                               type="button"
                               onClick={() => setInvoicingModalView('cards')}
@@ -2364,7 +2868,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                                   : 'text-slate-600 dark:text-slate-300'
                               }`}
                             >
-                              Vue Cartes (Mobile)
+                              Vue Cartes
                             </button>
                             <button
                               type="button"
@@ -2375,764 +2879,648 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                                   : 'text-slate-600 dark:text-slate-300'
                               }`}
                             >
-                              Vue Tableau Défilant
+                              Vue Tableau
                             </button>
                           </div>
                         </div>
 
-                        {invoicingModalView === 'cards' ? (
-                          /* VUE MOBILE & CARTES : LECTURE PARFAITE SANS DÉBORDEMENT NI RETOUR À LA LIGNE TRONQUÉ */
-                          <div className="space-y-3">
-                          {vendorSalesList.map((s) => {
-                            const withTva = isTvaEnabledForSale(s);
-                            const subtotalHt = Number(s.total_amount || 0);
-                            const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
-                            const totalTtc = subtotalHt + tvaAmount;
-                            const invNumber = s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-');
-
-                            return (
-                              <div
-                                key={s.id}
-                                className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 shadow-xs space-y-3"
-                              >
-                                {/* Entête carte : Réf Facture & Date/Heure */}
-                                <div className="flex items-start justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                        {/* Ventes PDV rattachées au versement — Composant partagé DataTable */}
+                        <DataTable<any>
+                          data={vendorSalesList}
+                          getRowKey={(s) => s.id}
+                          emptyMessage="Aucune vente PDV rattachée à ce vendeur."
+                          mobileTitle={(s) =>
+                            s.invoice_number ||
+                            String(s.number || '').replace(/^VTE-/, 'FAC-')
+                          }
+                          mobileSubtitle={(s) =>
+                            `Vente : ${s.number} • ${s.date} à ${s.sale_time || '10:30'}`
+                          }
+                          mobileStatusBadge={() => (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#008DA9]/15 text-[#008DA9] border border-[#008DA9]/30">
+                              Facture A4
+                            </span>
+                          )}
+                          columns={[
+                            {
+                              key: 'invoice',
+                              label: 'Facture / Vente',
+                              hideOnMobileCard: true,
+                              render: (s) => {
+                                const invNumber =
+                                  s.invoice_number ||
+                                  String(s.number || '').replace(/^VTE-/, 'FAC-');
+                                return (
                                   <div>
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="font-mono font-black text-sm text-slate-900 dark:text-white">
-                                        {invNumber}
-                                      </span>
-                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#008DA9]/15 text-[#008DA9] border border-[#008DA9]/30">
-                                        Facture A4
-                                      </span>
+                                    <div className="font-mono font-bold text-slate-900 dark:text-white">
+                                      {invNumber}
                                     </div>
-                                    <div className="font-mono text-xs text-slate-500 mt-0.5">
-                                      Vente : <strong>{s.number}</strong>
+                                    <div className="font-mono text-[10px] text-[#008DA9]">
+                                      Vente : {s.number}
                                     </div>
                                   </div>
-                                  <div className="text-right shrink-0">
-                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                                      {s.date}
-                                    </div>
-                                    <div className="text-[11px] font-mono text-slate-400 flex items-center justify-end gap-1 mt-0.5">
-                                      <Clock className="w-3 h-3 text-[#008DA9]" />
-                                      <span>{s.sale_time || '10:30'}</span>
-                                    </div>
+                                );
+                              },
+                              footer: <span className="uppercase text-[11px]">Totaux</span>,
+                            },
+                            {
+                              key: 'date',
+                              label: 'Date & Heure',
+                              isSecondary: true,
+                              hideOnMobileCard: true,
+                              render: (s) => (
+                                <div className="text-slate-600 dark:text-slate-300">
+                                  <div className="font-semibold">{s.date}</div>
+                                  <div className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                                    <Clock className="w-3 h-3 text-[#008DA9]" />
+                                    <span>{s.sale_time || '10:30'}</span>
                                   </div>
                                 </div>
-
-                                {/* Infos Vendeur & PDV Acheteur */}
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
-                                  <div>
-                                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
-                                      Au nom du Vendeur
-                                    </span>
-                                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                                      <User className="w-3.5 h-3.5 text-[#008DA9]" />
-                                      <span>{s.vendor_name}</span>
-                                    </div>
-                                    <span className="font-mono text-[11px] text-teal-600 block mt-0.5">
-                                      {s.vendor_code}
-                                    </span>
+                              ),
+                            },
+                            {
+                              key: 'vendor',
+                              label: 'Au nom du Vendeur',
+                              isSecondary: true,
+                              render: (s) => (
+                                <div>
+                                  <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                                    <User className="w-3 h-3 text-[#008DA9]" />
+                                    <span>{s.vendor_name}</span>
                                   </div>
-
-                                  <div>
-                                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
-                                      PDV Acheteur (Client)
-                                    </span>
-                                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                                      <Store className="w-3.5 h-3.5 text-emerald-600" />
-                                      <span>{s.pdv_name}</span>
-                                    </div>
-                                    <span className="text-[11px] text-slate-500 block mt-0.5">
-                                      {s.pdv_code ? `${s.pdv_code} • ` : ''}{s.pdv_neighborhood || 'Bamako'}
-                                      {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
-                                    </span>
+                                  <div className="font-mono text-[10px] text-teal-600">
+                                    {s.vendor_code}
                                   </div>
                                 </div>
-
-                                {/* Option TVA 18% & Montants */}
-                                <div className="space-y-2 pt-1">
-                                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                                      Régime TVA :
-                                    </span>
+                              ),
+                            },
+                            {
+                              key: 'pdv',
+                              label: 'PDV Acheteur',
+                              render: (s) => (
+                                <div>
+                                  <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                                    <Store className="w-3 h-3 text-emerald-600" />
+                                    <span>{s.pdv_name}</span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    {s.pdv_code ? `${s.pdv_code} • ` : ''}
+                                    {s.pdv_neighborhood}
+                                    {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              key: 'tva',
+                              label: 'Sélecteur TVA & Aperçu HT / TVA / TTC',
+                              align: 'center',
+                              render: (s) => {
+                                const withTva = isTvaEnabledForSale(s);
+                                const subtotalHt = Number(s.total_amount || 0);
+                                const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
+                                const totalTtc = subtotalHt + tvaAmount;
+                                return (
+                                  <div className="space-y-2 text-left min-w-[200px]">
                                     {isComptable ? (
-                                      <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
+                                      <div
+                                        role="switch"
+                                        aria-checked={withTva}
+                                        className="w-full grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                                      >
                                         <button
                                           type="button"
                                           onClick={() => toggleSaleTva(s.id, false)}
-                                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer whitespace-nowrap ${
                                             !withTva
-                                              ? 'bg-[#008DA9] text-white shadow-xs'
+                                              ? 'bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-white shadow-xs'
                                               : 'text-slate-600 dark:text-slate-300'
                                           }`}
                                         >
-                                          Sans TVA (0%)
+                                          Sans TVA
                                         </button>
                                         <button
                                           type="button"
                                           onClick={() => toggleSaleTva(s.id, true)}
-                                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer whitespace-nowrap ${
                                             withTva
-                                              ? 'bg-amber-500 text-slate-950 shadow-xs'
+                                              ? 'bg-[#92400E] text-white shadow-xs'
                                               : 'text-slate-600 dark:text-slate-300'
                                           }`}
                                         >
-                                          + TVA 18%
+                                          + TVA 18 %
                                         </button>
                                       </div>
                                     ) : (
-                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-600 dark:text-slate-300">
-                                        <Lock className="w-3 h-3" />
-                                        <span>{Boolean(s.with_tva) ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
+                                      <span
+                                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${
+                                          withTva
+                                            ? 'bg-[#92400E] text-white'
+                                            : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+                                        }`}
+                                      >
+                                        {withTva ? 'TVA 18 %' : 'Sans TVA'}
                                       </span>
                                     )}
-                                  </div>
-
-                                  <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700/60 space-y-1 text-xs">
-                                    <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                                      <span>Montant HT :</span>
-                                      <span className="font-semibold">{subtotalHt.toLocaleString('fr-FR')} FCFA</span>
-                                    </div>
-                                    {withTva ? (
-                                      <div className="flex justify-between text-amber-600 dark:text-amber-400 font-bold">
-                                        <span>TVA 18% :</span>
-                                        <span>+ {tvaAmount.toLocaleString('fr-FR')} FCFA</span>
+                                    <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/70 space-y-0.5 text-[11px]">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-slate-500">HT</span>
+                                        <span className="font-mono font-semibold whitespace-nowrap">
+                                          {subtotalHt.toLocaleString('fr-FR')} FCFA
+                                        </span>
                                       </div>
-                                    ) : (
-                                      <div className="flex justify-between text-slate-400">
-                                        <span>TVA :</span>
-                                        <span>0 FCFA (0%)</span>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-slate-500">TVA</span>
+                                        <span className="font-mono font-semibold whitespace-nowrap">
+                                          {tvaAmount.toLocaleString('fr-FR')} FCFA
+                                        </span>
                                       </div>
-                                    )}
-                                    <div className="flex justify-between items-center pt-1.5 border-t border-slate-200 dark:border-slate-700 font-black text-sm text-slate-900 dark:text-white">
-                                      <span>Total Facture :</span>
-                                      <span className="text-[#008DA9]">{totalTtc.toLocaleString('fr-FR')} FCFA</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Action Facture A4 */}
-                                <div className="pt-1">
-                                  {isComptable ? (
-                                    <button
-                                      type="button"
-                                      disabled={generatingSaleId === s.id}
-                                      onClick={() =>
-                                        handleGenerateAndOpenSaleInvoice(
-                                          s,
-                                          withTva,
-                                          selectedVersementForInvoicing
-                                        )
-                                      }
-                                      className="w-full py-2.5 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-                                    >
-                                      <Printer className="w-4 h-4" />
-                                      <span>Générer et Afficher la Facture A4</span>
-                                    </button>
-                                  ) : s.invoice_generated ? (
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          onOpenDocument(
-                                            buildSaleInvoicePayload(
-                                              s,
-                                              Boolean(s.with_tva),
-                                              selectedVersementForInvoicing.reference
-                                            )
-                                          )
-                                        }
-                                        className="flex-1 py-2.5 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                                      >
-                                        <Printer className="w-4 h-4" />
-                                        <span>Afficher Facture A4</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedVersementForInvoicing(null);
-                                          openVendorRectificationModal(s);
-                                        }}
-                                        className="py-2.5 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer"
-                                      >
-                                        <AlertTriangle className="w-3.5 h-3.5" />
-                                        <span>Rectifier</span>
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div className="text-center py-2 text-xs font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                                      En attente de génération par le Comptable
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        /* VUE TABLEAU DÉFILANT : MIN-WIDTH 960px AVEC SCROLL FLUIDE SANS RETOUR À LA LIGNE */
-                        <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
-                          <div className="overflow-x-auto w-full">
-                            <table className="w-full text-xs text-left min-w-[960px] whitespace-nowrap">
-                              <thead>
-                                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase font-bold text-[10px]">
-                                  <th className="py-3 px-3.5 whitespace-nowrap">Facture / Vente</th>
-                                  <th className="py-3 px-3.5 whitespace-nowrap">Date &amp; Heure</th>
-                                  <th className="py-3 px-3.5 whitespace-nowrap">Au nom du Vendeur</th>
-                                  <th className="py-3 px-3.5 whitespace-nowrap">PDV Acheteur</th>
-                                  <th className="py-3 px-3.5 text-center whitespace-nowrap">Option TVA 18%</th>
-                                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Montant HT</th>
-                                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total Facture</th>
-                                  <th className="py-3 px-3.5 text-center whitespace-nowrap">Facture A4 à part</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                {vendorSalesList.map((s) => {
-                                  const withTva = isTvaEnabledForSale(s);
-                                  const subtotalHt = Number(s.total_amount || 0);
-                                  const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
-                                  const totalTtc = subtotalHt + tvaAmount;
-                                  const invNumber = s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-');
-
-                                  return (
-                                    <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                                      <td className="py-3 px-3.5 whitespace-nowrap">
-                                        <div className="font-mono font-bold text-slate-900 dark:text-white">
-                                          {invNumber}
-                                        </div>
-                                        <div className="font-mono text-[10px] text-[#008DA9]">
-                                          Vente : {s.number}
-                                        </div>
-                                      </td>
-                                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-600 dark:text-slate-300">
-                                        <div className="font-semibold">{s.date}</div>
-                                        <div className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                                          <Clock className="w-3 h-3 text-[#008DA9]" />
-                                          <span>{s.sale_time || '10:30'}</span>
-                                        </div>
-                                      </td>
-                                      <td className="py-3 px-3.5 whitespace-nowrap">
-                                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                                          <User className="w-3 h-3 text-[#008DA9]" />
-                                          <span>{s.vendor_name}</span>
-                                        </div>
-                                        <div className="font-mono text-[10px] text-teal-600">
-                                          {s.vendor_code}
-                                        </div>
-                                      </td>
-                                      <td className="py-3 px-3.5 whitespace-nowrap">
-                                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                                          <Store className="w-3 h-3 text-emerald-600" />
-                                          <span>{s.pdv_name}</span>
-                                        </div>
-                                        <div className="text-[10px] text-slate-500">
-                                          {s.pdv_code ? `${s.pdv_code} • ` : ''}{s.pdv_neighborhood}
-                                          {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
-                                        </div>
-                                      </td>
-                                      <td className="py-3 px-3.5 text-center whitespace-nowrap">
-                                        {isComptable ? (
-                                          <div className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleSaleTva(s.id, false)}
-                                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                                !withTva
-                                                  ? 'bg-[#008DA9] text-white shadow-xs'
-                                                  : 'text-slate-600 dark:text-slate-300'
-                                              }`}
-                                            >
-                                              Sans TVA (0%)
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleSaleTva(s.id, true)}
-                                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                                                withTva
-                                                  ? 'bg-amber-500 text-slate-950 shadow-xs'
-                                                  : 'text-slate-600 dark:text-slate-300'
-                                              }`}
-                                            >
-                                              + TVA 18%
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                                            <Lock className="w-3 h-3" />
-                                            <span>{Boolean(s.with_tva) ? 'TTC (TVA 18%)' : 'HT (Sans TVA)'}</span>
-                                          </span>
-                                        )}
-                                      </td>
-                                      <td className="py-3 px-3.5 text-right whitespace-nowrap font-semibold text-slate-700 dark:text-slate-300">
-                                        {subtotalHt.toLocaleString('fr-FR')} FCFA
-                                      </td>
-                                      <td className="py-3 px-3.5 text-right whitespace-nowrap">
-                                        <div className="font-black text-slate-900 dark:text-white">
+                                      <div className="flex items-center justify-between gap-2 pt-0.5 border-t border-slate-200/70 dark:border-slate-700/70 font-bold text-slate-900 dark:text-white">
+                                        <span>TTC</span>
+                                        <span className="font-mono font-bold whitespace-nowrap">
                                           {totalTtc.toLocaleString('fr-FR')} FCFA
-                                        </div>
-                                        {withTva ? (
-                                          <div className="text-[10px] font-bold text-amber-600">
-                                            TVA 18% : +{tvaAmount.toLocaleString('fr-FR')} FCFA
-                                          </div>
-                                        ) : (
-                                          <div className="text-[10px] text-slate-400">
-                                            HT (Sans TVA)
-                                          </div>
-                                        )}
-                                      </td>
-                                      <td className="py-3 px-3.5 text-center whitespace-nowrap">
-                                        {isComptable ? (
-                                          <button
-                                            type="button"
-                                            disabled={generatingSaleId === s.id}
-                                            onClick={() =>
-                                              handleGenerateAndOpenSaleInvoice(
-                                                s,
-                                                withTva,
-                                                selectedVersementForInvoicing
-                                              )
-                                            }
-                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
-                                          >
-                                            <Printer className="w-3.5 h-3.5" />
-                                            <span>Générer Facture A4</span>
-                                          </button>
-                                        ) : s.invoice_generated ? (
-                                          <div className="flex items-center justify-center gap-1">
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                onOpenDocument(
-                                                  buildSaleInvoicePayload(
-                                                    s,
-                                                    Boolean(s.with_tva),
-                                                    selectedVersementForInvoicing.reference
-                                                  )
-                                                )
-                                              }
-                                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs cursor-pointer"
-                                            >
-                                              <Printer className="w-3.5 h-3.5" />
-                                              <span>Voir A4</span>
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                setSelectedVersementForInvoicing(null);
-                                                openVendorRectificationModal(s);
-                                              }}
-                                              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] cursor-pointer"
-                                            >
-                                              <AlertTriangle className="w-3 h-3" />
-                                              <span>Rectifier</span>
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <span className="text-[10px] font-semibold text-slate-400">
-                                            En attente du Comptable
-                                          </span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              },
+                            },
+                          ]}
+                          renderActions={(s) => {
+                            const withTva = isTvaEnabledForSale(s);
+                            return isComptable ? (
+                              <button
+                                type="button"
+                                disabled={generatingSaleId === s.id}
+                                onClick={() =>
+                                  handleGenerateAndOpenSaleInvoice(
+                                    s,
+                                    withTva,
+                                    selectedVersementForInvoicing
+                                  )
+                                }
+                                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                              >
+                                <Printer className="w-4 h-4 shrink-0" />
+                                <span className="whitespace-nowrap">Générer la facture</span>
+                              </button>
+                            ) : s.invoice_generated ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onOpenDocument(
+                                      buildSaleInvoicePayload(
+                                        s,
+                                        Boolean(s.with_tva),
+                                        selectedVersementForInvoicing.reference
+                                      )
+                                    )
+                                  }
+                                  className="inline-flex items-center gap-1.5 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer whitespace-nowrap"
+                                >
+                                  <Printer className="w-4 h-4 shrink-0" />
+                                  <span className="whitespace-nowrap">Imprimer</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedVersementForInvoicing(null);
+                                    openVendorRectificationModal(s);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs cursor-pointer whitespace-nowrap"
+                                >
+                                  <Pencil className="w-4 h-4 shrink-0" />
+                                  <span className="whitespace-nowrap">Modifier</span>
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs font-semibold text-slate-400 whitespace-nowrap">
+                                En attente du Comptable
+                              </span>
+                            );
+                          }}
+                          totalsFooter={
+                            <>
+                              <span>
+                                Ventes PDV :{' '}
+                                <strong className="text-slate-900 dark:text-white">
+                                  {vendorSalesList.length}
+                                </strong>
+                              </span>
+                              <span>
+                                Total HT :{' '}
+                                <strong className="text-slate-900 dark:text-white">
+                                  {vendorSalesList
+                                    .reduce((acc, s) => acc + Number(s.total_amount || 0), 0)
+                                    .toLocaleString('fr-FR')}{' '}
+                                  FCFA
+                                </strong>
+                              </span>
+                            </>
+                          }
+                        />
                     </>
                   )}
                   </>
                 );
               })()}
-            </div>
           </div>
-        </div>
+        </FormModal>
       )}
 
       {/* MODAL VENDEUR: Demander une rectification avec Mini Facture Thermique automatique en preuve */}
       {isVendeur && rectificationModalSale && (
-        <div
-          onClick={() => setRectificationModalSale(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto"
+        <FormModal
+          title="Demande de Rectification de Facture • Preuve par Mini Facture Thermique (80mm)"
+          subtitle={
+            <>
+              Facture concernée :{' '}
+              <strong>
+                {rectificationModalSale.invoice_number ||
+                  String(rectificationModalSale.number || '').replace(/^VTE-/, 'FAC-')}
+              </strong>{' '}
+              • Vendeur : <strong>{currentUser?.name} ({currentUser?.code})</strong>
+            </>
+          }
+          icon={<AlertTriangle className="w-5 h-5 text-amber-500" />}
+          onClose={() => setRectificationModalSale(null)}
+          onSubmit={handleSubmitVendorRectification}
+          submitLabel={
+            <>
+              <Send className="w-4 h-4" />
+              <span>
+                {isSubmittingRectification
+                  ? 'Envoi en cours...'
+                  : 'Envoyer la Demande avec Mini Facture Thermique en Preuve'}
+              </span>
+            </>
+          }
+          submitDisabled={isSubmittingRectification}
+          isDirty={Boolean(rectificationReason.trim())}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl my-auto flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
-          >
-            <div className="shrink-0 flex items-center justify-between px-5 py-4 bg-slate-900 text-white border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <AlertTriangle className="w-5 h-5 text-amber-400" />
-                <div>
-                  <h2 className="text-sm sm:text-base font-black">
-                    Demande de Rectification de Facture • Preuve par Mini Facture Thermique (80mm)
-                  </h2>
-                  <p className="text-[11px] text-slate-300">
-                    Facture concernée :{' '}
-                    <strong>
-                      {rectificationModalSale.invoice_number ||
-                        String(rectificationModalSale.number || '').replace(/^VTE-/, 'FAC-')}
-                    </strong>{' '}
-                    • Vendeur : <strong>{currentUser?.name} ({currentUser?.code})</strong>
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRectificationModalSale(null)}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+          <div className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-950 dark:text-amber-200 leading-snug">
+              <strong>Règle de preuve par Mini Facture Thermique :</strong> Le vendeur ne pouvant pas modifier lui-même une facture créée par le Comptable, votre demande de rectification joint automatiquement la <strong>Mini Facture Thermique (`TKT-THERM-...`)</strong> générée dans votre historique de ventes comme <strong>preuve officielle</strong> dans la notification envoyée au Comptable.
             </div>
 
-            <form
-              onSubmit={handleSubmitVendorRectification}
-              className="p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 text-xs"
-            >
-              {/* Left 7 cols: Form & Selection of Mini Facture Thermique from Sales History */}
-              <div className="lg:col-span-7 space-y-4">
-                <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-950 dark:text-amber-200 leading-snug">
-                  <strong>Règle de preuve par Mini Facture Thermique :</strong> Le vendeur ne pouvant pas modifier lui-même une facture créée par le Comptable, votre demande de rectification joint automatiquement la <strong>Mini Facture Thermique (`TKT-THERM-...`)</strong> générée dans votre historique de ventes comme <strong>preuve officielle</strong> dans la notification envoyée au Comptable.
-                </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Facture du Comptable à rectifier
+              </div>
+              <div className="font-black text-sm text-slate-900 dark:text-white">
+                {rectificationModalSale.invoice_number ||
+                  String(rectificationModalSale.number || '').replace(/^VTE-/, 'FAC-')}{' '}
+                — {rectificationModalSale.pdv_name} ({rectificationModalSale.pdv_neighborhood})
+              </div>
+              <div className="text-slate-500">
+                Montant facturé :{' '}
+                <strong className="text-[#008DA9]">
+                  {Number(rectificationModalSale.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                </strong>{' '}
+                ({rectificationModalSale.with_tva ? 'Avec TVA 18%' : 'Sans TVA'})
+              </div>
+            </div>
 
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1">
-                  <div className="text-[10px] font-bold uppercase text-slate-400">
-                    Facture du Comptable à rectifier
+            <div>
+              <label className={FORM_LABEL_CLASS}>
+                Sélectionnez la Mini Facture Thermique de votre historique de ventes à joindre comme preuve *
+              </label>
+              <select
+                value={selectedProofSaleId}
+                onChange={(e) => setSelectedProofSaleId(e.target.value)}
+                className={`${FORM_SELECT_CLASS} font-mono font-bold text-xs`}
+              >
+                {visibleSales.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {getThermalTicketNumber(s)} • Vente {s.number} du {s.date} à {s.sale_time || '10:30'} — {s.pdv_name} ({Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className={FORM_LABEL_CLASS}>
+                Expliquez l&apos;erreur constatée sur la facture (Motif de la rectification) *
+              </label>
+              <textarea
+                rows={4}
+                required
+                value={rectificationReason}
+                onChange={(e) => setRectificationReason(e.target.value)}
+                placeholder="Ex: Erreur sur le nombre de cartons facturés ou sur l'application de la TVA 18%. Voir la Mini Facture Thermique ci-jointe en preuve..."
+                className={FORM_TEXTAREA_CLASS}
+              />
+            </div>
+
+            {/* Live Preview of the Auto-Generated Mini Facture Thermique (80mm) attached as Proof */}
+            <div className="flex flex-col items-center pt-2">
+              <div className="w-full max-w-[320px] rounded-xl bg-white p-4 border-2 border-dashed border-slate-300 font-mono text-[11px] text-slate-950 space-y-2.5 shadow-md">
+                <div className="text-center border-b border-dashed border-slate-300 pb-2">
+                  <div className="text-xs font-black uppercase text-slate-950">BAOBAB DISTRIBUTION</div>
+                  <div className="text-[9px] text-slate-600">Bennor &amp; Safie • Sotuba, Bamako</div>
+                  <div className="mt-1 inline-block px-2 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase">
+                    MINI FACTURE THERMIQUE (PREUVE)
                   </div>
-                  <div className="font-black text-sm text-slate-900 dark:text-white">
-                    {rectificationModalSale.invoice_number ||
-                      String(rectificationModalSale.number || '').replace(/^VTE-/, 'FAC-')}{' '}
-                    — {rectificationModalSale.pdv_name} ({rectificationModalSale.pdv_neighborhood})
-                  </div>
-                  <div className="text-slate-500">
-                    Montant facturé :{' '}
-                    <strong className="text-[#008DA9]">
-                      {Number(rectificationModalSale.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                    </strong>{' '}
-                    ({rectificationModalSale.with_tva ? 'Avec TVA 18%' : 'Sans TVA'})
-                  </div>
                 </div>
 
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Sélectionnez la Mini Facture Thermique de votre historique de ventes à joindre comme preuve *
-                  </label>
-                  <select
-                    value={selectedProofSaleId}
-                    onChange={(e) => setSelectedProofSaleId(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs"
-                  >
-                    {visibleSales.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {getThermalTicketNumber(s)} • Vente {s.number} du {s.date} à {s.sale_time || '10:30'} — {s.pdv_name} ({Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA)
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {selectedProofSaleObj && (
+                  <>
+                    <div className="space-y-0.5 text-[10px] border-b border-dashed border-slate-300 pb-2">
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">N° Ticket :</span>
+                        <span className="font-black text-slate-950">{getThermalTicketNumber(selectedProofSaleObj)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">N° Vente :</span>
+                        <span className="font-bold text-slate-950">{selectedProofSaleObj.number}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Date &amp; Heure :</span>
+                        <span className="font-bold text-slate-950">
+                          {selectedProofSaleObj.date} à {selectedProofSaleObj.sale_time || '10:30'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Vendeur :</span>
+                        <span className="font-bold text-slate-950">{selectedProofSaleObj.vendor_name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">PDV Client :</span>
+                        <span className="font-bold text-slate-950 truncate max-w-[160px]">{selectedProofSaleObj.pdv_name}</span>
+                      </div>
+                    </div>
 
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Expliquez l&apos;erreur constatée sur la facture (Motif de la rectification) *
-                  </label>
-                  <textarea
-                    rows={4}
-                    required
-                    value={rectificationReason}
-                    onChange={(e) => setRectificationReason(e.target.value)}
-                    placeholder="Ex: Erreur sur le nombre de cartons facturés ou sur l'application de la TVA 18%. Voir la Mini Facture Thermique ci-jointe en preuve..."
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                  />
-                </div>
+                    <div className="space-y-1 border-b border-dashed border-slate-300 pb-2">
+                      <div className="text-[9px] font-black uppercase text-slate-500">
+                        Articles livrés (Preuve de vente)
+                      </div>
+                      {(selectedProofSaleObj.items || []).map((it: any, idx: number) => (
+                        <div key={idx} className="flex justify-between text-[10px]">
+                          <span>
+                            {it.qtyBoxes ?? it.qty}x {it.name}
+                          </span>
+                          <span className="font-bold">
+                            {Number(it.total || 0).toLocaleString('fr-FR')} F
+                          </span>
+                        </div>
+                      ))}
+                    </div>
 
-                <div className="flex items-center justify-end gap-2 pt-2">
+                    <div className="flex justify-between items-center text-xs font-black pt-1">
+                      <span>TOTAL VENTE CERTIFIÉ :</span>
+                      <span className="text-[#008DA9]">
+                        {Number(selectedProofSaleObj.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </FormModal>
+      )}
+
+      {/* MODAL COMPTABLE: Générer / Modifier une Facture pour un Vendeur */}
+      {isComptable && showCreateInvoiceModal && (
+        <FormModal
+          title="Génération / Modification de Facture Vendeur"
+          subtitle="Seul le Comptable est autorisé à créer ou modifier les factures • Visible & imprimable par le vendeur"
+          icon={<FileText className="w-5 h-5 text-[#008DA9]" />}
+          onClose={() => setShowCreateInvoiceModal(false)}
+          onSubmit={handleComptableCreateInvoiceSubmit}
+          hideFooter={true}
+        >
+          {(() => {
+            const selectedSaleForPreview =
+              createInvoiceMode === 'existing_sale'
+                ? sales.find((s) => s.id === selectedSaleIdForNewInvoice) || sales[0]
+                : null;
+            const selectedProdForPreview =
+              createInvoiceMode === 'new_invoice'
+                ? products.find((p) => p.id === newInvoiceProductId) || products[0]
+                : null;
+            const previewHt =
+              createInvoiceMode === 'existing_sale'
+                ? Number(selectedSaleForPreview?.total_amount || 0)
+                : Math.max(1, Number(newInvoiceQtyBoxes || 1)) *
+                  Number(selectedProdForPreview?.price_box || 18000);
+            const previewTva = newInvoiceWithTva ? Math.round(previewHt * 0.18) : 0;
+            const previewTtc = previewHt + previewTva;
+
+            return (
+              <div className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
                   <button
                     type="button"
-                    onClick={() => setRectificationModalSale(null)}
-                    className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold cursor-pointer"
+                    onClick={() => setCreateInvoiceMode('existing_sale')}
+                    className={`py-2.5 px-3 rounded-lg font-bold transition cursor-pointer whitespace-nowrap ${
+                      createInvoiceMode === 'existing_sale'
+                        ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    À partir d&apos;une vente du vendeur
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateInvoiceMode('new_invoice')}
+                    className={`py-2.5 px-3 rounded-lg font-bold transition cursor-pointer whitespace-nowrap ${
+                      createInvoiceMode === 'new_invoice'
+                        ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    Nouvelle facture directe Vendeur + PDV
+                  </button>
+                </div>
+
+                {createInvoiceMode === 'existing_sale' ? (
+                  <div>
+                    <label className={FORM_LABEL_CLASS}>
+                      Sélectionner la vente réalisée par le vendeur *
+                    </label>
+                    <select
+                      required
+                      value={selectedSaleIdForNewInvoice}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setSelectedSaleIdForNewInvoice(nextId);
+                        const nextSale = sales.find((s) => s.id === nextId);
+                        if (nextSale) {
+                          setNewInvoiceWithTva(isTvaEnabledForSale(nextSale));
+                        }
+                      }}
+                      className={FORM_SELECT_CLASS}
+                    >
+                      {sales.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.invoice_generated ? '[Facturée] ' : '[À facturer] '}
+                          {s.number} • {s.vendor_name} ({s.vendor_code}) → {s.pdv_name} (
+                          {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className={FORM_LABEL_CLASS}>
+                        Vendeur titulaire de la facture *
+                      </label>
+                      <select
+                        value={newInvoiceVendorId}
+                        onChange={(e) => setNewInvoiceVendorId(e.target.value)}
+                        className={FORM_SELECT_CLASS}
+                      >
+                        {balances.map((b) => (
+                          <option key={b.vendorId} value={b.vendorId}>
+                            {b.code} — {b.name} ({b.team})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className={FORM_LABEL_CLASS}>
+                        Point de Vente (PDV Acheteur) *
+                      </label>
+                      <select
+                        value={newInvoicePdvId}
+                        onChange={(e) => setNewInvoicePdvId(e.target.value)}
+                        className={FORM_SELECT_CLASS}
+                      >
+                        {pdvs.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.neighborhood}) — Gérant : {p.manager_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={FORM_ROW_CLASS}>
+                      <div>
+                        <label className={FORM_LABEL_CLASS}>Produit facturé *</label>
+                        <select
+                          value={newInvoiceProductId}
+                          onChange={(e) => setNewInvoiceProductId(e.target.value)}
+                          className={FORM_SELECT_CLASS}
+                        >
+                          {products.map((prod) => (
+                            <option key={prod.id} value={prod.id}>
+                              {prod.code} — {prod.name} (
+                              {Number(prod.price_box || 0).toLocaleString('fr-FR')} FCFA)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={FORM_LABEL_CLASS}>Cartons *</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={newInvoiceQtyBoxes}
+                          onChange={(e) => setNewInvoiceQtyBoxes(Number(e.target.value))}
+                          className={FORM_FIELD_CLASS}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Sélecteur TVA ("Sans TVA" / "+ TVA 18 %") en interrupteur sur sa propre ligne + Aperçu HT, TVA, TTC */}
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-3">
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">
+                      Régime de TVA de la facture
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Basculez l&apos;interrupteur pour appliquer ou non la TVA 18 % sur la facture.
+                    </div>
+                  </div>
+
+                  {/* Interrupteur sur sa propre ligne */}
+                  <div
+                    role="switch"
+                    aria-checked={newInvoiceWithTva}
+                    aria-label="Sélecteur TVA (Sans TVA / + TVA 18 %)"
+                    className="w-full grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setNewInvoiceWithTva(false)}
+                      className={`h-[44px] px-3 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                        !newInvoiceWithTva
+                          ? 'bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="whitespace-nowrap">Sans TVA</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewInvoiceWithTva(true)}
+                      className={`h-[44px] px-3 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                        newInvoiceWithTva
+                          ? 'bg-[#92400E] text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Percent className="w-3.5 h-3.5 shrink-0" />
+                      <span className="whitespace-nowrap">+ TVA 18 %</span>
+                    </button>
+                  </div>
+
+                  {/* Aperçu en direct HT, TVA, TTC */}
+                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-slate-600 dark:text-slate-400">HT</span>
+                      <span className="font-mono font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                        {previewHt.toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-slate-600 dark:text-slate-400">
+                        TVA {newInvoiceWithTva ? '(18 %)' : '(0 %)'}
+                      </span>
+                      <span className="font-mono font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                        {previewTva.toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-800 text-sm">
+                      <span className="font-bold text-slate-900 dark:text-white">TTC (Total)</span>
+                      <span className="font-mono font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] whitespace-nowrap">
+                        {previewTtc.toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pied du modal : bouton principal "Générer la facture" vert, 48 px, pleine largeur sur mobile */}
+                <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateInvoiceModal(false)}
+                    className="h-[48px] min-h-[48px] px-4 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer whitespace-nowrap"
                   >
                     Annuler
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmittingRectification}
-                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black shadow-sm transition cursor-pointer disabled:opacity-50"
+                    disabled={isCreatingInvoiceForVendor}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-5 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm shadow-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                   >
-                    <Send className="w-4 h-4" />
-                    <span>
-                      {isSubmittingRectification
-                        ? 'Envoi en cours...'
-                        : 'Envoyer la Demande avec Mini Facture Thermique en Preuve'}
+                    <Printer className="w-4 h-4 shrink-0" />
+                    <span className="whitespace-nowrap">
+                      {isCreatingInvoiceForVendor ? 'Génération...' : 'Générer la facture'}
                     </span>
                   </button>
                 </div>
               </div>
-
-              {/* Right 5 cols: Live Preview of the Auto-Generated Mini Facture Thermique (80mm) attached as Proof */}
-              <div className="lg:col-span-5 flex flex-col items-center">
-                <div className="w-full max-w-[320px] rounded-xl bg-white p-4 border-2 border-dashed border-slate-300 font-mono text-[11px] text-slate-950 space-y-2.5 shadow-md">
-                  <div className="text-center border-b border-dashed border-slate-300 pb-2">
-                    <div className="text-xs font-black uppercase text-slate-950">BAOBAB DISTRIBUTION</div>
-                    <div className="text-[9px] text-slate-600">Bennor &amp; Safie • Sotuba, Bamako</div>
-                    <div className="mt-1 inline-block px-2 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase">
-                      MINI FACTURE THERMIQUE (PREUVE)
-                    </div>
-                  </div>
-
-                  {selectedProofSaleObj && (
-                    <>
-                      <div className="space-y-0.5 text-[10px] border-b border-dashed border-slate-300 pb-2">
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">N° Ticket :</span>
-                          <span className="font-black text-slate-950">{getThermalTicketNumber(selectedProofSaleObj)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">N° Vente :</span>
-                          <span className="font-bold text-slate-950">{selectedProofSaleObj.number}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Date &amp; Heure :</span>
-                          <span className="font-bold text-slate-950">
-                            {selectedProofSaleObj.date} à {selectedProofSaleObj.sale_time || '10:30'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Vendeur :</span>
-                          <span className="font-bold text-slate-950">{selectedProofSaleObj.vendor_name}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">PDV Client :</span>
-                          <span className="font-bold text-slate-950 truncate max-w-[160px]">{selectedProofSaleObj.pdv_name}</span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 border-b border-dashed border-slate-300 pb-2">
-                        <div className="text-[9px] font-black uppercase text-slate-500">
-                          Articles livrés (Preuve de vente)
-                        </div>
-                        {(selectedProofSaleObj.items || []).map((it: any, idx: number) => (
-                          <div key={idx} className="flex justify-between text-[10px]">
-                            <span>
-                              {it.qtyBoxes ?? it.qty}x {it.name}
-                            </span>
-                            <span className="font-bold">
-                              {Number(it.total || 0).toLocaleString('fr-FR')} F
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="flex justify-between items-center text-xs font-black pt-1">
-                        <span>TOTAL VENTE CERTIFIÉ :</span>
-                        <span className="text-[#008DA9]">
-                          {Number(selectedProofSaleObj.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL COMPTABLE: Créer une Facture pour un Vendeur */}
-      {isComptable && showCreateInvoiceModal && (
-        <div
-          onClick={() => setShowCreateInvoiceModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 overflow-y-auto"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xl rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
-          >
-            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-[#008DA9]" />
-                <div>
-                  <h3 className="text-sm sm:text-base font-black">
-                    Créer une Facture Officielle pour un Vendeur
-                  </h3>
-                  <p className="text-[11px] text-slate-300">
-                    Seul le Comptable est autorisé à créer les factures • Visible &amp; imprimable par le vendeur
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateInvoiceModal(false)}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleComptableCreateInvoiceSubmit} className="p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setCreateInvoiceMode('existing_sale')}
-                  className={`py-2 px-3 rounded-lg font-bold transition cursor-pointer ${
-                    createInvoiceMode === 'existing_sale'
-                      ? 'bg-[#008DA9] text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  À partir d&apos;une vente du vendeur
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCreateInvoiceMode('new_invoice')}
-                  className={`py-2 px-3 rounded-lg font-bold transition cursor-pointer ${
-                    createInvoiceMode === 'new_invoice'
-                      ? 'bg-[#008DA9] text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  Nouvelle facture directe Vendeur + PDV
-                </button>
-              </div>
-
-              {createInvoiceMode === 'existing_sale' ? (
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Sélectionner la vente réalisée par le vendeur *
-                  </label>
-                  <select
-                    required
-                    value={selectedSaleIdForNewInvoice}
-                    onChange={(e) => setSelectedSaleIdForNewInvoice(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                  >
-                    {sales.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.invoice_generated ? '[Facturée] ' : '[À facturer] '}
-                        {s.number} • {s.vendor_name} ({s.vendor_code}) → {s.pdv_name} ({Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                      Vendeur titulaire de la facture *
-                    </label>
-                    <select
-                      value={newInvoiceVendorId}
-                      onChange={(e) => setNewInvoiceVendorId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                    >
-                      {balances.map((b) => (
-                        <option key={b.vendorId} value={b.vendorId}>
-                          {b.code} — {b.name} ({b.team})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                      Point de Vente (PDV Acheteur) *
-                    </label>
-                    <select
-                      value={newInvoicePdvId}
-                      onChange={(e) => setNewInvoicePdvId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                    >
-                      {pdvs.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.neighborhood}) — Gérant : {p.manager_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                        Produit facturé *
-                      </label>
-                      <select
-                        value={newInvoiceProductId}
-                        onChange={(e) => setNewInvoiceProductId(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
-                      >
-                        {products.map((prod) => (
-                          <option key={prod.id} value={prod.id}>
-                            {prod.code} — {prod.name} ({Number(prod.price_box || 0).toLocaleString('fr-FR')} FCFA)
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                        Cartons *
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={newInvoiceQtyBoxes}
-                        onChange={(e) => setNewInvoiceQtyBoxes(Number(e.target.value))}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-black text-center"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                <div>
-                  <div className="font-bold text-slate-800 dark:text-slate-200">Option TVA 18%</div>
-                  <div className="text-[11px] text-slate-500">
-                    Choisissez d&apos;ajouter ou non la TVA 18% sur cette facture vendeur
-                  </div>
-                </div>
-                <div className="inline-flex items-center rounded-lg bg-white dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setNewInvoiceWithTva(false)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-bold cursor-pointer ${
-                      !newInvoiceWithTva ? 'bg-[#008DA9] text-white' : 'text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    Sans TVA (0%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewInvoiceWithTva(true)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-bold cursor-pointer ${
-                      newInvoiceWithTva ? 'bg-amber-500 text-slate-950' : 'text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    + TVA 18%
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateInvoiceModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isCreatingInvoiceForVendor}
-                  className="px-5 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold shadow-sm cursor-pointer disabled:opacity-50"
-                >
-                  {isCreatingInvoiceForVendor ? 'Création...' : 'Créer la Facture & Notifier le Vendeur'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            );
+          })()}
+        </FormModal>
       )}
     </div>
   );

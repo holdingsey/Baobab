@@ -1,44 +1,85 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Printer,
   X,
-  FileText,
-  Store,
-  User,
-  Percent,
-  Receipt,
-  AlertTriangle,
-  ShieldCheck,
-  CheckCircle2,
   Download,
-  Eye,
+  Share2,
+  ZoomIn,
+  ZoomOut,
   Maximize2,
-} from "lucide-react";
-import { BaobabLogo } from "./BaobabLogo";
-import { exportOfficialInvoiceA4Pdf } from "../utils/pdfExport";
+  Check,
+  AlertTriangle,
+} from 'lucide-react';
+import {
+  exportOfficialInvoiceA4Pdf,
+  getExplicitDocumentPdfFilename,
+  numberToFrenchWords,
+} from '../utils/pdfExport';
+
+/**
+ * PALETTE STRICTE EXTRAITE DU LOGO BAOBAB DISTRIBUTION (/public/logo.png) :
+ * 1. Bleu-turquoise du logo (--marque) : #008DA9 (filets, barre 2 mm, liserés cartes, titre du document)
+ * 2. Bleu assombri même teinte 192° (--marque-fonce) : #006B82 (contraste 6.14:1 >= 4.5:1 pour aplats à texte blanc : en-tête tableau, TOTAL TTC, cachet ACQUITTÉE)
+ * 3. Bleu à 8 % d'opacité (--marque-8pct) : rgba(0, 141, 169, 0.08) (fond des lignes alternées et des cartes)
+ * 4. Noir du logo (--marque-noir) : #000000 (texte courant, noms, montants, cadres, séparations, pied de page, cachets À PAYER / ANNULÉE)
+ * 5. Blanc : #FFFFFF (fond de la feuille et texte sur aplat bleu ou noir)
+ */
+const COLOR_MARQUE = '#008DA9';
+const COLOR_MARQUE_APLAT = '#006B82';
+const COLOR_MARQUE_8PCT = 'rgba(0, 141, 169, 0.08)';
+const COLOR_NOIR = '#000000';
+const COLOR_BLANC = '#FFFFFF';
 
 export interface InvoiceItem {
+  id?: string;
   code: string;
-  name: string;
-  qty: number;
-  price: number;
+  description?: string;
+  name?: string;
+  quantity?: number;
+  qty?: number;
+  unitPrice?: number;
+  price?: number;
   total: number;
 }
 
 export interface InvoiceData {
   id: string;
   number: string;
-  type: "facture" | "recu" | "mini_thermique";
+  saleNumber?: string;
+  thermalTicketNumber?: string;
+  saleTime?: string;
   date: string;
-  clientName: string;
-  clientPhone?: string;
-  items: InvoiceItem[];
-  total: number;
-  paymentMethod: string;
-  cashierName: string;
-  status: string;
-  // Champs spécifiques : Facture au nom du vendeur avec le PDV acheteur & option TVA 18%
+  dueDate?: string;
+  type:
+    | 'invoice'
+    | 'receipt'
+    | 'facture'
+    | 'recu'
+    | 'mini_thermique'
+    | 'bon_cadeau'
+    | 'demande_achat'
+    | 'commande_gros'
+    | 'facture_grossiste';
+  docTypeTitle?: string;
+  emitterTitle?: string;
+  recipientTitle?: string;
+  client?: {
+    name: string;
+    address: string;
+    ninea?: string;
+    phone?: string;
+    contact?: string;
+    zone?: string;
+  };
+  vendor?: {
+    name: string;
+    code: string;
+    phone?: string;
+  };
   vendorId?: string;
+  clientName?: string;
+  clientPhone?: string;
   vendorName?: string;
   vendorCode?: string;
   vendorTeam?: string;
@@ -48,887 +89,1532 @@ export interface InvoiceData {
   pdvNeighborhood?: string;
   pdvManager?: string;
   pdvPhone?: string;
-  saleId?: string;
-  saleNumber?: string;
-  saleTime?: string;
-  thermalTicketNumber?: string;
   versementRef?: string;
+  cashierName?: string;
+  isProofPreview?: boolean;
   withTva?: boolean;
+  subtotal?: number;
   subtotalHt?: number;
+  discountPercent?: number;
+  discountAmount?: number;
+  taxRate?: number;
   tvaRate?: number;
+  taxAmount?: number;
   tvaAmount?: number;
   totalTtc?: number;
-  readOnly?: boolean;
-  isProofPreview?: boolean;
-  rectificationReason?: string;
+  total: number;
+  amountPaid?: number;
+  paymentMethod?: string;
+  paymentRef?: string;
+  status: string;
+  isAcquittee?: boolean;
+  notes?: string;
+  sigLeftLabel?: string;
+  sigCenterLabel?: string;
+  sigRightLabel?: string;
+  items: InvoiceItem[];
+  [key: string]: any;
 }
 
-export function numberToFrenchWords(n: number): string {
-  if (n === 0) return "zéro";
-  const units = [
-    "",
-    "un",
-    "deux",
-    "trois",
-    "quatre",
-    "cinq",
-    "six",
-    "sept",
-    "huit",
-    "neuf",
-    "dix",
-    "onze",
-    "douze",
-    "treize",
-    "quatorze",
-    "quinze",
-    "seize",
-    "dix-sept",
-    "dix-huit",
-    "dix-neuf",
-  ];
-  const tens = [
-    "",
-    "dix",
-    "vingt",
-    "trente",
-    "quarante",
-    "cinquante",
-    "soixante",
-    "soixante-dix",
-    "quatre-vingts",
-    "quatre-vingt-dix",
-  ];
-
-  function convertBelowThousand(num: number): string {
-    if (num === 0) return "";
-    if (num < 20) return units[num];
-    if (num < 100) {
-      const ten = Math.floor(num / 10);
-      const rem = num % 10;
-      if (ten === 7)
-        return `soixante-${rem === 1 ? "et-onze" : units[10 + rem]}`;
-      if (ten === 9) return `quatre-vingt-${units[10 + rem]}`;
-      if (rem === 0) return tens[ten];
-      if (rem === 1 && ten < 8) return `${tens[ten]}-et-un`;
-      return `${tens[ten]}-${units[rem]}`;
-    }
-    const hundred = Math.floor(num / 100);
-    const rem = num % 100;
-    const hundredStr =
-      hundred === 1
-        ? "cent"
-        : `${units[hundred]} cent${hundred > 1 && rem === 0 ? "s" : ""}`;
-    return rem === 0
-      ? hundredStr
-      : `${hundredStr} ${convertBelowThousand(rem)}`;
-  }
-
-  function convert(num: number): string {
-    if (num === 0) return "zéro";
-    let res = "";
-    const millions = Math.floor(num / 1000000);
-    const thousands = Math.floor((num % 1000000) / 1000);
-    const remainder = num % 1000;
-
-    if (millions > 0) {
-      res +=
-        (millions === 1
-          ? "un million"
-          : `${convertBelowThousand(millions)} millions`) + " ";
-    }
-    if (thousands > 0) {
-      res +=
-        (thousands === 1
-          ? "mille"
-          : `${convertBelowThousand(thousands)} mille`) + " ";
-    }
-    if (remainder > 0) {
-      res += convertBelowThousand(remainder);
-    }
-    return res.trim();
-  }
-
-  const rounded = Math.round(Math.abs(n));
-  const words = convert(rounded);
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Zéro";
-}
-
-interface PrintableDocumentProps {
-  document: InvoiceData;
+export interface PrintableDocumentProps {
+  document: InvoiceData | null;
   logoUrl?: string;
   currentRole?: string;
-  onRequestRectification?: (doc: InvoiceData) => void;
   onClose: () => void;
+  onRequestRectification?: (doc: InvoiceData) => void;
+}
+
+const A4_WIDTH_PX = 794;
+const A4_HEIGHT_PX = 1123;
+
+interface NormalizedLineItem {
+  id: string;
+  code: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+interface PageSlice {
+  pageNumber: number;
+  totalPages: number;
+  items: { item: NormalizedLineItem; globalIndex: number }[];
+  isLastPage: boolean;
 }
 
 export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
-  document,
-  logoUrl = "/logo.png",
+  document: docData,
+  logoUrl = '/logo.png',
   currentRole,
-  onRequestRectification,
   onClose,
+  onRequestRectification,
 }) => {
-  const isFacture = document.type === "facture";
-  const isMiniThermique = document.type === "mini_thermique";
-  const isComptable = currentRole === "Comptable";
-  const isVendeur = currentRole === "Vendeur";
-  const canModifyTva = isFacture && isComptable && !document.readOnly;
-
-  const [includeTva18, setIncludeTva18] = useState<boolean>(
-    Boolean(document.withTva),
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1024
   );
-  const [a4ViewMode, setA4ViewMode] = useState<"fit" | "scroll">("scroll");
+  const [customZoom, setCustomZoom] = useState<number | null>(null);
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartScaleRef = useRef<number>(1);
+  const lastTapTimeRef = useRef<number>(0);
+
+  // Échelle = (largeur de l'écran - 24) / 794
+  const fitScale = useMemo(() => {
+    const available = Math.max(280, viewportWidth - 24);
+    const raw = available / A4_WIDTH_PX;
+    return Math.min(1, Math.max(0.25, Number(raw.toFixed(4))));
+  }, [viewportWidth]);
+
+  const activeScale = customZoom !== null ? customZoom : fitScale;
+  const isZoomedBeyondFit = activeScale > fitScale + 0.02;
 
   useEffect(() => {
-    setIncludeTva18(Boolean(document.withTva));
-  }, [document.id, document.withTva]);
+    const handleResize = () => {
+      setViewportWidth(window.innerWidth);
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
 
-  const subtotalHt = Number(document.subtotalHt ?? document.total ?? 0);
-  const tvaAmount =
-    isFacture && includeTva18 ? Math.round(subtotalHt * 0.18) : 0;
-  const finalTotal = isFacture
-    ? subtotalHt + tvaAmount
-    : Number(document.total || subtotalHt);
+  useEffect(() => {
+    if (!docData) return;
+    const prevOverflow = window.document.body.style.overflow;
+    window.document.body.style.overflow = 'hidden';
+    window.document.body.classList.add('baobab-printing-doc');
+    return () => {
+      window.document.body.style.overflow = prevOverflow;
+      window.document.body.classList.remove('baobab-printing-doc');
+    };
+  }, [docData]);
+
+  useEffect(() => {
+    if (!isZoomedBeyondFit) {
+      setPanOffset({ x: 0, y: 0 });
+    }
+  }, [isZoomedBeyondFit]);
+
+  const handleZoomIn = useCallback(() => {
+    setCustomZoom((prev) => {
+      const base = prev !== null ? prev : fitScale;
+      return Math.min(3.0, Number((base + 0.25).toFixed(2)));
+    });
+  }, [fitScale]);
+
+  const handleZoomOut = useCallback(() => {
+    setCustomZoom((prev) => {
+      const base = prev !== null ? prev : fitScale;
+      const next = Number((base - 0.25).toFixed(2));
+      if (next <= fitScale) {
+        setPanOffset({ x: 0, y: 0 });
+        return null;
+      }
+      return Math.max(0.25, next);
+    });
+  }, [fitScale]);
+
+  const handleResetFit = useCallback(() => {
+    setCustomZoom(null);
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
+
+  const handleToggleDoubleTap = useCallback(() => {
+    if (customZoom !== null && Math.abs(customZoom - 1.0) < 0.05) {
+      setCustomZoom(null);
+      setPanOffset({ x: 0, y: 0 });
+    } else {
+      setCustomZoom(1.0);
+      setPanOffset({ x: 0, y: 0 });
+    }
+  }, [customZoom]);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchStartDistRef.current = Math.hypot(dx, dy);
+      pinchStartScaleRef.current = activeScale;
+      setIsDragging(false);
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTapTimeRef.current < 280) {
+        e.preventDefault();
+        handleToggleDoubleTap();
+        lastTapTimeRef.current = 0;
+        return;
+      }
+      lastTapTimeRef.current = now;
+
+      if (isZoomedBeyondFit) {
+        dragStartRef.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+          panX: panOffset.x,
+          panY: panOffset.y,
+        };
+        setIsDragging(true);
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && pinchStartDistRef.current !== null) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      if (pinchStartDistRef.current > 0) {
+        const ratio = dist / pinchStartDistRef.current;
+        const nextScale = Math.min(
+          3.0,
+          Math.max(fitScale, Number((pinchStartScaleRef.current * ratio).toFixed(2)))
+        );
+        setCustomZoom(nextScale);
+      }
+      return;
+    }
+
+    if (e.touches.length === 1 && isDragging && dragStartRef.current && isZoomedBeyondFit) {
+      const dx = e.touches[0].clientX - dragStartRef.current.x;
+      const dy = e.touches[0].clientY - dragStartRef.current.y;
+      const maxPanX = Math.max(0, (A4_WIDTH_PX * activeScale - viewportWidth) / 2 + 120);
+      const maxPanY = 300;
+      setPanOffset({
+        x: Math.max(-maxPanX, Math.min(maxPanX, dragStartRef.current.panX + dx)),
+        y: Math.max(-maxPanY, Math.min(maxPanY, dragStartRef.current.panY + dy)),
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    pinchStartDistRef.current = null;
+    dragStartRef.current = null;
+    setIsDragging(false);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isZoomedBeyondFit) return;
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: panOffset.x,
+      panY: panOffset.y,
+    };
+    setIsDragging(true);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDragging || !dragStartRef.current || !isZoomedBeyondFit) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    const maxPanX = Math.max(0, (A4_WIDTH_PX * activeScale - viewportWidth) / 2 + 120);
+    const maxPanY = 300;
+    setPanOffset({
+      x: Math.max(-maxPanX, Math.min(maxPanX, dragStartRef.current.panX + dx)),
+      y: Math.max(-maxPanY, Math.min(maxPanY, dragStartRef.current.panY + dy)),
+    });
+  };
+
+  const handleMouseUp = () => {
+    dragStartRef.current = null;
+    setIsDragging(false);
+  };
+
+  const normalizedItems = useMemo<NormalizedLineItem[]>(() => {
+    if (!docData || !Array.isArray(docData.items)) return [];
+    return docData.items.map((it, idx) => ({
+      id: it.id || `${docData.id || 'doc'}-${idx + 1}`,
+      code: it.code || `ART-${String(idx + 1).padStart(2, '0')}`,
+      description: it.description || it.name || 'Marchandise Baobab Distribution',
+      quantity: Number(it.quantity ?? it.qty ?? 1),
+      unitPrice: Number(it.unitPrice ?? it.price ?? 0),
+      total: Number(it.total ?? 0),
+    }));
+  }, [docData]);
+
+  const pages = useMemo<PageSlice[]>(() => {
+    if (!docData) return [];
+    const indexedItems = normalizedItems.map((item, idx) => ({
+      item,
+      globalIndex: idx + 1,
+    }));
+
+    const MAX_ROWS_SINGLE_PAGE = 9;
+    const MAX_ROWS_FULL_INTERMEDIATE_PAGE = 14;
+    const MAX_ROWS_LAST_PAGE_WITH_FOOTER = 9;
+
+    if (indexedItems.length <= MAX_ROWS_SINGLE_PAGE) {
+      return [
+        {
+          pageNumber: 1,
+          totalPages: 1,
+          items: indexedItems,
+          isLastPage: true,
+        },
+      ];
+    }
+
+    const slices: Omit<PageSlice, 'totalPages'>[] = [];
+    let cursor = 0;
+    let pageNum = 1;
+
+    while (cursor < indexedItems.length) {
+      const remaining = indexedItems.length - cursor;
+      if (remaining <= MAX_ROWS_LAST_PAGE_WITH_FOOTER) {
+        slices.push({
+          pageNumber: pageNum,
+          items: indexedItems.slice(cursor),
+          isLastPage: true,
+        });
+        cursor = indexedItems.length;
+      } else if (remaining <= MAX_ROWS_FULL_INTERMEDIATE_PAGE) {
+        slices.push({
+          pageNumber: pageNum,
+          items: indexedItems.slice(cursor),
+          isLastPage: false,
+        });
+        pageNum += 1;
+        slices.push({
+          pageNumber: pageNum,
+          items: [],
+          isLastPage: true,
+        });
+        cursor = indexedItems.length;
+      } else {
+        slices.push({
+          pageNumber: pageNum,
+          items: indexedItems.slice(cursor, cursor + MAX_ROWS_FULL_INTERMEDIATE_PAGE),
+          isLastPage: false,
+        });
+        cursor += MAX_ROWS_FULL_INTERMEDIATE_PAGE;
+        pageNum += 1;
+      }
+    }
+
+    const total = slices.length;
+    return slices.map((s) => ({ ...s, totalPages: total }));
+  }, [docData, normalizedItems]);
+
+  if (!docData) return null;
+
+  const rawType = String(docData.type || 'facture').toLowerCase();
+  const isReceipt = rawType === 'recu' || rawType === 'receipt';
+  const isThermal = rawType === 'mini_thermique';
+  const isBonCadeau = rawType === 'bon_cadeau';
+  const isDemandeAchat = rawType === 'demande_achat';
+  const isGrossiste = rawType === 'commande_gros' || rawType === 'facture_grossiste';
+  const isInvoice = !isReceipt && !isBonCadeau && !isDemandeAchat;
+
+  const docTitle =
+    docData.docTypeTitle ||
+    (isReceipt
+      ? 'REÇU DE VERSEMENT'
+      : isBonCadeau
+      ? 'BON CADEAU REMIS (FEFO)'
+      : isDemandeAchat
+      ? "DEMANDE D'ACHAT FOURNISSEUR"
+      : isGrossiste
+      ? 'FACTURE GROSSISTE'
+      : isThermal
+      ? 'REÇU DE CAISSE'
+      : 'FACTURE DE VENTE PDV');
+
+  const emitterHeading =
+    docData.emitterTitle ||
+    (isReceipt
+      ? 'PARTIE VERSANTE / VENDEUR'
+      : isDemandeAchat
+      ? 'DEMANDEUR / MAGASIN BAOBAB'
+      : 'ÉMETTEUR / AGENT BAOBAB');
+
+  const recipientHeading =
+    docData.recipientTitle ||
+    (isReceipt
+      ? 'CAISSE CENTRALE BAOBAB'
+      : isDemandeAchat
+      ? 'FOURNISSEUR / DIRECTION ACHATS'
+      : 'DESTINATAIRE / CLIENT ACHETEUR');
+
+  const vendorName =
+    docData.vendor?.name ||
+    docData.vendorName ||
+    docData.cashierName ||
+    'Dépôt Central Baobab Distribution';
+  const vendorCode = docData.vendor?.code || docData.vendorCode || 'BAO';
+  const vendorPhone = docData.vendor?.phone || docData.vendorPhone || '+223 20 22 45 88';
+  const vendorTeam = docData.vendorTeam || 'Direction Commerciale Bamako';
+
+  const clientName =
+    docData.client?.name ||
+    docData.pdvName ||
+    docData.clientName ||
+    'Client Partenaire Baobab';
+  const clientAddress =
+    docData.client?.address ||
+    `${docData.pdvCode ? `${docData.pdvCode} • ` : ''}${docData.pdvNeighborhood || 'Bamako, Mali'}`;
+  const clientContact = docData.client?.contact || docData.pdvManager || '';
+  const clientPhone =
+    docData.client?.phone || docData.pdvPhone || docData.clientPhone || '+223 76 00 00 00';
+  const clientNinea = docData.client?.ninea || '';
+
+  const subtotalHt = Number(
+    docData.subtotal ?? docData.subtotalHt ?? docData.total ?? 0
+  );
+  const discountAmount = Number(docData.discountAmount || 0);
+  const discountPercent = Number(docData.discountPercent || 0);
+  const netHt = Math.max(0, subtotalHt - discountAmount);
+  const taxRate = Number(
+    docData.taxRate ?? docData.tvaRate ?? (docData.withTva ? 18 : 0)
+  );
+  const taxAmount = Number(
+    docData.taxAmount ??
+      docData.tvaAmount ??
+      (taxRate > 0 ? Math.round((netHt * taxRate) / 100) : 0)
+  );
+  const totalTtc = Number(docData.totalTtc ?? docData.total ?? netHt + taxAmount);
+
+  const statusStr = String(docData.status || 'Validé');
+  const statusLower = statusStr.toLowerCase();
+  const isCancelled =
+    statusLower.includes('annul') || statusLower.includes('rejet');
+  const isAcquittee =
+    !isCancelled &&
+    (docData.isAcquittee !== undefined
+      ? Boolean(docData.isAcquittee)
+      : statusLower === 'paid' ||
+        (!statusLower.includes('impay') &&
+          !statusLower.includes('pending') &&
+          !statusLower.includes('attente') &&
+          !String(docData.paymentMethod || '').toLowerCase().includes('attente') &&
+          !String(docData.paymentMethod || '').toLowerCase().includes('crédit') &&
+          !String(docData.paymentMethod || '').toLowerCase().includes('credit')));
+
+  const amountPaidVal =
+    docData.amountPaid !== undefined
+      ? docData.amountPaid
+      : isAcquittee
+      ? totalTtc
+      : 0;
+  const resteAPayer = isCancelled ? 0 : Math.max(0, totalTtc - amountPaidVal);
+  const totalQty = normalizedItems.reduce((sum, it) => sum + Number(it.quantity || 0), 0);
 
   const handlePrint = () => {
     window.print();
   };
 
   const handleDownloadPdf = () => {
-    if (!isMiniThermique) {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
       exportOfficialInvoiceA4Pdf(
-        document,
-        includeTva18,
-        numberToFrenchWords(finalTotal),
-        logoUrl,
+        docData,
+        taxRate > 0 || taxAmount > 0,
+        numberToFrenchWords(totalTtc),
+        logoUrl
       );
-    } else {
-      window.print();
+    } finally {
+      setTimeout(() => setIsExportingPdf(false), 400);
     }
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  const handleShare = async () => {
+    const shareTitle = `${docTitle} N° ${docData.number}`;
+    const shareText = `Baobab Distribution — ${docTitle} N° ${docData.number} (${totalTtc.toLocaleString('fr-FR')} FCFA) — ${getExplicitDocumentPdfFilename(docData)}`;
+    const shareUrl = window.location.href;
 
-  const totalBoxes = (document.items || []).reduce(
-    (acc, it) => acc + Number(it.qty || 0),
-    0,
-  );
-  const thermalNum =
-    document.thermalTicketNumber ||
-    (document.type === "mini_thermique"
-      ? document.number
-      : String(document.saleNumber || document.number || "").replace(
-          /^(VTE-|FAC-)/,
-          "TKT-THERM-",
-        ));
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch (err: any) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
 
-  return (
+    try {
+      await navigator.clipboard.writeText(`${shareText} - ${shareUrl}`);
+      setShareToast('Lien copié dans le presse-papiers');
+      setTimeout(() => setShareToast(null), 2800);
+    } catch {
+      setShareToast('Référence copiée');
+      setTimeout(() => setShareToast(null), 2800);
+    }
+  };
+
+  const scaledWidthPx = Math.round(A4_WIDTH_PX * activeScale);
+  const scaledHeightPx = Math.round(A4_HEIGHT_PX * activeScale);
+
+  const modalContent = (
     <div
-      onClick={onClose}
-      className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-xs overflow-y-auto flex items-center justify-center p-1 sm:p-3 md:p-6 print:p-0 print:bg-white print:static print:overflow-visible"
+      className="baobab-print-portal fixed inset-0 z-[9999] flex flex-col w-screen h-[100dvh] max-h-[100dvh] bg-[#525659] text-white overflow-hidden select-none"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Aperçu du document ${docData.number}`}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className={`w-full ${
-          isMiniThermique ? "max-w-md" : "max-w-4xl"
-        } my-auto flex flex-col bg-slate-100 text-slate-900 rounded-xl sm:rounded-2xl shadow-2xl overflow-hidden print:max-h-none print:overflow-visible print:shadow-none print:w-full print:max-w-none print:rounded-none`}
-      >
-        {/* Modal Action Bar (Responsive 2-lignes sur mobile, Toujours accessible) */}
-        <div className="shrink-0 bg-slate-900 text-white border-b border-slate-800 print:hidden">
-          {/* Ligne 1 : Titre Document & Bouton FERMER FIXE */}
-          <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5 border-b border-slate-800/80">
-            <div className="flex items-center gap-2 min-w-0">
-              {isMiniThermique ? (
-                <Receipt className="w-4 h-4 text-amber-400 shrink-0" />
-              ) : (
-                <FileText className="w-4 h-4 text-[#008DA9] shrink-0" />
-              )}
-              <span className="font-black text-xs sm:text-sm truncate">
-                {isMiniThermique
-                  ? `Ticket Thermique • ${thermalNum}`
-                  : isFacture
-                    ? `Facture Vente PDV • ${document.number}`
-                    : `Reçu de Caisse • ${document.number}`}
-              </span>
-              {isFacture && (
-                <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-[#008DA9]/25 text-cyan-300 border border-cyan-800">
-                  Format A4 Officiel
-                </span>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Fermer"
-              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shrink-0 shadow-xs"
-            >
-              <X className="w-4 h-4" />
-              <span>Fermer</span>
-            </button>
-          </div>
-
-          {/* Ligne 2 : Outils d'affichage & Actions A4 */}
-          <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2 flex-wrap bg-slate-950/70 text-xs">
-            {/* Options d'affichage et TVA */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {isFacture && (
-                <div className="inline-flex items-center rounded-lg bg-slate-800 p-0.5 border border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setA4ViewMode("fit")}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
-                      a4ViewMode === "fit"
-                        ? "bg-[#008DA9] text-white shadow-xs"
-                        : "text-slate-300 hover:text-white"
-                    }`}
-                    title="Ajuster la facture entière à l'écran pour la voir d'un coup"
-                  >
-                    <Maximize2 className="w-3 h-3" />
-                    <span>Page A4 Entière</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setA4ViewMode("scroll")}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
-                      a4ViewMode === "scroll"
-                        ? "bg-[#008DA9] text-white shadow-xs"
-                        : "text-slate-300 hover:text-white"
-                    }`}
-                    title="Affichage déroulant confortable"
-                  >
-                    <Eye className="w-3 h-3" />
-                    <span>Mode Déroulant</span>
-                  </button>
-                </div>
-              )}
-
-              {canModifyTva && (
-                <div className="inline-flex items-center rounded-lg bg-slate-800 p-0.5 border border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setIncludeTva18(false)}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer ${
-                      !includeTva18
-                        ? "bg-[#008DA9] text-white shadow-xs"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    Sans TVA (0%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIncludeTva18(true)}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
-                      includeTva18
-                        ? "bg-amber-500 text-slate-950 shadow-xs"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <Percent className="w-3 h-3" />
-                    <span>+ TVA 18%</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Actions : Télécharger PDF & Imprimer */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {isFacture && isVendeur && onRequestRectification && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onRequestRectification(document);
-                  }}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition shadow-xs cursor-pointer"
-                >
-                  <AlertTriangle className="w-3 h-3" />
-                  <span>Rectification</span>
-                </button>
-              )}
-
-              {isFacture && (
-                <button
-                  type="button"
-                  onClick={handleDownloadPdf}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
-                  title="Télécharger directement la facture en PDF A4"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Télécharger PDF (A4)</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handlePrint}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white text-xs font-bold transition shadow-xs cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>{isMiniThermique ? "Imprimer Ticket" : "Imprimer"}</span>
-              </button>
-            </div>
-          </div>
+      {/* BARRE D'ACTIONS fixe en haut, sur une ligne */}
+      <header className="a4-preview-toolbar print:hidden shrink-0 h-14 sm:h-16 w-full bg-[#1E293B] border-b border-slate-700 px-2.5 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-3 z-30 shadow-md">
+        <div className="flex items-center gap-2 min-w-0 shrink">
+          <span
+            className="font-mono font-bold text-xs sm:text-sm md:text-base text-white truncate"
+            title={`${docTitle} — ${docData.number}`}
+          >
+            {docData.number}
+          </span>
+          <span className="hidden lg:inline-block text-xs text-slate-300 font-medium truncate">
+            ({pages.length} {pages.length > 1 ? 'pages A4' : 'page A4'})
+          </span>
         </div>
 
-        {/* Printable Paper Canvas */}
-        {isMiniThermique ? (
-          /* =====================================================================
-             FORMAT MINI FACTURE THERMIQUE (TICKET 80MM AUTO-GÉNÉRÉ PAR VENTE)
-             Affichage entier avec fond blanc complet de haut en bas
-             ===================================================================== */
-          <div className="w-full p-4 sm:p-5 bg-slate-100 print:bg-white print:p-0">
-            <div className="w-full max-w-[340px] mx-auto bg-white text-slate-950 p-4 sm:p-5 rounded-xl border border-slate-300 shadow-md print:shadow-none print:border-none font-mono text-[11px] leading-snug space-y-2.5">
-              {document.isProofPreview && (
-                <div className="p-2 rounded-lg bg-amber-100 border border-amber-300 text-amber-950 font-sans text-[11px] font-bold text-center print:hidden">
-                  PREUVE JOINTE À LA DEMANDE DE RECTIFICATION
-                  {document.rectificationReason && (
-                    <div className="font-normal text-[10px] mt-0.5">
-                      Motif : « {document.rectificationReason} »
-                    </div>
-                  )}
-                </div>
-              )}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {currentRole === 'Vendeur' && isInvoice && onRequestRectification && (
+            <button
+              type="button"
+              onClick={() => onRequestRectification(docData)}
+              title="Demander une rectification au Comptable"
+              aria-label="Demander une rectification"
+              className="h-10 sm:h-11 px-2.5 sm:px-3 rounded-lg bg-[#006B82] hover:bg-[#00586B] text-white font-semibold text-xs flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="hidden md:inline whitespace-nowrap">Rectification</span>
+            </button>
+          )}
 
-              {/* En-tête Ticket Thermique */}
-              <div className="text-center border-b-2 border-dashed border-slate-400 pb-2.5 space-y-1">
-                <div className="flex justify-center mb-1">
-                  <BaobabLogo logoUrl={logoUrl} size={40} variant="invoice" />
-                </div>
-                <div className="text-sm font-black tracking-tight uppercase">
-                  BAOBAB DISTRIBUTION
-                </div>
-                <div className="text-[10px] text-slate-600">
-                  Zone Industrielle de Sotuba • Bamako, Mali
-                </div>
-                <div className="text-[10px] text-slate-600">
-                  Tél: +223 20 22 45 88 • NIF: 084129532M
-                </div>
-                <div className="mt-1.5 inline-block px-2 py-0.5 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider rounded">
-                  MINI FACTURE THERMIQUE (80MM)
-                </div>
-              </div>
-
-              {/* Métadonnées Vente & Ticket */}
-              <div className="border-b border-dashed border-slate-300 pb-2.5 space-y-1 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">N° TICKET :</span>
-                  <span className="font-bold">{thermalNum}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">N° VENTE :</span>
-                  <span className="font-bold">
-                    {document.saleNumber || document.number}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">DATE &amp; HEURE :</span>
-                  <span className="font-bold">
-                    {document.date}
-                    {document.saleTime &&
-                    !document.date.includes(document.saleTime)
-                      ? ` à ${document.saleTime}`
-                      : ""}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">VENDEUR :</span>
-                  <span className="font-bold text-right">
-                    {document.vendorName || document.cashierName}{" "}
-                    {document.vendorCode ? `(${document.vendorCode})` : ""}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">PDV CLIENT :</span>
-                  <span className="font-bold text-right">
-                    {document.pdvName || document.clientName}
-                  </span>
-                </div>
-                {document.pdvNeighborhood && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">QUARTIER :</span>
-                    <span className="font-semibold">
-                      {document.pdvNeighborhood}, Bamako
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-500">RÈGLEMENT :</span>
-                  <span className="font-bold">{document.paymentMethod}</span>
-                </div>
-              </div>
-
-              {/* Articles Livrés */}
-              <div className="border-b-2 border-dashed border-slate-400 pb-2.5">
-                <div className="grid grid-cols-12 font-bold text-[10px] border-b border-slate-300 pb-1 mb-1.5 uppercase">
-                  <span className="col-span-6">ARTICLE</span>
-                  <span className="col-span-2 text-center">QTÉ</span>
-                  <span className="col-span-4 text-right">TOTAL</span>
-                </div>
-                <div className="space-y-1.5">
-                  {document.items.map((it, idx) => (
-                    <div
-                      key={idx}
-                      className="grid grid-cols-12 items-start text-[11px]"
-                    >
-                      <div className="col-span-6 pr-1">
-                        <div className="font-bold leading-tight">{it.name}</div>
-                        <div className="text-[9px] text-slate-500">
-                          {it.code} • {it.price.toLocaleString("fr-FR")} F/ctn
-                        </div>
-                      </div>
-                      <div className="col-span-2 text-center font-bold">
-                        {it.qty} ctn
-                      </div>
-                      <div className="col-span-4 text-right font-bold">
-                        {it.total.toLocaleString("fr-FR")} F
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Total Net Ticket Thermique */}
-              <div className="border-b-2 border-dashed border-slate-400 pb-2.5 space-y-1">
-                <div className="flex justify-between text-[11px]">
-                  <span>TOTAL CARTONS LIVRÉS :</span>
-                  <span className="font-bold">{totalBoxes} carton(s)</span>
-                </div>
-                <div className="flex justify-between text-sm font-black pt-1">
-                  <span>TOTAL NET PAYÉ :</span>
-                  <span>{finalTotal.toLocaleString("fr-FR")} FCFA</span>
-                </div>
-              </div>
-
-              {/* Pied de Ticket & Mention Preuve */}
-              <div className="text-center space-y-1.5 pt-1">
-                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>GÉNÉRÉE AUTOMATIQUEMENT À LA VENTE</span>
-                </div>
-                <p className="text-[9px] text-slate-500 leading-tight">
-                  Ce ticket thermique fait foi dans l&apos;historique des ventes
-                  du vendeur et peut être soumis comme preuve officielle en cas
-                  de demande de rectification de facture auprès de la
-                  Comptabilité.
-                </p>
-                <div className="pt-1 font-mono text-[10px] tracking-widest text-slate-400">
-                  ||| |||| || ||||| ||| |||| |||
-                </div>
-                <div className="text-[9px] text-slate-400 font-bold">
-                  {thermalNum}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* =====================================================================
-             FORMAT FACTURE A4 OFFICIELLE (CRÉÉE PAR LE COMPTABLE) OU REÇU CAISSE
-             Feuille A4 complète standardisée (210 x 297 mm) avec toutes les mentions
-             ===================================================================== */
-          <div
-            className={`w-full overflow-y-auto ${
-              isFacture
-                ? "p-2 sm:p-5 md:p-6 bg-slate-200/80 dark:bg-slate-950/70 flex justify-center"
-                : "p-2 sm:p-4 bg-white"
-            }`}
+          <button
+            type="button"
+            onClick={handlePrint}
+            title="Imprimer"
+            aria-label="Imprimer"
+            className="h-10 sm:h-11 px-2.5 sm:px-3.5 rounded-lg bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
           >
-            <div
-              className={`w-full bg-white text-slate-900 border border-slate-300 dark:border-slate-700 shadow-xl rounded-xl p-4 sm:p-6 md:p-8 a4-page-sheet print:border-none print:shadow-none print:p-0 print:m-0 print:rounded-none ${
-                isFacture && a4ViewMode === "fit"
-                  ? "max-w-[760px] scale-[0.92] sm:scale-100 origin-top"
-                  : "max-w-3xl"
-              }`}
-            >
-              {/* Banner d'information pour le Vendeur (Lecture seule + Impression + Option de demande de rectification) */}
-              {isFacture && isVendeur && (
-                <div className="mb-4 p-3 rounded-xl bg-cyan-50 border border-cyan-200 text-xs text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 print:hidden">
-                  <div className="flex items-start sm:items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-[#008DA9] shrink-0 mt-0.5 sm:mt-0" />
-                    <span>
-                      <strong>Facture créée par le Comptable :</strong> Vous
-                      pouvez consulter et <strong>imprimer</strong> cette
-                      facture librement. Vous ne pouvez pas la modifier.
-                      S&apos;il y a une erreur, cliquez sur{" "}
-                      <strong>« Demander une rectification »</strong> pour
-                      joindre votre mini facture thermique comme preuve.
-                    </span>
-                  </div>
-                </div>
-              )}
+            <Printer className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline whitespace-nowrap">Imprimer</span>
+          </button>
 
-              {/* Header with Baobab Logo */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 sm:pb-5 border-b-2 border-[#008DA9] gap-3 sm:gap-4">
-                <div className="flex items-start sm:items-center gap-3 sm:gap-4">
-                  <div className="h-14 w-14 sm:h-16 sm:w-16 shrink-0 flex items-center justify-center bg-white p-1 rounded-lg border border-slate-100">
-                    <BaobabLogo logoUrl={logoUrl} size={52} variant="invoice" />
-                  </div>
-                  <div>
-                    <h1 className="text-base sm:text-xl font-extrabold tracking-tight text-slate-900">
-                      BAOBAB DISTRIBUTION
-                    </h1>
-                    <p className="text-[11px] sm:text-xs text-[#008DA9] font-semibold uppercase tracking-wider">
-                      Négoce &amp; Distribution Agroalimentaire &bull; Mali
-                    </p>
-                    <div className="text-[10px] sm:text-[11px] text-slate-500 mt-1 leading-snug">
-                      Zone Industrielle de Sotuba, Bamako - Mali
-                      <br />
-                      Tél : +223 20 22 45 88 / +223 76 12 34 56 &bull; Email :
-                      contact@baobab-distribution.ml
-                      <br />
-                      NIF : <strong>084129532M</strong> &bull; RCCM :{" "}
-                      <strong>MA.BKO.2018.B.4129</strong>
-                    </div>
-                  </div>
-                </div>
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={isExportingPdf}
+            title={`Télécharger PDF (${getExplicitDocumentPdfFilename(docData)})`}
+            aria-label="Télécharger PDF"
+            className="h-10 sm:h-11 px-2.5 sm:px-3.5 rounded-lg bg-[#006B82] hover:bg-[#00586B] text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer disabled:opacity-60"
+          >
+            <Download className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline whitespace-nowrap">Télécharger PDF</span>
+            <span className="inline sm:hidden whitespace-nowrap">PDF</span>
+          </button>
 
-                <div className="w-full sm:w-auto text-left sm:text-right sm:self-start bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-200 sm:min-w-[215px]">
-                  <div className="flex sm:justify-end items-center gap-1.5 mb-1 flex-wrap">
-                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-teal-100 text-teal-800">
-                      {isFacture
-                        ? "FACTURE DE VENTE PDV (FORMAT A4)"
-                        : "REÇU DE CAISSE"}
-                    </span>
-                    {isFacture && (
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          includeTva18
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {includeTva18 ? "TVA 18% Incluse" : "Sans TVA (0%)"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-slate-900 break-all sm:break-normal">
-                    {document.number}
-                  </div>
-                  {document.saleNumber &&
-                    document.saleNumber !== document.number && (
-                      <div className="text-[11px] font-mono font-bold text-[#008DA9]">
-                        Réf. Vente : {document.saleNumber}
-                      </div>
-                    )}
-                  <div className="text-[11px] sm:text-xs text-slate-500">
-                    Date : {document.date}
-                    {document.saleTime &&
-                    !document.date.includes(document.saleTime)
-                      ? ` à ${document.saleTime}`
-                      : ""}
-                  </div>
-                  <div className="text-[11px] sm:text-xs text-slate-500">
-                    Règlement : {document.paymentMethod}
-                  </div>
-                  {document.versementRef && (
-                    <div className="text-[11px] font-semibold text-emerald-700 mt-0.5">
-                      Versement Vendeur : {document.versementRef}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Facture au nom du Vendeur avec le PDV Acheteur */}
-              {isFacture ? (
-                <div className="my-3.5 sm:my-4 space-y-2.5">
-                  <div className="px-3 py-1.5 rounded-lg bg-[#008DA9]/10 border border-[#008DA9]/25 text-[11px] text-slate-700 flex flex-wrap items-center justify-between gap-2">
-                    <span>
-                      <strong>
-                        Facture officielle établie par le Comptable :
-                      </strong>{" "}
-                      Chaque vente réalisée par le vendeur auprès de son PDV
-                      acheteur constitue une facture à part.
-                    </span>
-                    <span className="font-bold text-[#008DA9]">
-                      Statut : {document.status}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs">
-                    {/* Colonne 1 : Au nom du Vendeur */}
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                      <div className="flex items-center gap-1.5 text-[#008DA9] font-extrabold uppercase tracking-wider text-[10px]">
-                        <User className="w-3.5 h-3.5" />
-                        <span>Facture établie au nom du Vendeur</span>
-                      </div>
-                      <div className="font-black text-slate-900 text-xs sm:text-sm">
-                        {document.vendorName || document.cashierName}
-                      </div>
-                      {document.vendorCode && (
-                        <div className="font-mono text-[11px] font-bold text-[#008DA9]">
-                          Code Vendeur : {document.vendorCode}
-                        </div>
-                      )}
-                      {document.vendorTeam && (
-                        <div className="text-slate-600 text-[11px]">
-                          Équipe / Secteur : {document.vendorTeam}
-                        </div>
-                      )}
-                      {document.vendorPhone && (
-                        <div className="text-slate-600 text-[11px]">
-                          Tél Vendeur : {document.vendorPhone}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Colonne 2 : Avec le PDV Acheteur */}
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                      <div className="flex items-center gap-1.5 text-emerald-700 font-extrabold uppercase tracking-wider text-[10px]">
-                        <Store className="w-3.5 h-3.5" />
-                        <span>PDV Acheteur (Point de Vente Client)</span>
-                      </div>
-                      <div className="font-black text-slate-900 text-xs sm:text-sm">
-                        {document.pdvName || document.clientName}
-                      </div>
-                      {(document.pdvCode || document.pdvNeighborhood) && (
-                        <div className="text-[11px] font-semibold text-slate-700">
-                          {document.pdvCode ? `${document.pdvCode} • ` : ""}
-                          {document.pdvNeighborhood
-                            ? `${document.pdvNeighborhood}, Bamako`
-                            : "Bamako, Mali"}
-                        </div>
-                      )}
-                      {document.pdvManager && (
-                        <div className="text-slate-600 text-[11px]">
-                          Gérant PDV : {document.pdvManager}
-                        </div>
-                      )}
-                      {(document.pdvPhone || document.clientPhone) && (
-                        <div className="text-slate-600 text-[11px]">
-                          Tél PDV : {document.pdvPhone || document.clientPhone}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 py-3.5 sm:py-4 border-b border-slate-100 text-xs">
-                  <div>
-                    <div className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
-                      Vendeur déposant
-                    </div>
-                    <div className="font-bold text-slate-800 text-xs sm:text-sm mt-0.5">
-                      {document.clientName}
-                    </div>
-                    {document.clientPhone && (
-                      <div className="text-slate-600 mt-0.5">
-                        Tél : {document.clientPhone}
-                      </div>
-                    )}
-                    <div className="text-slate-500 mt-0.5">
-                      Bamako, République du Mali
-                    </div>
-                  </div>
-
-                  <div className="sm:text-right">
-                    <div className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
-                      Émis par l&apos;agent
-                    </div>
-                    <div className="font-semibold text-slate-800 mt-0.5">
-                      {document.cashierName}
-                    </div>
-                    <div className="text-slate-500 mt-0.5">
-                      Statut :{" "}
-                      <span className="text-emerald-700 font-bold">
-                        {document.status}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Line Items Table */}
-              <div className="mt-3.5 sm:mt-4 overflow-x-auto rounded-xl border border-slate-200">
-                <table className="w-full text-xs text-left min-w-[540px]">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase text-[10px]">
-                      <th className="py-2.5 px-3 whitespace-nowrap">Réf.</th>
-                      <th className="py-2.5 px-3">Désignation Produit</th>
-                      <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                        Qté (Cartons)
-                      </th>
-                      <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                        Prix Unit. HT (FCFA)
-                      </th>
-                      <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                        Montant HT (FCFA)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {document.items.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/50">
-                        <td className="py-2 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
-                          {item.code}
-                        </td>
-                        <td className="py-2 px-3 font-medium text-slate-800">
-                          {item.name}
-                        </td>
-                        <td className="py-2 px-3 text-right font-bold whitespace-nowrap">
-                          {item.qty}
-                        </td>
-                        <td className="py-2 px-3 text-right whitespace-nowrap">
-                          {item.price.toLocaleString("fr-FR")}
-                        </td>
-                        <td className="py-2 px-3 text-right font-black text-slate-900 whitespace-nowrap">
-                          {item.total.toLocaleString("fr-FR")}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Totals Section */}
-              <div className="mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-start gap-3 sm:gap-4">
-                <div className="text-[11px] sm:text-xs text-slate-500 max-w-sm space-y-1.5">
-                  <p className="font-semibold text-slate-700">
-                    Conditions de règlement &amp; Facturation :
-                  </p>
-                  <p>
-                    Paiement en Francs CFA (FCFA / XOF).{" "}
-                    {isFacture
-                      ? includeTva18
-                        ? "Facture soumise à la TVA au taux légal de 18%."
-                        : "Facture émise Hors Taxes / Sans TVA (0%)."
-                      : "Reçu de versement de caisse validé par la Comptabilité."}
-                  </p>
-                  {totalBoxes > 0 && (
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 font-bold text-slate-700 text-xs">
-                      <span>Volume Total :</span>
-                      <span className="text-[#008DA9]">
-                        {totalBoxes} carton{totalBoxes > 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="w-full sm:w-72 space-y-1.5 text-xs bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                  <div className="flex justify-between text-slate-600">
-                    <span>Sous-total HT :</span>
-                    <span className="font-semibold">
-                      {subtotalHt.toLocaleString("fr-FR")} FCFA
-                    </span>
-                  </div>
-                  {isFacture && includeTva18 ? (
-                    <div className="flex justify-between text-amber-800 font-bold">
-                      <span>TVA (18%) :</span>
-                      <span>+ {tvaAmount.toLocaleString("fr-FR")} FCFA</span>
-                    </div>
-                  ) : (
-                    <div className="flex justify-between text-slate-500">
-                      <span>TVA (Sans TVA • 0%) :</span>
-                      <span>0 FCFA</span>
-                    </div>
-                  )}
-                  <div className="border-t border-slate-200 pt-1.5 flex justify-between font-extrabold text-sm text-[#008DA9]">
-                    <span>
-                      {isFacture && includeTva18
-                        ? "TOTAL TTC (TVA 18%) :"
-                        : "TOTAL NET :"}
-                    </span>
-                    <span>{finalTotal.toLocaleString("fr-FR")} FCFA</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Montant arrêté en toutes lettres (Norme Facture A4) */}
-              {isFacture && (
-                <div className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                  <span className="font-bold text-[10px] uppercase text-slate-500 tracking-wider block mb-1">
-                    Montant arrêté en toutes lettres :
-                  </span>
-                  <p className="font-extrabold text-slate-900 italic">
-                    Arrêtée la présente facture à la somme de :{" "}
-                    <span className="underline decoration-[#008DA9]">
-                      {numberToFrenchWords(finalTotal)} Francs CFA (XOF)
-                    </span>
-                    .
-                  </p>
-                </div>
-              )}
-
-              {/* Signatures & Stamp Zone */}
-              <div className="mt-5 sm:mt-6 pt-4 border-t border-dashed border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 text-xs text-center">
-                <div>
-                  <p className="text-slate-500 mb-6 sm:mb-7">
-                    {isFacture
-                      ? "Le PDV Acheteur (Client)"
-                      : "Le Vendeur Déposant"}
-                  </p>
-                  <div className="border-b border-slate-300 w-32 mx-auto"></div>
-                </div>
-                <div>
-                  <p className="text-slate-500 mb-6 sm:mb-7">
-                    Le Vendeur ({document.vendorCode || "Baobab"})
-                  </p>
-                  <div className="border-b border-slate-300 w-32 mx-auto"></div>
-                </div>
-                <div>
-                  <p className="text-slate-500 mb-6 sm:mb-7">
-                    Service Comptabilité &amp; Caisse
-                  </p>
-                  <div className="border-b border-slate-300 w-32 mx-auto"></div>
-                  <p className="text-[10px] text-[#008DA9] font-semibold mt-1">
-                    Cachet et signature certifiée
-                  </p>
-                </div>
-              </div>
-
-              {/* Document Footer */}
-              <div className="mt-4 sm:mt-5 text-center text-[10px] text-slate-400">
-                Baobab Distribution Mali SARL &bull; Système certifié de gestion
-                commerciale
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Bottom Action Bar (Hidden on Print) */}
-        <div className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-2.5 bg-slate-50 border-t border-slate-200 print:hidden">
-          <span className="text-[11px] text-slate-500 hidden sm:inline">
-            {isMiniThermique
-              ? "Mini facture thermique générée automatiquement à chaque vente et utilisable comme preuve de rectification"
-              : isVendeur
-                ? "Consultation en lecture seule • Vous pouvez imprimer votre facture ou demander une rectification avec preuve thermique"
-                : "Seul le Comptable est habilité à créer ou rectifier une facture"}
-          </span>
-          <div className="flex items-center justify-end gap-2 w-full sm:w-auto">
-            {isFacture && (
-              <button
-                type="button"
-                onClick={handleDownloadPdf}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Télécharger PDF (A4)</span>
-              </button>
+          <button
+            type="button"
+            onClick={handleShare}
+            title="Partager"
+            aria-label="Partager"
+            className="h-10 sm:h-11 px-2.5 sm:px-3.5 rounded-lg bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+          >
+            {shareToast ? (
+              <Check className="w-4 h-4 text-white shrink-0" />
+            ) : (
+              <Share2 className="w-4 h-4 shrink-0" />
             )}
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white text-xs font-semibold transition cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>{isMiniThermique ? "Imprimer Mini Facture Thermique" : "Imprimer"}</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold transition cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>Fermer</span>
-            </button>
+            <span className="hidden md:inline whitespace-nowrap">Partager</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            title="Fermer"
+            aria-label="Fermer"
+            className="h-10 sm:h-11 px-2.5 sm:px-3.5 rounded-lg bg-black hover:bg-slate-900 text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer border border-slate-600"
+          >
+            <X className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline whitespace-nowrap">Fermer</span>
+          </button>
+        </div>
+      </header>
+
+      {shareToast && (
+        <div className="print:hidden fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-black text-white border border-[#008DA9] px-4 py-2 rounded-lg shadow-xl text-xs font-semibold flex items-center gap-2">
+          <Check className="w-4 h-4 text-[#008DA9] shrink-0" />
+          <span>{shareToast}</span>
+        </div>
+      )}
+
+      {/* ZONE DE DÉFILEMENT VERTICAL UNIQUE */}
+      <div
+        className="a4-scroll-viewport flex-1 w-full overflow-y-auto overflow-x-hidden py-3 sm:py-6 px-3 flex flex-col items-center"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onDoubleClick={handleToggleDoubleTap}
+        style={{
+          touchAction: isZoomedBeyondFit ? 'none' : 'pan-y',
+          cursor: isZoomedBeyondFit ? (isDragging ? 'grabbing' : 'grab') : 'default',
+        }}
+      >
+        <div
+          className="a4-pan-surface flex flex-col items-center"
+          style={{
+            transform:
+              panOffset.x !== 0 || panOffset.y !== 0
+                ? `translate3d(${panOffset.x}px, ${panOffset.y}px, 0)`
+                : undefined,
+            transition: isDragging ? 'none' : 'transform 150ms ease-out',
+          }}
+        >
+          <div className="a4-pages-stack flex flex-col items-center gap-4 sm:gap-6 pb-20">
+            {pages.map((page) => (
+              <div
+                key={page.pageNumber}
+                className="a4-scale-wrapper relative shrink-0"
+                style={{
+                  width: `${scaledWidthPx}px`,
+                  height: `${scaledHeightPx}px`,
+                }}
+              >
+                {/* FEUILLE A4 PORTRAIT : 210 x 297 mm (794 x 1123 px à 96 dpi), fond blanc #FFFFFF, texte noir #000000, marges 15 mm */}
+                <div
+                  className="a4-page-sheet shadow-[0_8px_30px_rgba(0,0,0,0.45)] flex flex-col justify-between select-text"
+                  style={{
+                    width: `${A4_WIDTH_PX}px`,
+                    height: `${A4_HEIGHT_PX}px`,
+                    padding: '15mm',
+                    backgroundColor: COLOR_BLANC,
+                    color: COLOR_NOIR,
+                    transform: `scale(${activeScale})`,
+                    transformOrigin: 'top left',
+                    fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
+                    fontSize: '10.5pt',
+                    lineHeight: 1.35,
+                    WebkitPrintColorAdjust: 'exact',
+                    printColorAdjust: 'exact',
+                  }}
+                >
+                  {/* HAUT ET MILIEU DE LA FEUILLE A4 */}
+                  <div className="flex flex-col">
+                    {/* EN-TÊTE COMPACT (3 lignes max) + BLOC DOCUMENT À DROITE */}
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '61% 37%',
+                        justifyContent: 'space-between',
+                        alignItems: 'start',
+                        paddingBottom: '8px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                        <img
+                          src={logoUrl || '/logo.png'}
+                          alt="Baobab Distribution Logo"
+                          style={{
+                            width: '44px',
+                            height: '44px',
+                            objectFit: 'contain',
+                            borderRadius: '6px',
+                            border: `1.5px solid ${COLOR_MARQUE}`,
+                            padding: '2px',
+                            backgroundColor: COLOR_BLANC,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div style={{ minWidth: 0 }}>
+                          {/* Ligne 1 : Nom & Activité */}
+                          <div
+                            style={{
+                              fontSize: '11pt',
+                              fontWeight: 900,
+                              color: COLOR_NOIR,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            BAOBAB DISTRIBUTION — Négoce &amp; Distribution Agroalimentaire
+                          </div>
+                          {/* Ligne 2 : Adresse, téléphones, e-mail */}
+                          <div
+                            style={{
+                              fontSize: '9.5pt',
+                              color: COLOR_NOIR,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            ZI Sotuba, Bamako, Mali • Tél : +223 20 22 45 88 / 76 12 34 56 • contact@baobab-distribution.ml
+                          </div>
+                          {/* Ligne 3 : NIF & RCCM */}
+                          <div
+                            style={{
+                              fontSize: '9.5pt',
+                              fontWeight: 800,
+                              color: COLOR_NOIR,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            NIF : 084129532M • RCCM : MA.BKO.2018.B.4129
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bloc Document : Titre en BLEU (--marque), cadre noir, texte noir */}
+                      <div
+                        style={{
+                          border: `1.5px solid ${COLOR_NOIR}`,
+                          borderRadius: '6px',
+                          padding: '7px 10px',
+                          backgroundColor: COLOR_BLANC,
+                          textAlign: 'right',
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: '10pt',
+                            fontWeight: 900,
+                            color: COLOR_MARQUE,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.02em',
+                          }}
+                        >
+                          {docTitle}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: '11pt',
+                            fontWeight: 900,
+                            color: COLOR_NOIR,
+                            marginTop: '2px',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          N° {docData.number}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '9.5pt',
+                            color: COLOR_NOIR,
+                            marginTop: '2px',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Date : <strong>{docData.date}</strong>
+                          {docData.saleTime && !String(docData.date).includes(docData.saleTime)
+                            ? ` à ${docData.saleTime}`
+                            : ''}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '9.5pt',
+                            color: COLOR_NOIR,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          Règlement : <strong>{docData.paymentMethod || 'Comptant'}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* BARRE BLEUE (--marque) DE 2 MM SOUS L'EN-TÊTE */}
+                    <div
+                      style={{
+                        width: '100%',
+                        height: '2mm',
+                        backgroundColor: COLOR_MARQUE,
+                        marginBottom: '12px',
+                      }}
+                    />
+
+                    {/* PARTIES (Émetteur, Destinataire) — Liserés en BLEU (--marque) et fond en bleu à 8 % */}
+                    {page.pageNumber === 1 ? (
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '48.5% 48.5%',
+                          justifyContent: 'space-between',
+                          gap: '12px',
+                          marginBottom: '12px',
+                        }}
+                      >
+                        {/* Carte Émetteur : liseré bleu + fond bleu 8 % */}
+                        <div
+                          style={{
+                            border: `1.5px solid ${COLOR_MARQUE}`,
+                            borderLeft: `4px solid ${COLOR_MARQUE}`,
+                            borderRadius: '6px',
+                            padding: '8px 10px',
+                            backgroundColor: COLOR_MARQUE_8PCT,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: '8.5pt',
+                              fontWeight: 800,
+                              color: COLOR_NOIR,
+                              textTransform: 'uppercase',
+                              borderBottom: `1px solid ${COLOR_MARQUE}`,
+                              paddingBottom: '3px',
+                              marginBottom: '5px',
+                            }}
+                          >
+                            {emitterHeading}
+                          </div>
+                          <div style={{ fontSize: '10pt', color: COLOR_NOIR, lineHeight: 1.35 }}>
+                            <div style={{ fontWeight: 800 }}>
+                              {vendorName}{' '}
+                              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '9.5pt' }}>
+                                ({vendorCode})
+                              </span>
+                            </div>
+                            <div>{vendorTeam}</div>
+                            <div>Tél : {vendorPhone}</div>
+                            {docData.saleNumber && docData.saleNumber !== docData.number && (
+                              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '9.5pt' }}>
+                                Réf. opération : {docData.saleNumber}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Carte Destinataire : liseré bleu + fond bleu 8 % */}
+                        <div
+                          style={{
+                            border: `1.5px solid ${COLOR_MARQUE}`,
+                            borderLeft: `4px solid ${COLOR_MARQUE}`,
+                            borderRadius: '6px',
+                            padding: '8px 10px',
+                            backgroundColor: COLOR_MARQUE_8PCT,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: '8.5pt',
+                              fontWeight: 800,
+                              color: COLOR_NOIR,
+                              textTransform: 'uppercase',
+                              borderBottom: `1px solid ${COLOR_MARQUE}`,
+                              paddingBottom: '3px',
+                              marginBottom: '5px',
+                            }}
+                          >
+                            {recipientHeading}
+                          </div>
+                          <div style={{ fontSize: '10pt', color: COLOR_NOIR, lineHeight: 1.35 }}>
+                            <div style={{ fontWeight: 900, fontSize: '10.5pt' }}>
+                              {clientName}
+                            </div>
+                            <div>{clientAddress}</div>
+                            {clientContact && <div>Responsable / Gérant : {clientContact}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                              <span>
+                                Tél : <strong>{clientPhone}</strong>
+                              </span>
+                              {clientNinea && (
+                                <span style={{ fontWeight: 700 }}>NIF : {clientNinea}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          border: `1.5px solid ${COLOR_MARQUE}`,
+                          borderRadius: '4px',
+                          padding: '5px 10px',
+                          marginBottom: '10px',
+                          backgroundColor: COLOR_MARQUE_8PCT,
+                          fontSize: '10pt',
+                          color: COLOR_NOIR,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <span>
+                          <strong>Destinataire :</strong> {clientName}
+                        </span>
+                        <span>
+                          <strong>Suite du document :</strong> N° {docData.number} (Page {page.pageNumber} / {page.totalPages})
+                        </span>
+                      </div>
+                    )}
+
+                    {/* TABLEAU DES LIGNES : En-tête en aplat bleu (#006B82, texte blanc), lignes alternées en bleu 8 % */}
+                    {page.items.length > 0 && (
+                      <div style={{ marginBottom: '12px' }}>
+                        <table
+                          style={{
+                            width: '100%',
+                            borderCollapse: 'collapse',
+                            border: `1.5px solid ${COLOR_NOIR}`,
+                            fontSize: '10.5pt',
+                            color: COLOR_NOIR,
+                          }}
+                        >
+                          <thead>
+                            <tr
+                              style={{
+                                backgroundColor: COLOR_MARQUE_APLAT,
+                                color: COLOR_BLANC,
+                                borderBottom: `1.5px solid ${COLOR_NOIR}`,
+                                fontSize: '10pt',
+                                fontWeight: 800,
+                              }}
+                            >
+                              <th
+                                style={{
+                                  width: '88px',
+                                  textAlign: 'left',
+                                  color: COLOR_BLANC,
+                                  borderRight: `1px solid ${COLOR_BLANC}`,
+                                }}
+                              >
+                                Réf.
+                              </th>
+                              <th
+                                style={{
+                                  textAlign: 'left',
+                                  color: COLOR_BLANC,
+                                  borderRight: `1px solid ${COLOR_BLANC}`,
+                                }}
+                              >
+                                Désignation
+                              </th>
+                              <th
+                                style={{
+                                  width: '82px',
+                                  textAlign: 'right',
+                                  color: COLOR_BLANC,
+                                  borderRight: `1px solid ${COLOR_BLANC}`,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                Quantité
+                              </th>
+                              <th
+                                style={{
+                                  width: '132px',
+                                  textAlign: 'right',
+                                  color: COLOR_BLANC,
+                                  borderRight: `1px solid ${COLOR_BLANC}`,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                Prix unitaire HT
+                              </th>
+                              <th
+                                style={{
+                                  width: '142px',
+                                  textAlign: 'right',
+                                  color: COLOR_BLANC,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                Montant HT
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {page.items.map(({ item, globalIndex }, idx) => (
+                              <tr
+                                key={`${item.id}-${globalIndex}`}
+                                style={{
+                                  backgroundColor: idx % 2 === 0 ? COLOR_BLANC : COLOR_MARQUE_8PCT,
+                                  borderBottom: `1px solid ${COLOR_NOIR}`,
+                                  color: COLOR_NOIR,
+                                }}
+                              >
+                                <td
+                                  style={{
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 700,
+                                    fontSize: '10pt',
+                                    borderRight: `1px solid ${COLOR_NOIR}`,
+                                    whiteSpace: 'nowrap',
+                                    color: COLOR_NOIR,
+                                  }}
+                                >
+                                  {item.code}
+                                </td>
+                                <td
+                                  style={{
+                                    fontWeight: 600,
+                                    borderRight: `1px solid ${COLOR_NOIR}`,
+                                    whiteSpace: 'normal',
+                                    wordBreak: 'normal',
+                                    color: COLOR_NOIR,
+                                  }}
+                                >
+                                  {item.description}
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: 'right',
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 800,
+                                    borderRight: `1px solid ${COLOR_NOIR}`,
+                                    whiteSpace: 'nowrap',
+                                    color: COLOR_NOIR,
+                                  }}
+                                >
+                                  {item.quantity}
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: 'right',
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    borderRight: `1px solid ${COLOR_NOIR}`,
+                                    whiteSpace: 'nowrap',
+                                    color: COLOR_NOIR,
+                                  }}
+                                >
+                                  {item.unitPrice.toLocaleString('fr-FR')} FCFA
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: 'right',
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 800,
+                                    whiteSpace: 'nowrap',
+                                    color: COLOR_NOIR,
+                                  }}
+                                >
+                                  {item.total.toLocaleString('fr-FR')} FCFA
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {!page.isLastPage && (
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          backgroundColor: COLOR_MARQUE_8PCT,
+                          border: `1px dashed ${COLOR_NOIR}`,
+                          borderRadius: '4px',
+                          textAlign: 'right',
+                          fontSize: '10pt',
+                          fontWeight: 700,
+                          color: COLOR_NOIR,
+                        }}
+                      >
+                        Suite des lignes et totaux en page {page.pageNumber + 1} / {page.totalPages} →
+                      </div>
+                    )}
+
+                    {/* DERNIÈRE PAGE : RÈGLEMENTS + CACHET STATUT PAR LA FORME & TOTAUX (TOTAL TTC EN APLAT BLEU TEXTE BLANC) */}
+                    {page.isLastPage && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '52% 46%',
+                            justifyContent: 'space-between',
+                            alignItems: 'stretch',
+                          }}
+                        >
+                          {/* Carte Règlements & Cachet Statut (fond bleu 8 %, bordure noire) */}
+                          <div
+                            style={{
+                              border: `1px solid ${COLOR_NOIR}`,
+                              borderRadius: '6px',
+                              padding: '8px 10px',
+                              backgroundColor: COLOR_MARQUE_8PCT,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              justifyContent: 'space-between',
+                              fontSize: '10pt',
+                              color: COLOR_NOIR,
+                            }}
+                          >
+                            <div>
+                              <div
+                                style={{
+                                  fontSize: '8.5pt',
+                                  fontWeight: 800,
+                                  textTransform: 'uppercase',
+                                  borderBottom: `1px solid ${COLOR_NOIR}`,
+                                  paddingBottom: '3px',
+                                  marginBottom: '6px',
+                                }}
+                              >
+                                Règlements &amp; Paiements
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                                <span>Mode de règlement :</span>
+                                <strong>{docData.paymentMethod || 'Comptant'}</strong>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                                <span>Quantité totale :</span>
+                                <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                                  {totalQty} unité(s) / carton(s)
+                                </strong>
+                              </div>
+                              {(docData.paymentRef || docData.versementRef) && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                                  <span>Réf. versement :</span>
+                                  <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                                    {docData.paymentRef || docData.versementRef}
+                                  </strong>
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span>Montant réglé / Reste :</span>
+                                <strong style={{ fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>
+                                  {amountPaidVal.toLocaleString('fr-FR')} / {resteAPayer.toLocaleString('fr-FR')} FCFA
+                                </strong>
+                              </div>
+                            </div>
+
+                            {/* 4. STATUTS PAR LA FORME, sans autre couleur, ne recouvrant aucun texte */}
+                            <div
+                              style={{
+                                marginTop: '10px',
+                                paddingTop: '8px',
+                                borderTop: `1px dashed ${COLOR_NOIR}`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                minHeight: '36px',
+                              }}
+                            >
+                              <span style={{ fontSize: '9.5pt', fontWeight: 700, color: COLOR_NOIR }}>
+                                Cachet statut :
+                              </span>
+
+                              {isCancelled ? (
+                                /* "ANNULÉE" en noir avec barre diagonale sur fond blanc */
+                                <span
+                                  style={{
+                                    position: 'relative',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    border: `2px solid ${COLOR_NOIR}`,
+                                    backgroundColor: COLOR_BLANC,
+                                    color: COLOR_NOIR,
+                                    padding: '3px 14px',
+                                    borderRadius: '4px',
+                                    fontWeight: 900,
+                                    fontSize: '10pt',
+                                    letterSpacing: '0.08em',
+                                    textTransform: 'uppercase',
+                                    overflow: 'hidden',
+                                  }}
+                                >
+                                  <span>ANNULÉE</span>
+                                  <svg
+                                    viewBox="0 0 100 30"
+                                    preserveAspectRatio="none"
+                                    style={{
+                                      position: 'absolute',
+                                      inset: 0,
+                                      width: '100%',
+                                      height: '100%',
+                                      pointerEvents: 'none',
+                                    }}
+                                  >
+                                    <line
+                                      x1="2"
+                                      y1="28"
+                                      x2="98"
+                                      y2="2"
+                                      stroke={COLOR_NOIR}
+                                      strokeWidth="2.5"
+                                    />
+                                  </svg>
+                                </span>
+                              ) : isAcquittee ? (
+                                /* "ACQUITTÉE" en cachet plein bleu texte blanc, légèrement incliné */
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    backgroundColor: COLOR_MARQUE_APLAT,
+                                    color: COLOR_BLANC,
+                                    border: `1.5px solid ${COLOR_NOIR}`,
+                                    padding: '3px 14px',
+                                    borderRadius: '4px',
+                                    fontWeight: 900,
+                                    fontSize: '10pt',
+                                    letterSpacing: '0.08em',
+                                    textTransform: 'uppercase',
+                                    transform: 'rotate(-4deg)',
+                                  }}
+                                >
+                                  ACQUITTÉE
+                                </span>
+                              ) : (
+                                /* "À PAYER" en cachet à contour noir sur fond blanc */
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    border: `2px solid ${COLOR_NOIR}`,
+                                    backgroundColor: COLOR_BLANC,
+                                    color: COLOR_NOIR,
+                                    padding: '3px 14px',
+                                    borderRadius: '4px',
+                                    fontWeight: 900,
+                                    fontSize: '10pt',
+                                    letterSpacing: '0.08em',
+                                    textTransform: 'uppercase',
+                                  }}
+                                >
+                                  À PAYER
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Totaux : cadres noirs, ligne TOTAL TTC en aplat bleu (#006B82) texte blanc */}
+                          <div
+                            style={{
+                              border: `1.5px solid ${COLOR_NOIR}`,
+                              borderRadius: '6px',
+                              overflow: 'hidden',
+                              backgroundColor: COLOR_BLANC,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              justifyContent: 'space-between',
+                              fontSize: '10.5pt',
+                              color: COLOR_NOIR,
+                            }}
+                          >
+                            <div style={{ padding: '8px 10px' }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  paddingBottom: '5px',
+                                  borderBottom: `1px solid ${COLOR_NOIR}`,
+                                }}
+                              >
+                                <span style={{ fontWeight: 700 }}>Total HT</span>
+                                <span
+                                  style={{
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 800,
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {subtotalHt.toLocaleString('fr-FR')} FCFA
+                                </span>
+                              </div>
+
+                              {discountAmount > 0 && (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    padding: '5px 0',
+                                    borderBottom: `1px solid ${COLOR_NOIR}`,
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 700 }}>
+                                    Remise{discountPercent > 0 ? ` (${discountPercent} %)` : ''}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontFamily: "'JetBrains Mono', monospace",
+                                      fontWeight: 800,
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    - {discountAmount.toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                              )}
+
+                              {taxRate > 0 || taxAmount > 0 ? (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    padding: '5px 0',
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 700 }}>
+                                    TVA ({taxRate || 18} %)
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontFamily: "'JetBrains Mono', monospace",
+                                      fontWeight: 800,
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    + {taxAmount.toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                              ) : (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    padding: '5px 0',
+                                    fontSize: '9.5pt',
+                                  }}
+                                >
+                                  <span>TVA (0 % — Sans TVA)</span>
+                                  <span style={{ fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>
+                                    0 FCFA
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Ligne TOTAL TTC : aplat bleu (#006B82) texte blanc (#FFFFFF) */}
+                            <div
+                              style={{
+                                borderTop: `1.5px solid ${COLOR_NOIR}`,
+                                backgroundColor: COLOR_MARQUE_APLAT,
+                                color: COLOR_BLANC,
+                                padding: '8px 10px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <span style={{ fontWeight: 900, fontSize: '10.5pt', color: COLOR_BLANC }}>
+                                TOTAL TTC
+                              </span>
+                              <span
+                                style={{
+                                  fontFamily: "'JetBrains Mono', monospace",
+                                  fontWeight: 900,
+                                  fontSize: '12pt',
+                                  whiteSpace: 'nowrap',
+                                  color: COLOR_BLANC,
+                                }}
+                              >
+                                {totalTtc.toLocaleString('fr-FR')} FCFA
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Arrêté en toutes lettres (fond bleu 8 %, bordure noire, texte noir) */}
+                        <div
+                          style={{
+                            border: `1px solid ${COLOR_NOIR}`,
+                            backgroundColor: COLOR_MARQUE_8PCT,
+                            borderRadius: '5px',
+                            padding: '6px 10px',
+                            fontSize: '10pt',
+                            color: COLOR_NOIR,
+                          }}
+                        >
+                          <span style={{ fontWeight: 700 }}>
+                            Arrêté le présent document à la somme de :{' '}
+                          </span>
+                          <strong style={{ textTransform: 'uppercase' }}>
+                            {numberToFrenchWords(totalTtc)} FRANCS CFA (XOF)
+                          </strong>
+                        </div>
+
+                        {docData.notes && (
+                          <div
+                            style={{
+                              fontSize: '9.5pt',
+                              color: COLOR_NOIR,
+                              backgroundColor: COLOR_BLANC,
+                              padding: '4px 8px',
+                              border: `1px solid ${COLOR_NOIR}`,
+                              borderRadius: '4px',
+                            }}
+                          >
+                            <strong>Note :</strong> {docData.notes}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* BAS DE LA FEUILLE A4 : SIGNATURES + PIED "Page X / Y" (noir sur blanc) */}
+                  <div style={{ marginTop: 'auto', paddingTop: '8px' }}>
+                    {page.isLastPage && (
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '32% 32% 32%',
+                          justifyContent: 'space-between',
+                          marginBottom: '10px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            border: `1px solid ${COLOR_NOIR}`,
+                            borderRadius: '5px',
+                            padding: '6px 8px',
+                            height: '66px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            textAlign: 'center',
+                            backgroundColor: COLOR_BLANC,
+                            color: COLOR_NOIR,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: '8.5pt',
+                              fontWeight: 800,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {docData.sigLeftLabel || 'Le Destinataire / Client'}
+                          </span>
+                          <span style={{ fontSize: '8pt' }}>Signature &amp; Cachet</span>
+                        </div>
+
+                        <div
+                          style={{
+                            border: `1px solid ${COLOR_NOIR}`,
+                            borderRadius: '5px',
+                            padding: '6px 8px',
+                            height: '66px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            textAlign: 'center',
+                            backgroundColor: COLOR_BLANC,
+                            color: COLOR_NOIR,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: '8.5pt',
+                              fontWeight: 800,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {docData.sigCenterLabel || `L'Émetteur (${vendorCode})`}
+                          </span>
+                          <span style={{ fontSize: '8pt' }}>Signature &amp; Date</span>
+                        </div>
+
+                        <div
+                          style={{
+                            border: `1px solid ${COLOR_NOIR}`,
+                            borderRadius: '5px',
+                            padding: '6px 8px',
+                            height: '66px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            textAlign: 'center',
+                            backgroundColor: COLOR_BLANC,
+                            color: COLOR_NOIR,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: '8.5pt',
+                              fontWeight: 800,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {docData.sigRightLabel || 'Direction & Comptabilité'}
+                          </span>
+                          <span style={{ fontSize: '8pt' }}>Visa &amp; Cachet</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pied de page "Page X / Y" en noir */}
+                    <div
+                      style={{
+                        borderTop: `1px solid ${COLOR_NOIR}`,
+                        paddingTop: '6px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontSize: '9.5pt',
+                        color: COLOR_NOIR,
+                      }}
+                    >
+                      <span>
+                        Baobab Distribution SARL • NIF 084129532M • RCCM MA.BKO.2018.B.4129
+                      </span>
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontWeight: 800,
+                        }}
+                      >
+                        Page {page.pageNumber} / {page.totalPages}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
+
+      {/* BOUTONS + / - / "Page entière" (48 px) */}
+      <div className="a4-preview-floating-controls print:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 bg-[#0F172A]/95 backdrop-blur-md border border-slate-700 px-2.5 py-1.5 rounded-xl shadow-2xl">
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          title="Réduire le zoom (-)"
+          aria-label="Réduire le zoom"
+          className="h-12 w-12 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white font-bold text-lg flex items-center justify-center transition-colors cursor-pointer"
+        >
+          <ZoomOut className="w-5 h-5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={handleResetFit}
+          title="Ajuster à la page entière"
+          aria-label="Page entière"
+          className={`h-12 px-3.5 rounded-lg font-semibold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+            customZoom === null
+              ? 'bg-[#006B82] text-white'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-100'
+          }`}
+        >
+          <Maximize2 className="w-4 h-4 shrink-0" />
+          <span>Page entière ({Math.round(activeScale * 100)} %)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          disabled={activeScale >= 3.0}
+          title="Augmenter le zoom (+ jusqu'à 300 %)"
+          aria-label="Augmenter le zoom"
+          className="h-12 w-12 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-600 disabled:opacity-40 text-white font-bold text-lg flex items-center justify-center transition-colors cursor-pointer"
+        >
+          <ZoomIn className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
+
+  return typeof window !== 'undefined'
+    ? createPortal(modalContent, window.document.body)
+    : modalContent;
 };

@@ -44,6 +44,7 @@ interface SidebarProps {
   pendingPdvsCount?: number;
   unrevealedBonsCount?: number;
   pendingPurchaseRequestsCount?: number;
+  pendingReceptionsCount?: number;
 }
 
 interface MenuItem {
@@ -65,6 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingPdvsCount = 0,
   unrevealedBonsCount = 0,
   pendingPurchaseRequestsCount = 0,
+  pendingReceptionsCount = 0,
 }) => {
   const role = currentUser.role;
 
@@ -73,12 +75,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   if (role === 'Administrateur') {
     menuItems = [
-      { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-      { id: 'stats', label: 'Statistiques', icon: BarChart3 },
-      { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet },
-      { id: 'catalogue', label: 'Catalogue', icon: Layers },
+      { id: 'dashboard', label: 'Vue globale', icon: LayoutDashboard },
+      { id: 'ventes', label: 'Ventes & Factures PDV', icon: ShoppingCart },
+      { id: 'demandes-annulation-vente', label: 'Demandes annulation vente', icon: RotateCcw },
+      { id: 'historique-sku', label: 'Analyse produits', icon: BarChart3 },
+      { id: 'commandes-gros', label: 'Commandes en gros', icon: Boxes },
+      { id: 'clients-gros', label: 'Clients en gros', icon: Store },
       { id: 'utilisateurs', label: 'Utilisateurs', icon: Users },
-      { id: 'pdvs', label: 'PDV', icon: Store },
       {
         id: 'validation-pdv',
         label: 'Validation PDV',
@@ -86,6 +89,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
         badge: pendingPdvsCount > 0 ? String(pendingPdvsCount) : undefined,
         badgeColor: '#DC2626',
       },
+      { id: 'pdvs', label: 'Points de vente (PDV)', icon: Store },
+      { id: 'carte', label: 'Carte & Tournées GPS', icon: MapPin },
+      {
+        id: 'receptions',
+        label: 'Réceptions & Contrôle',
+        icon: ArrowDownLeft,
+        badge: pendingReceptionsCount > 0 ? String(pendingReceptionsCount) : undefined,
+        badgeColor: '#DC2626',
+      },
+      { id: 'chargements', label: 'Chargements & Appro.', icon: Truck },
+      { id: 'inventaire', label: 'Inventaires', icon: ClipboardList },
+      { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
+      { id: 'lots', label: 'Lots & FEFO', icon: Boxes },
+      { id: 'retours', label: 'Retours vendeurs', icon: RotateCcw },
+      { id: 'versements', label: 'Versements & Caisse', icon: DollarSign },
+      { id: 'factures', label: 'Factures & Reçus', icon: Receipt },
       {
         id: 'demandes-achat',
         label: "Demandes d'achat",
@@ -93,25 +112,76 @@ export const Sidebar: React.FC<SidebarProps> = ({
         badge: pendingPurchaseRequestsCount > 0 ? String(pendingPurchaseRequestsCount) : undefined,
         badgeColor: '#DC2626',
       },
-      { id: 'carte', label: 'Carte', icon: MapPin },
-      { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
-      { id: 'lots', label: 'Lots', icon: Boxes },
-      { id: 'chargements-lecture', label: 'Chargements (lecture)', icon: Truck },
-      { id: 'versements-lecture', label: 'Versements (lecture)', icon: DollarSign },
-      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },
+      { id: 'catalogue', label: 'Catalogue & Prix', icon: Layers },
+      { id: 'stats', label: 'Statistiques', icon: BarChart3 },
+      { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet },
+      { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
       {
         id: 'cadeaux',
-        label: 'Cadeaux',
+        label: 'Cadeaux & Notes',
         icon: Gift,
         badge: unrevealedBonsCount > 0 ? String(unrevealedBonsCount) : undefined,
         badgeColor: '#DC2626',
       },
       { id: 'reglages', label: 'Réglages', icon: Settings },
     ];
-  } else if (role === 'Magasinier') {
+  } else if (role === 'Directeur des opérations de vente' || /directeur|op[eé]ration|dov/i.test(role || '')) {
     menuItems = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-      { id: 'receptions', label: 'Réceptions', icon: ArrowDownLeft },
+      { id: 'ventes', label: 'Ventes & Factures PDV', icon: ShoppingCart },
+      { id: 'demandes-annulation-vente', label: 'Demandes annulation vente', icon: RotateCcw },
+      { id: 'historique-sku', label: 'Analyse produits', icon: BarChart3 },
+      {
+        id: 'validation-pdv',
+        label: 'Validation création PDV',
+        icon: CheckSquare,
+        badge: pendingPdvsCount > 0 ? String(pendingPdvsCount) : undefined,
+        badgeColor: '#DC2626',
+      },
+      { id: 'demande-stock-vendeur', label: 'Demande stock vendeur', icon: Truck },
+      { id: 'pdvs', label: 'Points de vente', icon: Store },
+      { id: 'carte', label: 'Carte & Tournées', icon: MapPin },
+      { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
+      { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
+    ];
+  } else if (role === 'Sales Admin') {
+    menuItems = [
+      { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      {
+        id: 'receptions',
+        label: 'Validation Réceptions',
+        icon: ArrowDownLeft,
+        badge: pendingReceptionsCount > 0 ? String(pendingReceptionsCount) : undefined,
+        badgeColor: '#DC2626',
+      },
+      { id: 'chargements', label: 'Approvisionnements', icon: Truck },
+      { id: 'ventes', label: 'Contrôle des Ventes', icon: ShoppingCart },
+      { id: 'inventaire', label: 'Inventaires', icon: ClipboardList },
+      { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
+      { id: 'lots', label: 'Lots & FEFO', icon: Boxes },
+      { id: 'retours', label: 'Retours vendeurs', icon: RotateCcw },
+      { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
+    ];
+  } else if (role === 'Gestionnaire grossiste' || /grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')) {
+    menuItems = [
+      { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      { id: 'commandes-gros', label: 'Commandes en gros', icon: ShoppingCart },
+      { id: 'nouvelle-commande-gros', label: 'Nouvelle commande en gros', icon: PlusCircle },
+      { id: 'clients-gros', label: 'Clients en gros', icon: Store },
+      { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
+      { id: 'catalogue', label: 'Catalogue & Prix', icon: Layers },
+      { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
+    ];
+  } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
+    menuItems = [
+      { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      {
+        id: 'receptions',
+        label: 'Réceptions',
+        icon: ArrowDownLeft,
+        badge: pendingReceptionsCount > 0 ? String(pendingReceptionsCount) : undefined,
+        badgeColor: '#DC2626',
+      },
       { id: 'chargements', label: 'Chargements', icon: Truck },
       { id: 'retours', label: 'Retours', icon: RotateCcw },
       { id: 'inventaire', label: 'Inventaire', icon: ClipboardList },
@@ -119,6 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'lots', label: 'Lots', icon: Boxes },
       { id: 'demandes-achat', label: "Demandes d'achat", icon: ShoppingBag },
       { id: 'bons-a-remettre', label: 'Bons à remettre', icon: FileCheck },
+      { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
     ];
   } else if (role === 'Comptable') {
     menuItems = [
@@ -130,6 +201,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'demandes-achat', label: "Demandes d'achat", icon: ShoppingBag },
       { id: 'ventes-lecture', label: 'Ventes (lecture)', icon: ShoppingCart },
       { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet },
+      { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
     ];
   } else {
     // Vendeur
@@ -187,7 +259,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Exact Menu Items List (Hors rôle supprimées) */}
         <nav className="flex-1 min-h-0 px-3 py-2 space-y-1 overflow-y-auto">
           <div className="px-3.5 pb-2 text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-            Menu {role} ({menuItems.length})
+            Menu {/directeur|op[eé]ration|dov/i.test(role || '') ? 'Directeur des opérations de vente (DOV)' : role === 'Sales Admin' ? 'Sales Admin (Contrôleur)' : (/grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')) ? 'Gestionnaire grossiste' : (role === 'Magasinier' || role === 'Gestionnaire de stock' || currentUser.code === 'BAO-MAG') ? 'Gestionnaire de stock' : role} ({menuItems.length})
           </div>
 
           {menuItems.map((item) => {
@@ -200,14 +272,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setActiveTab(item.id);
                   onClose();
                 }}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[15px] font-semibold transition ${
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[15px] transition cursor-pointer ${
                   isActive
-                    ? 'bg-[#008DA9] text-white shadow-xs'
-                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    ? 'bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-bold'
+                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold'
                 }`}
               >
                 <div className="flex items-center gap-3 truncate">
-                  <Icon className="w-[18px] h-[18px] shrink-0" />
+                  <Icon
+                    className={`w-[18px] h-[18px] shrink-0 ${
+                      isActive
+                        ? 'text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
+                        : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  />
                   <span className="truncate">{item.label}</span>
                 </div>
 

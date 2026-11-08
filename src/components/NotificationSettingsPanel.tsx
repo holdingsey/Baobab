@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { UserSession } from './LoginScreen';
+import { InfoTooltip } from './InfoTooltip';
 import {
   NOTIFICATION_CATEGORY_LABELS,
   NotificationCategoryKey,
@@ -179,9 +180,12 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
             <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
               Notifications
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Alertes système en temps réel et badge sur l'icône de l'application ({currentUser.name} &bull; {currentUser.role}).
-            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Alertes en temps réel et badge d&apos;application.
+              </p>
+              <InfoTooltip text={`Alertes système en temps réel et badge sur l'icône de l'application (${currentUser.name} • ${currentUser.role}).`} />
+            </div>
           </div>
         </div>
         {onClose && (
@@ -383,10 +387,13 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-xs overflow-y-auto"
+      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center md:items-center md:p-4"
       onClick={onClose}
     >
-      <div className="max-w-2xl w-full my-auto" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="w-full h-[100dvh] max-h-[100dvh] md:h-auto md:max-h-[90dvh] md:max-w-[640px] bg-white dark:bg-[#0F172A] opacity-100 rounded-none md:rounded-2xl shadow-2xl md:border md:border-[#64748B] dark:md:border-[#94A3B8] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {content}
       </div>
     </div>

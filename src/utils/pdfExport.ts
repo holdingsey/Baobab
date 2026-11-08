@@ -304,14 +304,124 @@ export function exportTableToPdf({
   doc.save(safeFilename);
 }
 
+export function getExplicitDocumentPdfFilename(invoice: any): string {
+  const rawNumber = String(invoice?.number || invoice?.saleNumber || 'DOC')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '-');
+  const docType = String(invoice?.type || 'facture').toLowerCase();
+  if (docType === 'recu') {
+    return `baobab_recu_${rawNumber}.pdf`;
+  }
+  if (docType === 'bon_cadeau') {
+    return `baobab_bon_${rawNumber}.pdf`;
+  }
+  if (docType === 'demande_achat') {
+    return `baobab_demande_achat_${rawNumber}.pdf`;
+  }
+  if (docType === 'commande_gros' || docType === 'facture_grossiste') {
+    return `baobab_facture_${rawNumber}.pdf`;
+  }
+  return `baobab_facture_${rawNumber}.pdf`;
+}
+
 /**
- * Exporte une Facture de Vente PDV officielle au format A4 portrait strict (210 x 297 mm)
- * avec le logo Baobab Distribution et toutes les informations requises : entête, vendeur,
- * client PDV, articles, montants, montant en lettres et les 3 zones de signature.
+ * Exporte tout document imprimable Baobab Distribution (Facture PDV, Reçu de caisse/versement,
+ * Facture/Bon de commande grossiste, Bon cadeau remis, Demande d'achat) au format A4 portrait strict
+ * (210 x 297 mm, marges de 15 mm, fond blanc, texte noir, en-tête compact sur 3 lignes max,
+ * en-tête de tableau répété, totaux/mentions/signatures en fin de document, pied de page Page X / Y).
  */
+const UNITS_FR = [
+  '',
+  'un',
+  'deux',
+  'trois',
+  'quatre',
+  'cinq',
+  'six',
+  'sept',
+  'huit',
+  'neuf',
+  'dix',
+  'onze',
+  'douze',
+  'treize',
+  'quatorze',
+  'quinze',
+  'seize',
+  'dix-sept',
+  'dix-huit',
+  'dix-neuf',
+];
+
+const TENS_FR = [
+  '',
+  'dix',
+  'vingt',
+  'trente',
+  'quarante',
+  'cinquante',
+  'soixante',
+  'soixante',
+  'quatre-vingt',
+  'quatre-vingt',
+];
+
+function underThousandFr(n: number): string {
+  if (n === 0) return '';
+  if (n < 20) return UNITS_FR[n];
+  if (n < 100) {
+    const ten = Math.floor(n / 10);
+    const rem = n % 10;
+    if (ten === 7 || ten === 9) {
+      const sub = 10 + rem;
+      const conj = ten === 7 && rem === 1 ? ' et ' : '-';
+      return `${TENS_FR[ten]}${conj}${UNITS_FR[sub]}`;
+    }
+    if (rem === 0) {
+      return ten === 8 ? 'quatre-vingts' : TENS_FR[ten];
+    }
+    if (rem === 1 && ten !== 8) {
+      return `${TENS_FR[ten]} et un`;
+    }
+    return `${TENS_FR[ten]}-${UNITS_FR[rem]}`;
+  }
+  const hundred = Math.floor(n / 100);
+  const rem = n % 100;
+  const hPrefix =
+    hundred === 1
+      ? 'cent'
+      : `${UNITS_FR[hundred]} cent${rem === 0 ? 's' : ''}`;
+  return rem === 0 ? hPrefix : `${hPrefix} ${underThousandFr(rem)}`;
+}
+
+export function numberToFrenchWords(amount: number): string {
+  const n = Math.round(Math.max(0, Number(amount || 0)));
+  if (n === 0) return 'zéro';
+  const millions = Math.floor(n / 1_000_000);
+  const thousands = Math.floor((n % 1_000_000) / 1_000);
+  const rest = n % 1_000;
+  const parts: string[] = [];
+  if (millions > 0) {
+    parts.push(
+      millions === 1
+        ? 'un million'
+        : `${underThousandFr(millions)} millions`
+    );
+  }
+  if (thousands > 0) {
+    parts.push(
+      thousands === 1 ? 'mille' : `${underThousandFr(thousands)} mille`
+    );
+  }
+  if (rest > 0) {
+    parts.push(underThousandFr(rest));
+  }
+  return parts.join(' ');
+}
+
 export function exportOfficialInvoiceA4Pdf(
   invoice: any,
-  withTva: boolean,
+  withTvaParam?: boolean,
   numberInWords?: string,
   logoUrl?: string
 ): void {
@@ -321,313 +431,528 @@ export function exportOfficialInvoiceA4Pdf(
     format: 'a4',
   });
 
+  // PALETTE STRICTE LIMITÉE AUX 2 COULEURS DU LOGO + BLANC
+  // 1. Bleu-turquoise (--marque : #008DA9) -> filets, barre 2 mm, liserés cartes, titre
+  const RGB_MARQUE: [number, number, number] = [0, 141, 169];
+  // 2. Bleu assombri même teinte (--marque-fonce : #006B82, contraste 6.14:1 >= 4.5:1) -> aplats à texte blanc
+  const RGB_MARQUE_APLAT: [number, number, number] = [0, 107, 130];
+  // 3. Bleu à 8 % d'opacité sur fond blanc (#EBF6F8) -> lignes alternées et fond des cartes
+  const RGB_MARQUE_8PCT: [number, number, number] = [235, 246, 248];
+  // 4. Noir du logo (--marque-noir : #000000) -> texte courant, noms, montants, cadres, séparations, pied de page
+  const RGB_NOIR: [number, number, number] = [0, 0, 0];
+  // 5. Blanc (#FFFFFF)
+  const RGB_BLANC: [number, number, number] = [255, 255, 255];
+
   const pageWidth = 210;
   const pageHeight = 297;
-  const marginX = 14;
+  const margin = 15; // Marges strictes de 15 mm
+  const contentWidth = pageWidth - margin * 2; // 180 mm
 
-  const subtotalHt = Number(invoice.subtotalHt ?? invoice.total ?? 0);
-  const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
-  const totalTtc = subtotalHt + tvaAmount;
-  const invNumber = sanitizePdfText(invoice.number);
-  const saleRef = sanitizePdfText(invoice.saleNumber || invoice.number);
-  const dateStr = sanitizePdfText(invoice.date);
-  const timeStr = sanitizePdfText(invoice.saleTime || '10:30');
-  const versementRef = sanitizePdfText(invoice.versementRef || '');
+  const subtotalHt = Number(invoice.subtotal ?? invoice.subtotalHt ?? invoice.total ?? 0);
+  const discountAmount = Number(invoice.discountAmount || 0);
+  const netHt = Math.max(0, subtotalHt - discountAmount);
+  const withTva =
+    withTvaParam !== undefined
+      ? withTvaParam
+      : Boolean(
+          invoice.withTva ||
+            Number(invoice.taxRate || invoice.tvaRate || 0) > 0 ||
+            Number(invoice.taxAmount || invoice.tvaAmount || 0) > 0
+        );
+  const isFacture =
+    invoice.type === 'facture' ||
+    invoice.type === 'invoice' ||
+    invoice.type === 'facture_grossiste' ||
+    invoice.type === 'commande_gros';
+  const tvaAmount =
+    Number(invoice.taxAmount ?? invoice.tvaAmount ?? 0) > 0
+      ? Number(invoice.taxAmount ?? invoice.tvaAmount ?? 0)
+      : isFacture && withTva
+      ? Math.round(netHt * 0.18)
+      : 0;
+  const totalTtc = Number(invoice.totalTtc ?? invoice.total ?? netHt + tvaAmount);
 
-  // 1. Bandeau supérieur officiel Baobab (#008DA9) + Logo
-  doc.setFillColor(0, 141, 169);
-  doc.rect(0, 0, pageWidth, 28, 'F');
+  const invNumber = sanitizePdfText(invoice.number || 'DOC-BAOBAB');
+  const saleRef = sanitizePdfText(invoice.saleNumber || '');
+  const dateStr = sanitizePdfText(invoice.date || '');
+  const timeStr = sanitizePdfText(invoice.saleTime || '');
+  const paymentMethod = sanitizePdfText(invoice.paymentMethod || 'Comptant');
+  const statusStr = String(invoice.status || 'Validé');
+  const statusLower = statusStr.toLowerCase();
+  const isCancelled =
+    statusLower.includes('annul') || statusLower.includes('rejet');
+  const isAcquittee =
+    !isCancelled &&
+    (invoice.isAcquittee !== undefined
+      ? Boolean(invoice.isAcquittee)
+      : statusLower === 'paid' ||
+        (!statusLower.includes('impay') &&
+          !statusLower.includes('pending') &&
+          !statusLower.includes('attente') &&
+          !String(invoice.paymentMethod || '').toLowerCase().includes('attente') &&
+          !String(invoice.paymentMethod || '').toLowerCase().includes('crédit') &&
+          !String(invoice.paymentMethod || '').toLowerCase().includes('credit')));
 
-  const headerTextX = drawPdfHeaderLogo(doc, marginX, 3.5, 21, logoUrl);
+  const docTypeLabel = sanitizePdfText(
+    invoice.docTypeTitle ||
+      (invoice.type === 'recu' || invoice.type === 'receipt'
+        ? 'RECU DE VERSEMENT'
+        : invoice.type === 'bon_cadeau'
+        ? 'BON CADEAU REMIS (FEFO)'
+        : invoice.type === 'demande_achat'
+        ? "DEMANDE D'ACHAT FOURNISSEUR"
+        : invoice.type === 'commande_gros' || invoice.type === 'facture_grossiste'
+        ? 'FACTURE GROSSISTE'
+        : invoice.type === 'mini_thermique'
+        ? 'RECU DE CAISSE'
+        : 'FACTURE DE VENTE PDV')
+  );
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.text('BAOBAB DISTRIBUTION MALI SARL', headerTextX, 11);
+  // Fonction d'en-tête compact (Logo + 3 lignes max à gauche, Bloc document à droite, barre bleue de 2 mm dessous)
+  const drawCompactHeader = () => {
+    doc.setFillColor(...RGB_BLANC);
+    doc.rect(0, 0, pageWidth, 42, 'F');
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.2);
-  doc.text('Zone Industrielle de Sotuba, Bamako - Mali | Tel: +223 20 22 45 88 / +223 76 12 34 56', headerTextX, 17);
-  doc.text('NIF : 084129532M  |  RCCM : MA.BKO.2018.B.4129  |  contact@baobab-distribution.ml', headerTextX, 22.5);
+    // Logo à gauche (16 x 16 mm) avec liseré bleu (--marque)
+    doc.setDrawColor(...RGB_MARQUE);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(margin, margin, 16, 16, 1.5, 1.5, 'D');
+    const logoDataUrl = getBaobabLogoDataUrl(logoUrl);
+    if (logoDataUrl) {
+      try {
+        doc.addImage(logoDataUrl, 'PNG', margin + 1, margin + 1, 14, 14);
+      } catch {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.setTextColor(...RGB_MARQUE);
+        doc.text('B', margin + 8, margin + 10, { align: 'center' });
+      }
+    } else {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(...RGB_MARQUE);
+      doc.text('B', margin + 8, margin + 10, { align: 'center' });
+    }
 
-  // 2. Bloc En-tête Facture (Droite)
-  const metaBoxX = 115;
-  const metaBoxY = 32;
-  const metaBoxWidth = pageWidth - metaBoxX - marginX;
-  const metaBoxHeight = 30;
-
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(203, 213, 225);
-  doc.roundedRect(metaBoxX, metaBoxY, metaBoxWidth, metaBoxHeight, 2, 2, 'FD');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(0, 141, 169);
-  doc.text('FACTURE DE VENTE PDV (A4)', metaBoxX + 4, metaBoxY + 6);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(15, 23, 42);
-  doc.text(invNumber, metaBoxX + 4, metaBoxY + 12);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`Ref. Vente : ${saleRef}`, metaBoxX + 4, metaBoxY + 17);
-  doc.text(`Date & Heure : ${dateStr} a ${timeStr}`, metaBoxX + 4, metaBoxY + 21.5);
-  if (versementRef) {
+    const companyX = margin + 19;
+    // Ligne 1 : Nom + Activité en noir (--marque-noir)
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(5, 150, 105);
-    doc.text(`Versement : ${versementRef}`, metaBoxX + 4, metaBoxY + 26);
-  }
+    doc.setFontSize(10.5);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text('BAOBAB DISTRIBUTION — Negoce & Distribution Agroalimentaire', companyX, margin + 4.5);
 
-  // Régime TVA Badge
+    // Ligne 2 : Adresse, téléphones, e-mail
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.2);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text(
+      'ZI Sotuba, Bamako, Mali • Tel: +223 20 22 45 88 / 76 12 34 56 • contact@baobab-distribution.ml',
+      companyX,
+      margin + 9.5
+    );
+
+    // Ligne 3 : NIF & RCCM
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.2);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text('NIF : 084129532M   •   RCCM : MA.BKO.2018.B.4129', companyX, margin + 14.5);
+
+    // Bloc document à droite : cadre noir, titre en BLEU (--marque)
+    const docBoxW = 64;
+    const docBoxX = pageWidth - margin - docBoxW;
+    doc.setFillColor(...RGB_BLANC);
+    doc.setDrawColor(...RGB_NOIR);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(docBoxX, margin, docBoxW, 19.5, 1.5, 1.5, 'FD');
+
+    // Titre en BLEU (--marque)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...RGB_MARQUE);
+    doc.text(docTypeLabel, docBoxX + docBoxW - 3, margin + 4.5, { align: 'right' });
+
+    // Numéro, date, règlement en NOIR (--marque-noir)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text(`N° ${invNumber}`, docBoxX + docBoxW - 3, margin + 9.3, { align: 'right' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    const fullDate = timeStr && !dateStr.includes(timeStr) ? `${dateStr} a ${timeStr}` : dateStr;
+    doc.text(`Date : ${fullDate}`, docBoxX + docBoxW - 3, margin + 13.8, { align: 'right' });
+    doc.text(`Reglement : ${paymentMethod.slice(0, 28)}`, docBoxX + docBoxW - 3, margin + 17.8, {
+      align: 'right',
+    });
+
+    // Barre BLEUE (--marque) de 2 mm sous l'en-tête
+    doc.setFillColor(...RGB_MARQUE);
+    doc.rect(margin, margin + 21, contentWidth, 2, 'F');
+  };
+
+  drawCompactHeader();
+
+  // Bloc Parties : Émetteur (Gauche) & Destinataire (Droite) — Liserés BLEUS (--marque) et fond bleu 8 %
+  const partiesY = margin + 25.5;
+  const partyW = (contentWidth - 4) / 2;
+  const partyH = 26;
+
+  const vendorName = invoice.vendor?.name || invoice.vendorName || invoice.cashierName || 'Baobab Distribution';
+  const vendorCode = invoice.vendor?.code || invoice.vendorCode || 'BAO';
+  const vendorPhone = invoice.vendor?.phone || invoice.vendorPhone || '+223 20 22 45 88';
+  const clientName = invoice.client?.name || invoice.pdvName || invoice.clientName || 'Client Partenaire';
+  const clientAddress = invoice.client?.address || `${invoice.pdvCode || ''} ${invoice.pdvNeighborhood || 'Bamako, Mali'}`.trim();
+  const clientContact = invoice.client?.contact || invoice.pdvManager || '';
+  const clientPhone = invoice.client?.phone || invoice.pdvPhone || invoice.clientPhone || '+223 76 00 00 00';
+
+  // Carte Émetteur : fond bleu 8 % + liseré bleu (--marque)
+  doc.setFillColor(...RGB_MARQUE_8PCT);
+  doc.setDrawColor(...RGB_MARQUE);
+  doc.setLineWidth(0.35);
+  doc.roundedRect(margin, partiesY, partyW, partyH, 1.5, 1.5, 'FD');
+  doc.setFillColor(...RGB_MARQUE);
+  doc.rect(margin, partiesY, 1.3, partyH, 'F');
+  doc.setLineWidth(0.2);
+  doc.line(margin + 3, partiesY + 6.2, margin + partyW - 3, partiesY + 6.2);
+
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
-  if (withTva) {
-    doc.setFillColor(254, 243, 199);
-    doc.setDrawColor(245, 158, 11);
-    doc.roundedRect(pageWidth - marginX - 32, metaBoxY + 3, 30, 5.5, 1, 1, 'FD');
-    doc.setTextColor(146, 64, 14);
-    doc.text('TVA 18% INCLUSE', pageWidth - marginX - 17, metaBoxY + 7, { align: 'center' });
-  } else {
-    doc.setFillColor(241, 245, 249);
-    doc.setDrawColor(148, 163, 184);
-    doc.roundedRect(pageWidth - marginX - 32, metaBoxY + 3, 30, 5.5, 1, 1, 'FD');
-    doc.setTextColor(71, 85, 105);
-    doc.text('SANS TVA (0%)', pageWidth - marginX - 17, metaBoxY + 7, { align: 'center' });
+  doc.setTextColor(...RGB_NOIR);
+  doc.text(
+    sanitizePdfText(invoice.emitterTitle || 'EMETTEUR (AGENT / VENDEUR BAOBAB)'),
+    margin + 3.5,
+    partiesY + 4.8
+  );
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.text(sanitizePdfText(vendorName), margin + 3.5, partiesY + 10.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text(
+    sanitizePdfText(
+      `Code : ${vendorCode} • ${invoice.vendorTeam || 'Direction Commerciale Bamako'}`
+    ),
+    margin + 3.5,
+    partiesY + 15.2
+  );
+  doc.text(sanitizePdfText(`Tel : ${vendorPhone}`), margin + 3.5, partiesY + 19.8);
+  if (saleRef && saleRef !== invNumber) {
+    doc.text(`Ref. operation : ${saleRef}`, margin + 3.5, partiesY + 24);
   }
 
-  // Titre principal gauche
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(15, 23, 42);
-  doc.text('FACTURE COMMERCIALE OFFICIELLE', marginX, 42);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Etablie suite au versement et validee par le service Comptabilite', marginX, 48);
-
-  // 3. Les deux blocs : Vendeur & PDV Acheteur
-  const blockY = 66;
-  const blockW = (pageWidth - marginX * 2 - 6) / 2;
-  const blockH = 34;
-
-  // Bloc Vendeur
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(0, 141, 169);
-  doc.roundedRect(marginX, blockY, blockW, blockH, 2, 2, 'FD');
+  // Carte Destinataire : fond bleu 8 % + liseré bleu (--marque)
+  const destX = margin + partyW + 4;
+  doc.setFillColor(...RGB_MARQUE_8PCT);
+  doc.setDrawColor(...RGB_MARQUE);
+  doc.setLineWidth(0.35);
+  doc.roundedRect(destX, partiesY, partyW, partyH, 1.5, 1.5, 'FD');
+  doc.setFillColor(...RGB_MARQUE);
+  doc.rect(destX, partiesY, 1.3, partyH, 'F');
+  doc.setLineWidth(0.2);
+  doc.line(destX + 3, partiesY + 6.2, destX + partyW - 3, partiesY + 6.2);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(0, 141, 169);
-  doc.text('AU NOM DU VENDEUR (AGENT BAOBAB)', marginX + 4, blockY + 6);
-
+  doc.setFontSize(7.5);
+  doc.setTextColor(...RGB_NOIR);
+  doc.text(
+    sanitizePdfText(invoice.recipientTitle || 'DESTINATAIRE (CLIENT / PDV ACHETEUR)'),
+    destX + 3.5,
+    partiesY + 4.8
+  );
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text(sanitizePdfText(invoice.vendorName || invoice.cashierName || 'Vendeur Baobab'), marginX + 4, blockY + 12);
-
+  doc.setFontSize(9.5);
+  doc.text(sanitizePdfText(clientName), destX + 3.5, partiesY + 10.5);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`Code Vendeur : ${sanitizePdfText(invoice.vendorCode || 'BAO-VND')}`, marginX + 4, blockY + 17);
-  doc.text(`Equipe / Secteur : ${sanitizePdfText(invoice.vendorTeam || 'Zone Bamako')}`, marginX + 4, blockY + 22);
-  doc.text(`Tel : ${sanitizePdfText(invoice.vendorPhone || '+223 75 44 22 11')}`, marginX + 4, blockY + 27);
-
-  // Bloc PDV Acheteur
-  const pdvX = marginX + blockW + 6;
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(16, 185, 129);
-  doc.roundedRect(pdvX, blockY, blockW, blockH, 2, 2, 'FD');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(16, 185, 129);
-  doc.text('PDV ACHETEUR (POINT DE VENTE CLIENT)', pdvX + 4, blockY + 6);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text(sanitizePdfText(invoice.pdvName || invoice.clientName || 'PDV Client'), pdvX + 4, blockY + 12);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(71, 85, 105);
-  const locStr = `${sanitizePdfText(invoice.pdvCode || '')} ${sanitizePdfText(invoice.pdvNeighborhood || 'Bamako')}`.trim();
-  doc.text(`Localisation : ${locStr || 'Bamako, Mali'}`, pdvX + 4, blockY + 17);
-  if (invoice.pdvManager) {
-    doc.text(`Gerant PDV : ${sanitizePdfText(invoice.pdvManager)}`, pdvX + 4, blockY + 22);
+  doc.text(`Localisation : ${sanitizePdfText(clientAddress)}`, destX + 3.5, partiesY + 15.2);
+  if (clientContact) {
+    doc.text(`Responsable / Gerant : ${sanitizePdfText(clientContact)}`, destX + 3.5, partiesY + 19.8);
   }
-  doc.text(`Tel PDV : ${sanitizePdfText(invoice.pdvPhone || invoice.clientPhone || '+223 76 00 00 00')}`, pdvX + 4, blockY + 27);
+  doc.text(sanitizePdfText(`Tel : ${clientPhone}`), destX + 3.5, partiesY + 24);
 
-  // 4. Tableau des articles
-  const items = Array.isArray(invoice.items) && invoice.items.length > 0
-    ? invoice.items
-    : [{ code: 'ART-GEN', name: 'Articles alimentaires Baobab', qty: 1, price: subtotalHt, total: subtotalHt }];
+  // Tableau des lignes : en-tête aplat bleu (#006B82) texte blanc, lignes alternées en bleu 8 % (#EBF6F8)
+  const items =
+    Array.isArray(invoice.items) && invoice.items.length > 0
+      ? invoice.items
+      : [
+          {
+            code: 'ART-01',
+            name: 'Marchandises Baobab Distribution',
+            qty: 1,
+            price: subtotalHt,
+            total: subtotalHt,
+          },
+        ];
 
-  const tableHead = [['Ref.', 'Designation Produit', 'Qte (Cartons)', 'Prix Unit. HT', 'Total HT']];
+  const tableHead = [['Ref.', 'Designation', 'Quantite', 'Prix unitaire HT', 'Montant HT']];
   const tableRows = items.map((it: any) => [
     sanitizePdfText(it.code || 'ART'),
-    sanitizePdfText(it.name || 'Produit'),
-    sanitizePdfText(String(it.qty ?? 1)),
-    formatFcfaPdf(it.price || 0),
-    formatFcfaPdf(it.total || 0),
+    sanitizePdfText(it.description || it.name || 'Article'),
+    sanitizePdfText(String(it.quantity ?? it.qty ?? 1)),
+    formatFcfaPdf(it.unitPrice ?? it.price ?? 0),
+    formatFcfaPdf(it.total ?? 0),
   ]);
 
   autoTable(doc, {
-    startY: blockY + blockH + 6,
+    startY: partiesY + partyH + 5,
     head: tableHead,
     body: tableRows,
     theme: 'grid',
+    showHead: 'everyPage',
+    rowPageBreak: 'avoid',
     styles: {
       font: 'helvetica',
-      fontSize: 8,
-      cellPadding: 2.8,
-      textColor: [15, 23, 42],
-      lineColor: [203, 213, 225],
-      lineWidth: 0.2,
+      fontSize: 9.5,
+      cellPadding: 2.5,
+      textColor: RGB_NOIR,
+      fillColor: RGB_BLANC,
+      lineColor: RGB_NOIR,
+      lineWidth: 0.25,
     },
     headStyles: {
-      fillColor: [15, 23, 42],
-      textColor: [255, 255, 255],
+      fillColor: RGB_MARQUE_APLAT,
+      textColor: RGB_BLANC,
       fontStyle: 'bold',
-      fontSize: 8.5,
+      fontSize: 9.5,
+      lineColor: RGB_NOIR,
+      lineWidth: 0.3,
+    },
+    alternateRowStyles: {
+      fillColor: RGB_MARQUE_8PCT,
     },
     columnStyles: {
-      0: { cellWidth: 26 },
+      0: { cellWidth: 24 },
       1: { cellWidth: 'auto' },
-      2: { cellWidth: 28, halign: 'right' },
-      3: { cellWidth: 34, halign: 'right' },
-      4: { cellWidth: 34, halign: 'right' },
+      2: { cellWidth: 22, halign: 'right' },
+      3: { cellWidth: 36, halign: 'right' },
+      4: { cellWidth: 38, halign: 'right', fontStyle: 'bold' },
     },
-    margin: { left: marginX, right: marginX },
+    margin: { top: margin + 25.5, left: margin, right: margin, bottom: 24 },
+    didDrawPage: (data) => {
+      if (data.pageNumber > 1) {
+        drawCompactHeader();
+      }
+    },
   });
 
-  const finalY = (doc as any).lastAutoTable?.finalY || 160;
-
-  // 5. Récapitulatif financier
-  const summaryBoxW = 75;
-  const summaryBoxX = pageWidth - marginX - summaryBoxW;
-  const summaryBoxY = finalY + 5;
-
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(203, 213, 225);
-  doc.roundedRect(summaryBoxX, summaryBoxY, summaryBoxW, 28, 2, 2, 'FD');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Sous-total HT :', summaryBoxX + 4, summaryBoxY + 6);
-  doc.text(formatFcfaPdf(subtotalHt), summaryBoxX + summaryBoxW - 4, summaryBoxY + 6, { align: 'right' });
-
-  if (withTva) {
-    doc.setTextColor(180, 83, 9);
-    doc.text('TVA (18%) :', summaryBoxX + 4, summaryBoxY + 12);
-    doc.text(`+ ${formatFcfaPdf(tvaAmount)}`, summaryBoxX + summaryBoxW - 4, summaryBoxY + 12, { align: 'right' });
-  } else {
-    doc.text('TVA (0% / Sans TVA) :', summaryBoxX + 4, summaryBoxY + 12);
-    doc.text('0 FCFA', summaryBoxX + summaryBoxW - 4, summaryBoxY + 12, { align: 'right' });
+  let finalY = (doc as any).lastAutoTable?.finalY || 140;
+  if (finalY + 78 > pageHeight - margin - 10) {
+    doc.addPage();
+    drawCompactHeader();
+    finalY = margin + 26.5;
   }
 
-  doc.setDrawColor(203, 213, 225);
-  doc.line(summaryBoxX + 2, summaryBoxY + 16, summaryBoxX + summaryBoxW - 2, summaryBoxY + 16);
+  // Bloc Totaux (Droite) & Carte Règlements / Cachet Statut (Gauche)
+  const summaryBoxW = 80;
+  const summaryBoxX = pageWidth - margin - summaryBoxW;
+  const summaryBoxY = finalY + 5;
+  const summaryBoxH = discountAmount > 0 ? 33 : 28;
+  const totalTtcBarH = 9;
+
+  // Cadre extérieur du bloc Totaux (fond blanc, bordure noire)
+  doc.setFillColor(...RGB_BLANC);
+  doc.setDrawColor(...RGB_NOIR);
+  doc.setLineWidth(0.35);
+  doc.roundedRect(summaryBoxX, summaryBoxY, summaryBoxW, summaryBoxH, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...RGB_NOIR);
+  doc.text('Total HT :', summaryBoxX + 3, summaryBoxY + 5.8);
+  doc.text(formatFcfaPdf(subtotalHt), summaryBoxX + summaryBoxW - 3, summaryBoxY + 5.8, {
+    align: 'right',
+  });
+
+  let lineY = summaryBoxY + 11.5;
+  if (discountAmount > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.text(
+      `Remise (${invoice.discountPercent || 0}%) :`,
+      summaryBoxX + 3,
+      lineY
+    );
+    doc.text(`- ${formatFcfaPdf(discountAmount)}`, summaryBoxX + summaryBoxW - 3, lineY, {
+      align: 'right',
+    });
+    lineY += 5.5;
+  }
+
+  if ((isFacture && withTva) || tvaAmount > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('TVA (18 %) :', summaryBoxX + 3, lineY);
+    doc.text(`+ ${formatFcfaPdf(tvaAmount)}`, summaryBoxX + summaryBoxW - 3, lineY, {
+      align: 'right',
+    });
+  } else {
+    doc.setFont('helvetica', 'normal');
+    doc.text('TVA (0 % - Sans TVA) :', summaryBoxX + 3, lineY);
+    doc.text('0 FCFA', summaryBoxX + summaryBoxW - 3, lineY, { align: 'right' });
+  }
+
+  // Ligne TOTAL TTC : aplat bleu assombri (#006B82) avec texte blanc (#FFFFFF) et bordure noire
+  const ttcBarY = summaryBoxY + summaryBoxH - totalTtcBarH;
+  doc.setFillColor(...RGB_MARQUE_APLAT);
+  doc.setDrawColor(...RGB_NOIR);
+  doc.setLineWidth(0.35);
+  doc.rect(summaryBoxX, ttcBarY, summaryBoxW, totalTtcBarH, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
-  doc.setTextColor(0, 141, 169);
-  doc.text(withTva ? 'TOTAL TTC :' : 'TOTAL NET :', summaryBoxX + 4, summaryBoxY + 23);
-  doc.text(formatFcfaPdf(totalTtc), summaryBoxX + summaryBoxW - 4, summaryBoxY + 23, { align: 'right' });
+  doc.setTextColor(...RGB_BLANC);
+  doc.text('TOTAL TTC', summaryBoxX + 3, ttcBarY + 6.2);
+  doc.text(formatFcfaPdf(totalTtc), summaryBoxX + summaryBoxW - 3, ttcBarY + 6.2, {
+    align: 'right',
+  });
 
-  // Mentions de règlement à gauche
-  const reglementX = marginX;
-  const reglementY = summaryBoxY;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(30, 41, 59);
-  doc.text('CONDITIONS DE REGLEMENT :', reglementX, reglementY + 5);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Paiement effectue en Francs CFA (XOF). Facture certifiee conforme.', reglementX, reglementY + 10);
-  doc.text(withTva ? 'Operation soumise a la TVA au taux legal de 18%.' : 'Operation declaree hors taxe / sans TVA.', reglementX, reglementY + 14);
-
-  const totalBoxes = (items || []).reduce((acc: number, it: any) => acc + Number(it.qty || 0), 0);
-  if (totalBoxes > 0) {
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 141, 169);
-    doc.text(`Volume total des marchandises : ${totalBoxes} carton(s)`, reglementX, reglementY + 20);
-  }
-
-  // 6. Montant en toutes lettres
-  const wordsY = summaryBoxY + 33;
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(marginX, wordsY, pageWidth - marginX * 2, 11, 2, 2, 'FD');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(100, 116, 139);
-  doc.text('MONTANT ARRETE EN TOUTES LETTRES :', marginX + 3, wordsY + 4.5);
+  // Carte Règlements & Cachet Statut à gauche (fond bleu 8 %, bordure noire)
+  const leftBoxW = contentWidth - summaryBoxW - 4;
+  doc.setFillColor(...RGB_MARQUE_8PCT);
+  doc.setDrawColor(...RGB_NOIR);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(margin, summaryBoxY, leftBoxW, summaryBoxH, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
-  doc.setTextColor(15, 23, 42);
+  doc.setTextColor(...RGB_NOIR);
+  doc.text('REGLEMENTS & PAIEMENTS :', margin + 3, summaryBoxY + 5);
+  doc.setLineWidth(0.2);
+  doc.line(margin + 3, summaryBoxY + 6.4, margin + leftBoxW - 3, summaryBoxY + 6.4);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  const totalBoxes = (items || []).reduce(
+    (acc: number, it: any) => acc + Number(it.quantity ?? it.qty ?? 0),
+    0
+  );
+  doc.text(
+    sanitizePdfText(`Mode : ${paymentMethod} • Qte : ${totalBoxes} unite(s)/carton(s)`),
+    margin + 3,
+    summaryBoxY + 11.2
+  );
+  if (invoice.versementRef || invoice.paymentRef) {
+    doc.text(
+      sanitizePdfText(`Ref. versement : ${invoice.paymentRef || invoice.versementRef}`),
+      margin + 3,
+      summaryBoxY + 15.8
+    );
+  }
+
+  // 4. STATUTS PAR LA FORME, sans autre couleur, ne recouvrant aucun texte
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...RGB_NOIR);
+  doc.text('Cachet statut :', margin + 3, summaryBoxY + summaryBoxH - 4.2);
+
+  const stampW = 38;
+  const stampH = 7.8;
+  const stampX = margin + leftBoxW - stampW - 3;
+  const stampY = summaryBoxY + summaryBoxH - stampH - 2;
+
+  if (isCancelled) {
+    // "ANNULÉE" en noir avec barre diagonale sur fond blanc
+    doc.setFillColor(...RGB_BLANC);
+    doc.setDrawColor(...RGB_NOIR);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(stampX, stampY, stampW, stampH, 1, 1, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text('ANNULEE', stampX + stampW / 2, stampY + 5.3, { align: 'center' });
+    // Barre diagonale noire
+    doc.setLineWidth(0.55);
+    doc.line(stampX + 1.5, stampY + stampH - 1.2, stampX + stampW - 1.5, stampY + 1.2);
+  } else if (isAcquittee) {
+    // "ACQUITTÉE" en cachet plein bleu (#006B82) texte blanc, légèrement incliné
+    doc.setFillColor(...RGB_MARQUE_APLAT);
+    doc.setDrawColor(...RGB_NOIR);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(stampX, stampY, stampW, stampH, 1, 1, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...RGB_BLANC);
+    doc.text('ACQUITTEE', stampX + stampW / 2, stampY + 5.5, {
+      align: 'center',
+      angle: 3,
+    });
+  } else {
+    // "À PAYER" en cachet à contour noir sur fond blanc
+    doc.setFillColor(...RGB_BLANC);
+    doc.setDrawColor(...RGB_NOIR);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(stampX, stampY, stampW, stampH, 1, 1, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text('A PAYER', stampX + stampW / 2, stampY + 5.3, { align: 'center' });
+  }
+
+  // Arrêté en toutes lettres (fond bleu 8 %, bordure noire, texte noir)
+  const wordsY = summaryBoxY + summaryBoxH + 4;
+  doc.setFillColor(...RGB_MARQUE_8PCT);
+  doc.setDrawColor(...RGB_NOIR);
+  doc.setLineWidth(0.25);
+  doc.roundedRect(margin, wordsY, contentWidth, 11, 1.5, 1.5, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(...RGB_NOIR);
+  doc.text('ARRETE EN TOUTES LETTRES :', margin + 3, wordsY + 4.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
   const textWords = numberInWords
-    ? `Arretee la presente facture a la somme de : ${sanitizePdfText(numberInWords)} Francs CFA.`
-    : `Arretee la presente facture a la somme de : ${formatFcfaPdf(totalTtc)}.`;
-  doc.text(textWords, marginX + 3, wordsY + 8.5);
+    ? `${sanitizePdfText(numberInWords).toUpperCase()} FRANCS CFA (XOF).`
+    : `${sanitizePdfText(numberToFrenchWords(totalTtc)).toUpperCase()} FRANCS CFA (XOF).`;
+  doc.text(textWords.slice(0, 105), margin + 3, wordsY + 8.8);
 
-  // 7. Zone des 3 Signatures officielles
-  const sigY = wordsY + 16;
-  const sigBoxW = (pageWidth - marginX * 2 - 10) / 3;
-  const sigBoxH = 26;
+  // Signatures (3 colonnes : cadres noirs sur fond blanc, texte noir)
+  const sigY = wordsY + 14;
+  const sigBoxW = (contentWidth - 8) / 3;
+  const sigBoxH = 22;
 
-  // Sig 1 : PDV Acheteur
-  doc.setDrawColor(203, 213, 225);
-  doc.roundedRect(marginX, sigY, sigBoxW, sigBoxH, 1.5, 1.5, 'D');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Le PDV Acheteur (Client)', marginX + sigBoxW / 2, sigY + 5, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(148, 163, 184);
-  doc.text('Nom et Signature', marginX + sigBoxW / 2, sigY + sigBoxH - 3, { align: 'center' });
+  const sigLabels = [
+    sanitizePdfText(invoice.sigLeftLabel || 'Le Destinataire / Client'),
+    sanitizePdfText(invoice.sigCenterLabel || `L'Emetteur (${vendorCode})`),
+    sanitizePdfText(invoice.sigRightLabel || 'Direction & Comptabilite'),
+  ];
 
-  // Sig 2 : Vendeur
-  const sig2X = marginX + sigBoxW + 5;
-  doc.roundedRect(sig2X, sigY, sigBoxW, sigBoxH, 1.5, 1.5, 'D');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Le Vendeur Baobab', sig2X + sigBoxW / 2, sigY + 5, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(148, 163, 184);
-  doc.text(sanitizePdfText(invoice.vendorCode || 'Signature'), sig2X + sigBoxW / 2, sigY + sigBoxH - 3, { align: 'center' });
-
-  // Sig 3 : Comptabilité
-  const sig3X = sig2X + sigBoxW + 5;
-  doc.roundedRect(sig3X, sigY, sigBoxW, sigBoxH, 1.5, 1.5, 'D');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(0, 141, 169);
-  doc.text('Service Comptabilite & Caisse', sig3X + sigBoxW / 2, sigY + 5, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(148, 163, 184);
-  doc.text('Cachet certifie et Visa', sig3X + sigBoxW / 2, sigY + sigBoxH - 3, { align: 'center' });
-
-  // 8. Pied de page certifié
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(148, 163, 184);
-  doc.text('Baobab Distribution Mali SARL - Document officiel de vente genere au format standard A4 (210 x 297 mm).', pageWidth / 2, pageHeight - 6, {
-    align: 'center',
+  sigLabels.forEach((lbl, idx) => {
+    const sx = margin + idx * (sigBoxW + 4);
+    doc.setFillColor(...RGB_BLANC);
+    doc.setDrawColor(...RGB_NOIR);
+    doc.setLineWidth(0.25);
+    doc.roundedRect(sx, sigY, sigBoxW, sigBoxH, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text(lbl, sx + sigBoxW / 2, sigY + 5, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.text('Signature et cachet', sx + sigBoxW / 2, sigY + sigBoxH - 3, { align: 'center' });
   });
 
-  const pdfFilename = `Facture_${sanitizePdfText(invoice.number || 'Vente')}.pdf`;
+  // Pied de page "Page X / Y" en noir sur toutes les pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...RGB_NOIR);
+    doc.setLineWidth(0.25);
+    doc.line(margin, pageHeight - 14, pageWidth - margin, pageHeight - 14);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...RGB_NOIR);
+    doc.text(
+      'Baobab Distribution Mali SARL • NIF 084129532M • RCCM MA.BKO.2018.B.4129',
+      margin,
+      pageHeight - 9.5
+    );
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text(`Page ${p} / ${totalPages}`, pageWidth - margin, pageHeight - 9.5, {
+      align: 'right',
+    });
+  }
+
+  const pdfFilename = getExplicitDocumentPdfFilename(invoice);
   doc.save(pdfFilename);
 }
+
+

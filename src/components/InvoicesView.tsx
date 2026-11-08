@@ -35,7 +35,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     const matchesType = filterType === 'all' || inv.type === filterType;
     const matchesSearch =
       inv.number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      inv.clientName.toLowerCase().includes(searchTerm.toLowerCase());
+      (inv.clientName || inv.client?.name || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchesType && matchesSearch;
   });
 
@@ -76,7 +76,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             onClick={() => setFilterType('all')}
             className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
               filterType === 'all'
-                ? 'bg-teal-600 text-white shadow-xs'
+                ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
@@ -86,7 +86,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             onClick={() => setFilterType('facture')}
             className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
               filterType === 'facture'
-                ? 'bg-blue-600 text-white shadow-xs'
+                ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
@@ -96,7 +96,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             onClick={() => setFilterType('recu')}
             className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
               filterType === 'recu'
-                ? 'bg-emerald-600 text-white shadow-xs'
+                ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
@@ -107,7 +107,51 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
       {/* List */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
+        {/* Mobile Stacked Cards (< 640px) */}
+        <div className="sm:hidden p-3 space-y-3">
+          {filtered.map((inv) => (
+            <div
+              key={inv.id}
+              className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 space-y-2 text-xs"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                  {inv.number}
+                </div>
+                <span
+                  className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
+                    inv.type === 'facture'
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                  }`}
+                >
+                  {inv.type === 'facture' ? 'Facture A4' : 'Reçu Ticket'}
+                </span>
+              </div>
+              <div className="font-semibold text-slate-800 dark:text-slate-200 break-words">
+                {inv.clientName}
+              </div>
+              <div className="text-[11px] text-slate-500">
+                {inv.date} &bull; {inv.paymentMethod} &bull; {inv.cashierName}
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/70 dark:border-slate-700/70">
+                <span className="font-black text-slate-900 dark:text-white">
+                  {inv.total.toLocaleString('fr-FR')} FCFA
+                </span>
+                <button
+                  onClick={() => onOpenDocument(inv)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-300 font-semibold text-xs transition"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Imprimer
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tablet & Desktop Table (>= 640px) */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">

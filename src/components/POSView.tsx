@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShoppingCart, Plus, Minus, Trash2, Printer, CheckCircle, UserCheck } from 'lucide-react';
 import { ProductItem } from './StocksView';
 import { InvoiceData } from './PrintableDocument';
+import { PaymentMethodSelector, ConfirmDestructiveButton, FORM_FIELD_CLASS } from './FormControls';
 
 interface POSViewProps {
   products: ProductItem[];
@@ -151,7 +152,7 @@ export const POSView: React.FC<POSViewProps> = ({
                   </span>
                   <button
                     type="button"
-                    className="p-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-600 hover:text-white dark:bg-teal-950/60 dark:text-teal-300 dark:hover:bg-teal-600 dark:hover:text-white transition"
+                    className="p-1.5 rounded-lg bg-[var(--marque-clair)] text-[var(--marque-fonce)] hover:bg-[var(--marque-fonce)] hover:text-white dark:text-[var(--marque-eclaircie)] dark:hover:bg-[var(--marque-fonce)] dark:hover:text-white transition"
                   >
                     <Plus className="w-4 h-4" />
                   </button>
@@ -169,12 +170,11 @@ export const POSView: React.FC<POSViewProps> = ({
               Panier en cours ({cart.reduce((s, i) => s + i.qty, 0)})
             </h2>
             {cart.length > 0 && (
-              <button
-                onClick={() => setCart([])}
-                className="text-xs text-rose-500 hover:text-rose-700 font-medium"
-              >
-                Vider
-              </button>
+              <ConfirmDestructiveButton
+                label="Vider"
+                confirmLabel="Vider le panier ?"
+                onConfirm={() => setCart([])}
+              />
             )}
           </div>
 
@@ -213,12 +213,12 @@ export const POSView: React.FC<POSViewProps> = ({
                     >
                       <Plus className="w-3 h-3" />
                     </button>
-                    <button
-                      onClick={() => removeFromCart(item.product.id)}
-                      className="p-1 ml-1 text-slate-400 hover:text-rose-600"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <ConfirmDestructiveButton
+                      iconOnly
+                      label="Retirer l'article"
+                      confirmLabel="Retirer ?"
+                      onConfirm={() => removeFromCart(item.product.id)}
+                    />
                   </div>
                 </div>
               ))
@@ -226,29 +226,25 @@ export const POSView: React.FC<POSViewProps> = ({
           </div>
 
           {/* Client & Payment Info */}
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2 text-xs">
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-4 text-xs">
             <div>
-              <label className="block text-slate-500 mb-1">Nom du client</label>
+              <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">Nom du client</label>
               <input
                 type="text"
                 value={clientName}
                 onChange={(e) => setClientName(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                className={FORM_FIELD_CLASS}
               />
             </div>
             <div>
-              <label className="block text-slate-500 mb-1">Mode de règlement</label>
-              <select
+              <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">Mode de règlement</label>
+              <PaymentMethodSelector
                 value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              >
-                <option value="Espèces">Espèces (Comptant FCFA)</option>
-                <option value="Orange Money">Orange Money Mali</option>
-                <option value="Moov Money">Moov Money Mali</option>
-                <option value="Virement BDM">Virement Bancaire (BDM / BOA)</option>
-                <option value="Chèque">Chèque Bancaire</option>
-              </select>
+                onChange={setPaymentMethod}
+                especesValue="Espèces"
+                mobileMoneyValue="Orange Money"
+                virementValue="Virement BDM"
+              />
             </div>
           </div>
 
@@ -263,19 +259,21 @@ export const POSView: React.FC<POSViewProps> = ({
 
             <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 disabled={cart.length === 0 || isSubmitting}
                 onClick={() => handleCheckout('recu')}
-                className="py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
+                className="h-[48px] px-3 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
               >
-                <Printer className="w-3.5 h-3.5" />
+                <Printer className="w-4 h-4" />
                 <span>Reçu Caisse</span>
               </button>
               <button
+                type="button"
                 disabled={cart.length === 0 || isSubmitting}
                 onClick={() => handleCheckout('facture')}
-                className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
+                className="h-[48px] px-3 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] hover:bg-[#E2E8F0] dark:bg-[#1E293B] dark:hover:bg-[#334155] disabled:opacity-50 text-[#0F172A] dark:text-[#F8FAFC] font-bold text-sm flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
               >
-                <Printer className="w-3.5 h-3.5" />
+                <Printer className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
                 <span>Facture A4</span>
               </button>
             </div>
