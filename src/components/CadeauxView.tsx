@@ -25,7 +25,7 @@ import { UserSession } from './LoginScreen';
 import { BaobabLogo } from './BaobabLogo';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
-import { DataTable, DataTableColumn } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 import { InvoiceData } from './PrintableDocument';
 import {
@@ -596,11 +596,11 @@ const ScratchCardItem: React.FC<{
             <div className="w-7 h-7 rounded-lg bg-white/95 p-0.5 flex items-center justify-center shrink-0">
               <BaobabLogo logoUrl={logoUrl} size={22} />
             </div>
-            <div className="truncate">
+            <div className="min-w-0">
               <div className="text-[11px] font-black tracking-wide uppercase text-amber-300 leading-tight">
                 Baobab Distribution
               </div>
-              <div className="text-[10px] text-white/90 font-semibold truncate">{semesterDisplay}</div>
+              <div className="text-[10px] text-white/90 font-semibold leading-tight">{semesterDisplay}</div>
             </div>
           </div>
 
@@ -1290,10 +1290,10 @@ const BonBasketComposer: React.FC<{
           <button
             type="button"
             onClick={() => onOpenDocument(buildBonCadeauInvoiceData(bon))}
-            className="inline-flex items-center gap-1.5 h-[48px] px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer"
           >
             <Printer className="w-4 h-4 shrink-0" />
-            <span className="whitespace-nowrap">Imprimer le bon</span>
+            <span>Imprimer le bon</span>
           </button>
         </div>
       )}
@@ -1887,31 +1887,201 @@ export const CadeauxView: React.FC<CadeauxViewProps> = ({ currentUser, logoUrl, 
           </div>
         </div>
 
-        <DataTable
+        <CardList<any>
           data={filteredEvaluations}
           rowKey={(ev) => `${ev.vendor_id}-${ev.semester}`}
           pageSize={20}
           emptyMessage="Aucune évaluation semestrielle pour ce filtre."
-          mobileTitle={(ev) => (
-            <div>
-              <div className="font-bold text-slate-900 dark:text-white">{ev.vendor_name}</div>
-              <div className="text-[11px] text-slate-500">
-                {ev.vendor_code} &bull; Clôture {ev.closure_date}
+          searchable
+          searchPlaceholder="Rechercher par vendeur, code, référence de bon..."
+          searchPredicate={(ev, q) => {
+            const matchingBon = bons.find(
+              (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+            );
+            return (
+              String(ev.vendor_name || '').toLowerCase().includes(q) ||
+              String(ev.vendor_code || '').toLowerCase().includes(q) ||
+              String(ev.semester || '').toLowerCase().includes(q) ||
+              String(matchingBon?.reference || '').toLowerCase().includes(q)
+            );
+          }}
+          sortOptions={[
+            {
+              key: 'note',
+              label: 'Note / 20',
+              compare: (a, b) => Number(a.note_finale || 0) - Number(b.note_finale || 0),
+            },
+            {
+              key: 'vendor',
+              label: 'Vendeur',
+              compare: (a, b) => String(a.vendor_name || '').localeCompare(String(b.vendor_name || '')),
+            },
+          ]}
+          defaultSortKey="note"
+          defaultSortDirection="desc"
+          renderTitle={(ev) => (
+            <div className="min-w-0">
+              <div className="font-bold text-slate-900 dark:text-white break-words">
+                {ev.vendor_name}
+              </div>
+              <div className="text-xs font-mono text-slate-500 break-words">
+                {ev.vendor_code} &bull; {ev.semester}
               </div>
             </div>
           )}
-          mobileBadge={(ev) => (
-            <span
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-black text-xs whitespace-nowrap ${
-                ev.note_finale >= 10
-                  ? 'bg-teal-50 text-[#008DA9] dark:bg-teal-950/60 dark:text-teal-300'
-                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-              }`}
-            >
-              {ev.note_finale} / 20
+          renderSubtitle={(ev) => (
+            <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+              Clôture {ev.closure_date}
             </span>
           )}
-          mobileActions={(ev) => {
+          renderBadges={(ev) => {
+            const matchingBon = bons.find(
+              (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+            );
+            return (
+              <>
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-black text-xs whitespace-nowrap ${
+                    ev.note_finale >= 10
+                      ? 'bg-teal-50 text-[#008DA9] dark:bg-teal-950/60 dark:text-teal-300'
+                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                  }`}
+                >
+                  Note : {ev.note_finale} / 20
+                </span>
+                {matchingBon ? (
+                  <span
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
+                      matchingBon.status === 'Reçu'
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        : matchingBon.status === 'Remis'
+                        ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                        : matchingBon.status === 'À préparer'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        : matchingBon.is_expired
+                        ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    }`}
+                  >
+                    {matchingBon.status}
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                    {ev.tier_label}
+                  </span>
+                )}
+              </>
+            );
+          }}
+          fields={[
+            {
+              key: 'ca',
+              label: 'Critère CA vs Objectif',
+              render: (ev) => `${ev.score_ca} / ${weights.ca}`,
+            },
+            {
+              key: 'regularite',
+              label: 'Critère Régularité',
+              render: (ev) => `${ev.score_regularite} / ${weights.regularite}`,
+            },
+            {
+              key: 'versements',
+              label: 'Critère Versements',
+              render: (ev) => `${ev.score_versements} / ${weights.versements}`,
+            },
+            {
+              key: 'pdv',
+              label: 'Critère Nouveaux PDV',
+              render: (ev) => `${ev.score_pdv} / ${weights.pdv}`,
+            },
+            {
+              key: 'rigueur',
+              label: 'Critère Rigueur',
+              render: (ev) => `${ev.score_rigueur} / ${weights.rigueur}`,
+            },
+            {
+              key: 'bon_ref',
+              label: 'Référence du bon',
+              render: (ev) => {
+                const matchingBon = bons.find(
+                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+                );
+                return matchingBon ? (
+                  <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                    {matchingBon.reference}
+                  </span>
+                ) : (
+                  ev.tier_label
+                );
+              },
+            },
+            {
+              key: 'validity',
+              label: 'Validité (90j)',
+              hidden: (ev) =>
+                !bons.some((b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester),
+              render: (ev) => {
+                const matchingBon = bons.find(
+                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+                );
+                if (!matchingBon) return '-';
+                return (
+                  <div className="space-y-0.5">
+                    <div>
+                      Exp. {matchingBon.expires_at} ({matchingBon.days_remaining} j)
+                    </div>
+                    {matchingBon.reminder_15_days && (
+                      <div className="text-xs font-bold text-amber-600">
+                        Rappel 15 j avant expiration
+                      </div>
+                    )}
+                    {matchingBon.prolongation_motif && (
+                      <div className="text-xs text-teal-600 dark:text-teal-400 break-words">
+                        Prolongé (+{matchingBon.prolongation_days}j) : {matchingBon.prolongation_motif}
+                      </div>
+                    )}
+                  </div>
+                );
+              },
+            },
+            {
+              key: 'bon_amount',
+              label: 'Valeur du bon',
+              isAmount: true,
+              render: (ev) => {
+                const matchingBon = bons.find(
+                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+                );
+                if (!matchingBon) return '0 FCFA';
+                return matchingBon.revealed && typeof matchingBon.amount === 'number'
+                  ? `${matchingBon.amount.toLocaleString('fr-FR')} FCFA`
+                  : 'Montant masqué';
+              },
+            },
+            {
+              key: 'basket_amount',
+              label: 'Panier / Remis',
+              isAmount: true,
+              hidden: (ev) => {
+                const matchingBon = bons.find(
+                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+                );
+                return (
+                  !matchingBon ||
+                  (Number(matchingBon.basket_total || 0) <= 0 &&
+                    Number(matchingBon.delivered_total || 0) <= 0)
+                );
+              },
+              render: (ev) => {
+                const matchingBon = bons.find(
+                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
+                );
+                if (!matchingBon) return null;
+                return `Panier : ${Number(matchingBon.basket_total || 0).toLocaleString('fr-FR')} FCFA • Remis : ${Number(matchingBon.delivered_total || 0).toLocaleString('fr-FR')} FCFA`;
+              },
+            },
+          ]}
+          renderActions={(ev) => {
             const matchingBon = bons.find(
               (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
             );
@@ -1927,14 +2097,14 @@ export const CadeauxView: React.FC<CadeauxViewProps> = ({ currentUser, logoUrl, 
                       'Prolongation exceptionnelle accordée par la Direction'
                   );
                 }}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                className="min-h-[48px] px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
               >
                 Prolonger (motif)
               </button>
             );
           }}
           totalsFooter={
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 w-full">
               <span>Total vendeurs évalués ({selectedSemester}) : {filteredEvaluations.length}</span>
               <span className="whitespace-nowrap font-black text-[var(--marque-fonce)] dark:text-teal-300">
                 Moyenne :{' '}
@@ -1948,173 +2118,6 @@ export const CadeauxView: React.FC<CadeauxViewProps> = ({ currentUser, logoUrl, 
               </span>
             </div>
           }
-          columns={[
-            {
-              key: 'vendor',
-              header: 'Vendeur',
-              hideOnMobileCard: true,
-              render: (ev) => (
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-white">{ev.vendor_name}</div>
-                  <div className="text-[11px] text-slate-500">
-                    {ev.vendor_code} &bull; Clôture {ev.closure_date}
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: 'criteria',
-              header: 'Détail des Critères',
-              mobileLabel: 'Critères',
-              align: 'center',
-              render: (ev) => (
-                <div className="inline-flex flex-wrap items-center justify-center gap-1.5 text-[11px]">
-                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    CA: <strong>{ev.score_ca}</strong>/{weights.ca}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    Rég: <strong>{ev.score_regularite}</strong>/{weights.regularite}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    Vers: <strong>{ev.score_versements}</strong>/{weights.versements}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    PDV: <strong>{ev.score_pdv}</strong>/{weights.pdv}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    Rig: <strong>{ev.score_rigueur}</strong>/{weights.rigueur}
-                  </span>
-                </div>
-              ),
-            },
-            {
-              key: 'note',
-              header: 'Note / 20',
-              align: 'center',
-              isNumeric: true,
-              hideOnMobileCard: true,
-              render: (ev) => (
-                <span
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-black text-xs ${
-                    ev.note_finale >= 10
-                      ? 'bg-teal-50 text-[#008DA9] dark:bg-teal-950/60 dark:text-teal-300'
-                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                  }`}
-                >
-                  {ev.note_finale} / 20
-                </span>
-              ),
-            },
-            {
-              key: 'bon',
-              header: 'Bon & Valeur Remise',
-              mobileLabel: 'Bon cadeau',
-              align: 'center',
-              isNumeric: true,
-              render: (ev) => {
-                const matchingBon = bons.find(
-                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
-                );
-                return matchingBon ? (
-                  <div className="space-y-0.5">
-                    <div className="font-mono font-bold text-[11px] text-slate-800 dark:text-slate-200">
-                      {matchingBon.reference}
-                    </div>
-                    <div className="text-[11px] font-bold text-[#008DA9] whitespace-nowrap">
-                      {matchingBon.revealed && typeof matchingBon.amount === 'number'
-                        ? `Bon : ${matchingBon.amount.toLocaleString('fr-FR')} FCFA`
-                        : 'Carte non grattée (montant masqué)'}
-                    </div>
-                    {(Number(matchingBon.basket_total || 0) > 0 ||
-                      Number(matchingBon.delivered_total || 0) > 0) && (
-                      <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
-                        Panier : {Number(matchingBon.basket_total || 0).toLocaleString('fr-FR')} FCFA &bull; Remis
-                        : {Number(matchingBon.delivered_total || 0).toLocaleString('fr-FR')} FCFA
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-[11px] text-slate-400">{ev.tier_label}</span>
-                );
-              },
-            },
-            {
-              key: 'validity',
-              header: 'Validité (90j) & Statut',
-              mobileLabel: 'Validité & Statut',
-              align: 'center',
-              render: (ev) => {
-                const matchingBon = bons.find(
-                  (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
-                );
-                return matchingBon ? (
-                  <div className="flex flex-col items-center gap-1">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        matchingBon.status === 'Reçu'
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                          : matchingBon.status === 'Remis'
-                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                          : matchingBon.status === 'À préparer'
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          : matchingBon.is_expired
-                          ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                      }`}
-                    >
-                      {matchingBon.status}
-                    </span>
-                    <span className="text-[10px] text-slate-500">
-                      Exp. {matchingBon.expires_at} ({matchingBon.days_remaining} j)
-                    </span>
-                    {matchingBon.reminder_15_days && (
-                      <span className="text-[10px] font-bold text-amber-600">
-                        Rappel 15 j avant expiration
-                      </span>
-                    )}
-                    {matchingBon.prolongation_motif && (
-                      <span className="text-[10px] text-teal-600 dark:text-teal-400" title={matchingBon.prolongation_motif}>
-                        Prolongé (+{matchingBon.prolongation_days}j) : {matchingBon.prolongation_motif}
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-[10px] text-slate-400">-</span>
-                );
-              },
-            },
-            ...(isAdmin
-              ? ([
-                  {
-                    key: 'actions',
-                    header: 'Prolongation',
-                    align: 'right' as const,
-                    hideOnMobileCard: true,
-                    render: (ev: any) => {
-                      const matchingBon = bons.find(
-                        (b) => b.vendor_id === ev.vendor_id && b.semester === ev.semester
-                      );
-                      return matchingBon && matchingBon.status !== 'Reçu' ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProlongingBon(matchingBon);
-                            setProlongExtraDays(30);
-                            setProlongMotif(
-                              matchingBon.prolongation_motif ||
-                                'Prolongation exceptionnelle accordée par la Direction'
-                            );
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
-                        >
-                          Prolonger (motif)
-                        </button>
-                      ) : null;
-                    },
-                  },
-                ] as DataTableColumn<any>[])
-              : []),
-          ]}
         />
       </div>
 
@@ -2368,39 +2371,53 @@ export const CadeauxView: React.FC<CadeauxViewProps> = ({ currentUser, logoUrl, 
       </div>
 
       {/* JOURNAL D'AUDIT DES NOTES & BONS SEMESTRIELS */}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="font-bold text-xs text-slate-700 dark:text-slate-300 flex items-center gap-2">
             <History className="w-4 h-4 text-[#008DA9]" />
-            <span>Journal d'Audit (Clôtures, Révélations, Paniers, Remises &amp; Prolongations)</span>
+            <span>Journal d&apos;Audit (Clôtures, Révélations, Paniers, Remises &amp; Prolongations)</span>
           </div>
           <span className="text-[11px] font-mono text-slate-400">{auditLogs.length} entrées</span>
         </div>
-        <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs max-h-72 overflow-y-auto">
-          {auditLogs.length === 0 ? (
-            <div className="p-6 text-center text-slate-400">Aucune entrée d'audit pour le moment.</div>
-          ) : (
-            auditLogs.map((log) => (
-              <div
-                key={log.id}
-                className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50 dark:hover:bg-slate-800/40"
-              >
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono font-bold text-[10px] text-[#008DA9]">
-                      {log.action}
-                    </span>
-                    <span className="text-[11px] font-semibold text-slate-500">{log.user_role}</span>
-                  </div>
-                  <div className="text-slate-700 dark:text-slate-300">{log.details}</div>
-                </div>
-                <div className="text-[11px] font-mono text-slate-400 shrink-0">
-                  {String(log.created_at).replace('T', ' ').slice(0, 19)}
-                </div>
-              </div>
-            ))
+        <CardList<any>
+          data={auditLogs}
+          rowKey={(log) => String(log.id)}
+          pageSize={20}
+          emptyMessage="Aucune entrée d'audit pour le moment."
+          searchable
+          searchPlaceholder="Rechercher une action d'audit, un rôle, un détail..."
+          searchPredicate={(log, q) =>
+            String(log.action || '').toLowerCase().includes(q) ||
+            String(log.user_role || '').toLowerCase().includes(q) ||
+            String(log.details || '').toLowerCase().includes(q)
+          }
+          renderTitle={(log) => (
+            <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+              {log.action}
+            </span>
           )}
-        </div>
+          renderSubtitle={(log) => (
+            <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+              {String(log.created_at || '').replace('T', ' ').slice(0, 19)}
+            </span>
+          )}
+          renderBadges={(log) => (
+            <span className="px-2.5 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/60 font-bold text-xs text-[#008DA9] dark:text-teal-300">
+              {log.user_role}
+            </span>
+          )}
+          fields={[
+            {
+              key: 'details',
+              label: 'Détails',
+              render: (log) => (
+                <span className="break-words text-slate-700 dark:text-slate-300">
+                  {log.details}
+                </span>
+              ),
+            },
+          ]}
+        />
       </div>
     </div>
   );

@@ -612,47 +612,45 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
-      {/* Header : Mon Stock par Catégorie + Bouton Faire une demande de stock */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-[var(--marque-fonce)] text-white flex items-center justify-center shadow-sm">
+      {/* Header : Mon Stock par Catégorie + Bouton Mon chargement */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5 min-w-0">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[var(--marque-fonce)] text-white flex items-center justify-center shadow-sm shrink-0">
               <Boxes className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-                  Mon Stock par Catégorie
-                </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white">
-                  Vendeur
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-                  Stock camionnette par gamme et réapprovisionnement.
-                </p>
-                <InfoTooltip text="Consultez votre stock disponible en camionnette classé par catégorie (gamme) et effectuez vos demandes de réapprovisionnement." />
-              </div>
+            <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
+              <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white leading-snug">
+                Mon Stock par Catégorie
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white shrink-0">
+                Vendeur
+              </span>
             </div>
+          </div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-snug">
+              Stock camionnette par gamme et réapprovisionnement.
+            </p>
+            <InfoTooltip text="Consultez votre stock disponible en camionnette classé par catégorie (gamme) et effectuez vos demandes de réapprovisionnement." />
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           <button
             onClick={() => handleOpenStockRequestModal()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer"
+            className="inline-flex items-center justify-center gap-2 min-h-[48px] h-auto py-3 px-4 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer min-w-0"
           >
-            <PlusCircle className="w-4 h-4" />
-            <span>Faire une demande de stock</span>
+            <PlusCircle className="w-4 h-4 shrink-0" />
+            <span>Mon chargement</span>
           </button>
 
           {onNavigateTab && (
             <button
               onClick={() => onNavigateTab('nouvelle-vente')}
-              className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+              className="inline-flex items-center justify-center gap-2 min-h-[48px] h-auto py-3 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer min-w-0"
             >
-              <ShoppingBag className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              <ShoppingBag className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
               <span>Nouvelle vente</span>
             </button>
           )}
@@ -662,7 +660,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
       {/* Confirmation Banner after submitting a stock request */}
       {requestSuccessMsg && (
         <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/70 text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-bold">
+          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-bold min-w-0 flex-1">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
             <span>{requestSuccessMsg}</span>
           </div>
@@ -678,14 +676,14 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
       {/* 4 KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div
-          className="rounded-2xl p-5 text-white shadow-md relative overflow-hidden"
+          className="rounded-2xl p-5 text-white shadow-md relative h-auto"
           style={{ backgroundColor: '#008DA9' }}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-white/85">
               Stock Disponible Vendeur
             </span>
-            <Boxes className="w-5 h-5 text-white/90" />
+            <Boxes className="w-5 h-5 text-white/90 shrink-0" />
           </div>
           <p className="text-3xl font-black mt-2">
             {globalTotals.availableBoxes}{' '}
@@ -696,34 +694,35 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div className="flex items-center justify-between">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-xs h-auto">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Valeur Totale de Mon Stock
             </span>
-            <Sparkles className="w-5 h-5 text-teal-600" />
+            <Sparkles className="w-5 h-5 text-teal-600 shrink-0" />
           </div>
           <p className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-            {globalTotals.stockValue.toLocaleString('fr-FR')}{' '}
-            <span className="text-xs font-bold text-teal-600">FCFA</span>
+            <span className="baobab-amount">
+              {globalTotals.stockValue.toLocaleString('fr-FR')} FCFA
+            </span>
           </p>
           <p className="text-xs text-slate-500 mt-1">
             Valorisation dépôt-vente dans la camionnette
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div className="flex items-center justify-between">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-xs h-auto">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Catégories (Gammes)
             </span>
-            <Layers className="w-5 h-5 text-indigo-500" />
+            <Layers className="w-5 h-5 text-indigo-500 shrink-0" />
           </div>
           <p className="text-2xl font-black text-slate-900 dark:text-white mt-2">
             {categoriesSummary.length}{' '}
             <span className="text-sm font-bold text-slate-500">catégories</span>
           </p>
-          <p className="text-xs text-slate-500 mt-1 truncate">
+          <p className="text-xs text-slate-500 mt-1 leading-snug">
             {categoriesSummary.map((c) => c.gamme).join(' • ')}
           </p>
         </div>
@@ -790,15 +789,15 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
           <button
             onClick={() => setSelectedCategory('all')}
-            className={`px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
+            className={`w-full min-w-0 min-h-[48px] h-auto px-3 py-3 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
               selectedCategory === 'all'
                 ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
                 : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <span className="flex items-center gap-1.5 min-w-0">
+            <span className="flex items-center gap-1.5 min-w-0 flex-1">
               <Layers className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Toutes les catégories</span>
+              <span className="whitespace-normal [overflow-wrap:anywhere] leading-snug">Toutes les catégories</span>
             </span>
             <span
               className={`px-1.5 py-0.5 rounded-md text-[10px] font-black shrink-0 ${
@@ -817,13 +816,13 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
               <button
                 key={cat.gamme}
                 onClick={() => setSelectedCategory(cat.gamme)}
-                className={`px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
+                className={`w-full min-w-0 min-h-[48px] h-auto px-3 py-3 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
                   isSelected
                     ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
                     : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                <span className="truncate">{cat.gamme}</span>
+                <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere] leading-snug">{cat.gamme}</span>
                 <span
                   className={`px-1.5 py-0.5 rounded-md text-[10px] font-black shrink-0 ${
                     isSelected
@@ -861,46 +860,46 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
           filteredCategoryGroups.map((group) => (
             <div
               key={group.gamme}
-              className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden"
+              className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs h-auto"
             >
               {/* Category Header Bar */}
               <div className="p-4 sm:p-5 bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm shadow-xs shrink-0"
                     style={{ backgroundColor: '#008DA9' }}
                   >
                     <Layers className="w-5 h-5" />
                   </div>
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
                         Catégorie : {group.gamme}
                       </h2>
                       <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300">
-                        {group.items.length} produit{group.items.length > 1 ? 's' : ''}
+                        {group.items.length} {group.items.length > 1 ? 'produits' : 'produit'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       Stock disponible dans cette catégorie :{' '}
                       <strong className="text-slate-800 dark:text-slate-200">
-                        {group.totalAvailableBoxes} cartons
+                        {group.totalAvailableBoxes} {group.totalAvailableBoxes > 1 ? 'cartons' : 'carton'}
                       </strong>{' '}
                       ({group.totalAvailableUnits.toLocaleString('fr-FR')} unités) &bull; Valeur :{' '}
-                      <strong className="text-teal-600 dark:text-teal-400">
+                      <strong className="text-teal-600 dark:text-teal-400 baobab-amount">
                         {group.totalStockValue.toLocaleString('fr-FR')} FCFA
                       </strong>
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <button
                     onClick={() => handleOpenStockRequestModal({ category: group.gamme })}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/60 dark:hover:bg-teal-900/70 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 font-bold text-xs transition cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] h-auto px-3.5 py-3 rounded-xl bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/60 dark:hover:bg-teal-900/70 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 font-bold text-xs transition cursor-pointer min-w-0"
                   >
-                    <PlusCircle className="w-3.5 h-3.5" />
-                    <span>Demander du stock ({group.gamme})</span>
+                    <PlusCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Demander ({group.gamme})</span>
                   </button>
                 </div>
               </div>
@@ -1094,11 +1093,11 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
       </div>
 
       {/* SECTION : MES DEMANDES DE STOCK RÉCENTES */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs h-auto">
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-              <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
               <span>Suivi de Mes Demandes de Stock ({myStockRequests.length})</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1107,10 +1106,10 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
           </div>
           <button
             onClick={() => handleOpenStockRequestModal()}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer self-start sm:self-auto"
+            className="inline-flex items-center justify-center gap-2 min-h-[48px] h-auto px-4 py-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer self-start sm:self-auto min-w-0"
           >
-            <PlusCircle className="w-4 h-4" />
-            <span>Nouvelle demande de stock</span>
+            <PlusCircle className="w-4 h-4 shrink-0" />
+            <span>Mon chargement</span>
           </button>
         </div>
 
@@ -1211,18 +1210,18 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
       {/* MODAL : FAIRE UNE DEMANDE DE STOCK (PAR CATÉGORIE & MULTI-PRODUITS) */}
       {showRequestModal && (
         <FormModal
-          title="Faire une Demande de Stock"
+          title="Mon chargement"
           subtitle="Sélectionnez vos produits par catégorie, validez chaque ligne puis transmettez votre demande au Magasinier."
           icon={<Boxes className="w-5 h-5 text-teal-600" />}
           onClose={() => setShowRequestModal(false)}
           onSubmit={handleSubmitStockRequest}
           submitLabel={
             <>
-              <Send className="w-4 h-4" />
+              <Send className="w-4 h-4 shrink-0" />
               <span>
                 {isSubmittingRequest
                   ? 'Envoi en cours...'
-                  : 'Envoyer la demande de stock au Magasinier'}
+                  : 'Envoyer la demande'}
               </span>
             </>
           }
@@ -1232,9 +1231,9 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
           <div className="space-y-4">
             {requestError && <FieldError message={requestError} />}
 
-            {/* Desired Date */}
+            {/* Desired Date & Category */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Date souhaitée de chargement *
                 </label>
@@ -1242,27 +1241,40 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                   type="date"
                   value={desiredDate}
                   onChange={(e) => setDesiredDate(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  className="w-full px-3.5 py-2 text-[16px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
                   required
                 />
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Filtrer par catégorie (gamme)
                 </label>
                 <select
                   value={modalCategoryFilter}
                   onChange={(e) => setModalCategoryFilter(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  className="w-full px-3.5 py-2.5 text-[16px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
                 >
                   <option value="all">Toutes les catégories ({categoriesSummary.length})</option>
                   {categoriesSummary.map((cat) => (
                     <option key={cat.gamme} value={cat.gamme}>
-                      {cat.gamme} (Mon stock : {cat.totalAvailableBoxes} ctn)
+                      {cat.gamme}
                     </option>
                   ))}
                 </select>
+                <p className="text-xs font-semibold text-teal-700 dark:text-teal-400 mt-1.5">
+                  {modalCategoryFilter === 'all'
+                    ? `Mon stock : ${globalTotals.availableBoxes} ${
+                        globalTotals.availableBoxes > 1 ? 'cartons disponibles' : 'carton disponible'
+                      }`
+                    : `Mon stock (${modalCategoryFilter}) : ${
+                        categoriesSummary.find((c) => c.gamme === modalCategoryFilter)?.totalAvailableBoxes ?? 0
+                      } ${
+                        (categoriesSummary.find((c) => c.gamme === modalCategoryFilter)?.totalAvailableBoxes ?? 0) > 1
+                          ? 'cartons disponibles'
+                          : 'carton disponible'
+                      }`}
+                </p>
               </div>
             </div>
 
@@ -1272,7 +1284,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
                   Produits validés dans votre demande ({validatedLines.length})
                 </p>
-                <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl h-auto">
                   {validatedLines.map((line, idx) => (
                     <div
                       key={line.productId}
@@ -1291,10 +1303,10 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                         <div className="text-slate-500 mt-1">
                           Quantité demandée :{' '}
                           <strong className="text-emerald-700 dark:text-emerald-400">
-                            {line.requestedBoxes} cartons
+                            {line.requestedBoxes} {line.requestedBoxes > 1 ? 'cartons' : 'carton'}
                           </strong>{' '}
                           &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA ={' '}
-                          <strong className="text-slate-800 dark:text-slate-200">
+                          <strong className="text-slate-800 dark:text-slate-200 baobab-amount">
                             {line.total.toLocaleString('fr-FR')} FCFA
                           </strong>
                         </div>
@@ -1314,13 +1326,16 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
 
             {/* Line Builder by Category */}
             {isAddingLine ? (
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-teal-500/40 space-y-4">
-                <div className="flex items-center justify-between">
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-teal-500/40 space-y-4 h-auto">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between md:flex-wrap gap-1 min-w-0">
                   <p className="text-xs font-black uppercase tracking-wider text-teal-700 dark:text-teal-400">
-                    Sélectionner un produit à demander
+                    Sélectionner un produit
                   </p>
-                  <span className="text-[11px] font-semibold text-slate-500">
-                    {availableProductsForRequest.length} produit(s) disponible(s)
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    {availableProductsForRequest.length}{' '}
+                    {availableProductsForRequest.length > 1
+                      ? 'produits disponibles'
+                      : 'produit disponible'}
                   </span>
                 </div>
 
@@ -1329,7 +1344,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                     Aucun autre produit disponible dans cette catégorie. Changez de catégorie ci-dessus.
                   </p>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-96 overflow-y-auto pr-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 h-auto">
                     {availableProductsForRequest.map((p) => {
                       const isSelected = p.productId === currentLineProductId;
                       return (
@@ -1342,15 +1357,10 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                               : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-400 cursor-pointer'
                           }`}
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300 mb-1">
-                                {p.gamme}
-                              </span>
-                              <p className="text-xs font-black text-slate-900 dark:text-white leading-tight">
-                                {p.name}
-                              </p>
-                            </div>
+                          <div className="flex items-start justify-between gap-2 min-w-0">
+                            <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300">
+                              {p.gamme}
+                            </span>
                             <span
                               className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
                                 isSelected
@@ -1362,16 +1372,20 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                             </span>
                           </div>
 
-                          <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-slate-800">
-                            <span className="text-slate-600 dark:text-slate-300">
+                          <p className="text-xs font-black text-slate-900 dark:text-white leading-tight break-words">
+                            {p.name}
+                          </p>
+
+                          <div className="flex flex-col gap-0.5 text-[11px] pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                            <div className="text-slate-600 dark:text-slate-300">
                               Mon stock :{' '}
                               <strong className="text-teal-700 dark:text-teal-400">
                                 {p.theoreticalQty} ctn
                               </strong>
-                            </span>
-                            <span className="text-slate-500">
+                            </div>
+                            <div className="text-slate-500 dark:text-slate-400">
                               Dépôt : <strong>{p.stock_depot} ctn</strong>
-                            </span>
+                            </div>
                           </div>
 
                           {isSelected && (
@@ -1409,7 +1423,7 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                                         setCurrentLineQty(Math.min(p.stock_depot, Math.max(0, val)));
                                       }
                                     }}
-                                    className="w-full h-9 px-3 text-sm font-black text-center rounded-lg border-2 border-[var(--marque-fonce)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                                    className="w-full min-w-[76px] h-10 px-2 text-base font-mono font-black text-center rounded-lg border-2 border-[var(--marque-fonce)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
                                   />
                                   <button
                                     type="button"

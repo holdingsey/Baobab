@@ -20,7 +20,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
         }`}
       >
         <Download className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
-        <span className={compact ? 'hidden md:inline whitespace-nowrap' : 'whitespace-nowrap'}>Installer l&apos;App</span>
+        <span className={compact ? 'hidden md:inline' : ''}>Installer l&apos;App</span>
       </button>
     );
   }
@@ -36,7 +36,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
           }`}
         >
           <Smartphone className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-          <span className={compact ? 'hidden md:inline whitespace-nowrap' : 'whitespace-nowrap'}>Installer (iOS)</span>
+          <span className={compact ? 'hidden md:inline' : ''}>Installer (iOS)</span>
         </button>
 
         {showIOSGuide && (

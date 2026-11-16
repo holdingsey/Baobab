@@ -784,10 +784,10 @@ function searchOfflineCache(
           reference: String(u.code || u.id),
           titre: `${u.name} (${u.code})`,
           sous_titre: isInactiveVendors
-            ? `${u.team || 'Équipe Vente'} • Tél : ${u.phone || 'N/R'} • ${
+            ? `Vendeur • Tél : ${u.phone || 'N/R'} • ${
                 latestDate ? `Sans vente depuis ${daysSince} jours` : 'Aucune vente enregistrée'
               }`
-            : `Rôle : ${u.role} • Équipe : ${u.team || 'N/R'} • Tél : ${u.phone || 'N/R'}`,
+            : `Rôle : ${u.role}${u.role !== 'Vendeur' && u.team ? ` • Service : ${u.team}` : ''} • Tél : ${u.phone || 'N/R'}`,
           url: '/?tab=utilisateurs',
           donnees: { ...u, days_since_last_sale: daysSince },
         };
@@ -1237,7 +1237,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                     setActiveChip(chip.id);
                     inputRef.current?.focus();
                   }}
-                  className={`min-h-[48px] px-3.5 py-2 rounded-xl text-sm font-bold whitespace-nowrap shrink-0 border transition cursor-pointer flex items-center gap-1.5 ${
+                  className={`min-h-[48px] h-auto px-3.5 py-2 rounded-xl text-sm font-bold shrink-0 border transition cursor-pointer flex items-center gap-1.5 ${
                     isSelected
                       ? 'bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] border-[var(--marque-fonce)] shadow-xs'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'

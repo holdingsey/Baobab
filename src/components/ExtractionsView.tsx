@@ -15,6 +15,7 @@ import {
 import { UserSession as User } from './LoginScreen';
 import { FormModal } from './FormModal';
 import { DataTable, DataTableColumn } from './DataTable';
+import { InfoTooltip } from './InfoTooltip';
 import { ensureUserAuthToken } from '../utils/pushNotifications';
 
 export interface ExtractionDatasetMeta {
@@ -842,13 +843,13 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
       }
     >
       {/* 1. Raccourcis de période + Dates Du / Au */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="space-y-3.5 w-full min-w-0">
+        <div className="flex flex-col gap-2.5 w-full min-w-0">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            <Calendar className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+            <Calendar className="w-4 h-4 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
             Période d&apos;extraction
           </span>
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:flex md:items-center gap-2 flex-wrap w-full">
             {[
               { id: 'today', label: "Aujourd'hui" },
               { id: '7days', label: '7 jours' },
@@ -861,9 +862,9 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
                 key={sc.id}
                 type="button"
                 onClick={() => applyShortcut(sc.id as any)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center justify-center text-center ${
                   activeShortcut === sc.id
-                    ? 'bg-[var(--marque-fonce)] text-white border-[var(--marque-fonce)]'
+                    ? 'bg-[var(--marque-fonce)] text-white border-[var(--marque-fonce)] shadow-2xs'
                     : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                 }`}
               >
@@ -873,9 +874,14 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
           </div>
         </div>
 
-        <div className="form-row-2">
-          <div>
-            <label htmlFor="ext-date-du">Date de début (Du)</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4 w-full">
+          <div className="flex flex-col gap-1.5 min-w-0 w-full">
+            <label
+              htmlFor="ext-date-du"
+              className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+            >
+              Date de début (Du)
+            </label>
             <input
               id="ext-date-du"
               type="date"
@@ -884,10 +890,16 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
                 setDu(e.target.value);
                 setActiveShortcut('custom');
               }}
+              className="w-full block"
             />
           </div>
-          <div>
-            <label htmlFor="ext-date-au">Date de fin (Au)</label>
+          <div className="flex flex-col gap-1.5 min-w-0 w-full">
+            <label
+              htmlFor="ext-date-au"
+              className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+            >
+              Date de fin (Au)
+            </label>
             <input
               id="ext-date-au"
               type="date"
@@ -896,6 +908,7 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
                 setAu(e.target.value);
                 setActiveShortcut('custom');
               }}
+              className="w-full block"
             />
           </div>
         </div>
@@ -903,20 +916,26 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
 
       {/* 2. Filtres adaptés au jeu de données */}
       {meta.filterFields.length > 0 && (
-        <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+        <div className="space-y-3.5 pt-3.5 border-t border-slate-200 dark:border-slate-800 w-full min-w-0">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            <Filter className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+            <Filter className="w-4 h-4 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
             Filtres adaptés ({meta.title})
           </span>
 
-          <div className="form-row-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4 w-full">
             {meta.filterFields.includes('vendor_id') && (
-              <div>
-                <label htmlFor="ext-filter-vendor">Vendeur</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-vendor"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Vendeur
+                </label>
                 <select
                   id="ext-filter-vendor"
                   value={filters.vendor_id || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, vendor_id: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les vendeurs</option>
                   {vendors.map((v) => (
@@ -929,12 +948,18 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('pdv_id') && (
-              <div>
-                <label htmlFor="ext-filter-pdv">Point de Vente (PDV)</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-pdv"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Point de Vente (PDV)
+                </label>
                 <select
                   id="ext-filter-pdv"
                   value={filters.pdv_id || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, pdv_id: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les PDV</option>
                   {pdvs.map((p) => (
@@ -947,12 +972,18 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('client_id') && (
-              <div>
-                <label htmlFor="ext-filter-client">Client en gros</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-client"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Client en gros
+                </label>
                 <select
                   id="ext-filter-client"
                   value={filters.client_id || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, client_id: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les clients en gros</option>
                   {wholesaleClients.map((c) => (
@@ -965,12 +996,18 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('gamme') && (
-              <div>
-                <label htmlFor="ext-filter-gamme">Gamme de produit</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-gamme"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Gamme de produit
+                </label>
                 <select
                   id="ext-filter-gamme"
                   value={filters.gamme || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, gamme: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Toutes les gammes</option>
                   {gammes.map((g) => (
@@ -983,12 +1020,18 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('payment_method') && (
-              <div>
-                <label htmlFor="ext-filter-payment">Mode de paiement</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-payment"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Mode de paiement
+                </label>
                 <select
                   id="ext-filter-payment"
                   value={filters.payment_method || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, payment_method: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les modes</option>
                   <option value="especes">Espèces</option>
@@ -1000,12 +1043,18 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('status') && meta.statusOptions && (
-              <div>
-                <label htmlFor="ext-filter-status">Statut</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-status"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Statut
+                </label>
                 <select
                   id="ext-filter-status"
                   value={filters.status || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les statuts</option>
                   {meta.statusOptions.map((st) => (
@@ -1018,38 +1067,56 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('fournisseur') && (
-              <div>
-                <label htmlFor="ext-filter-fournisseur">Fournisseur</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-fournisseur"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Fournisseur
+                </label>
                 <input
                   id="ext-filter-fournisseur"
                   type="text"
                   placeholder="Ex: Moulins du Mali..."
                   value={filters.fournisseur || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, fournisseur: e.target.value }))}
+                  className="w-full block"
                 />
               </div>
             )}
 
             {meta.filterFields.includes('category') && (
-              <div>
-                <label htmlFor="ext-filter-category">Catégorie</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-category"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Catégorie
+                </label>
                 <input
                   id="ext-filter-category"
                   type="text"
                   placeholder="Ex: Carburant, Logistique..."
                   value={filters.category || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, category: e.target.value }))}
+                  className="w-full block"
                 />
               </div>
             )}
 
             {meta.filterFields.includes('semester') && (
-              <div>
-                <label htmlFor="ext-filter-semester">Semestre</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-semester"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Semestre
+                </label>
                 <select
                   id="ext-filter-semester"
                   value={filters.semester || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, semester: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les semestres</option>
                   <option value="2026-S2">2026-S2</option>
@@ -1060,12 +1127,18 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('role') && (
-              <div>
-                <label htmlFor="ext-filter-role">Rôle utilisateur</label>
+              <div className="flex flex-col gap-1.5 min-w-0 w-full">
+                <label
+                  htmlFor="ext-filter-role"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Rôle utilisateur
+                </label>
                 <select
                   id="ext-filter-role"
                   value={filters.role || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, role: e.target.value }))}
+                  className="w-full block"
                 >
                   <option value="">Tous les rôles</option>
                   <option value="Administrateur">Administrateur</option>
@@ -1080,14 +1153,26 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
             )}
 
             {meta.filterFields.includes('q') && (
-              <div>
-                <label htmlFor="ext-filter-q">Recherche par mot-clé / référence</label>
+              <div
+                className={`flex flex-col gap-1.5 min-w-0 w-full ${
+                  meta.filterFields.filter((f) => f !== 'q' && (f !== 'status' || Boolean(meta.statusOptions))).length % 2 === 0
+                    ? 'sm:col-span-2'
+                    : ''
+                }`}
+              >
+                <label
+                  htmlFor="ext-filter-q"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-200 leading-snug"
+                >
+                  Recherche par mot-clé / référence
+                </label>
                 <input
                   id="ext-filter-q"
                   type="text"
                   placeholder="Référence, nom, code..."
                   value={filters.q || ''}
                   onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))}
+                  className="w-full block"
                 />
               </div>
             )}
@@ -1096,13 +1181,15 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
       )}
 
       {/* 3. Choix du format : "CSV", "Excel" ou "PDF" (trois boutons égaux de 48 px) */}
-      <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
-        <label>Format du fichier à générer</label>
-        <div className="grid grid-cols-3 gap-2.5">
+      <div className="space-y-2.5 pt-3.5 border-t border-slate-200 dark:border-slate-800 w-full min-w-0">
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          Format du fichier à générer
+        </label>
+        <div className="grid grid-cols-3 gap-2.5 sm:gap-3 w-full">
           <button
             type="button"
             onClick={() => setFormat('csv')}
-            className={`h-[48px] min-h-[48px] px-3 rounded-[10px] border font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
+            className={`h-[48px] min-h-[48px] w-full px-3 rounded-[10px] border font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
               format === 'csv'
                 ? 'border-[#15803D] bg-[#DCFCE7] dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-300'
                 : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
@@ -1115,7 +1202,7 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
           <button
             type="button"
             onClick={() => setFormat('xlsx')}
-            className={`h-[48px] min-h-[48px] px-3 rounded-[10px] border font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
+            className={`h-[48px] min-h-[48px] w-full px-3 rounded-[10px] border font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
               format === 'xlsx'
                 ? 'border-[#15803D] bg-[#DCFCE7] dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-300'
                 : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
@@ -1128,7 +1215,7 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
           <button
             type="button"
             onClick={() => setFormat('pdf')}
-            className={`h-[48px] min-h-[48px] px-3 rounded-[10px] border font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
+            className={`h-[48px] min-h-[48px] w-full px-3 rounded-[10px] border font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
               format === 'pdf'
                 ? 'border-[#15803D] bg-[#DCFCE7] dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-300'
                 : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
@@ -1141,7 +1228,7 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
       </div>
 
       {/* 4. Nombre de lignes estimé & Nom de fichier explicite */}
-      <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 space-y-2 text-xs">
+      <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 space-y-2 text-xs w-full min-w-0">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <span className="text-slate-500 dark:text-slate-400 font-semibold">Nombre de lignes estimé :</span>
           <span className="font-black text-sm text-slate-900 dark:text-white">
@@ -1158,9 +1245,9 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center justify-between gap-2 flex-wrap pt-1.5 border-t border-slate-200/70 dark:border-slate-700/70">
-          <span className="text-slate-500 dark:text-slate-400 font-semibold">Nom du fichier :</span>
-          <code className="font-mono font-bold text-[11px] px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 break-all">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-2 border-t border-slate-200/70 dark:border-slate-700/70">
+          <span className="text-slate-500 dark:text-slate-400 font-semibold shrink-0">Nom du fichier :</span>
+          <code className="font-mono font-bold text-[11px] px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 break-all">
             {explicitFilename}
           </code>
         </div>
@@ -1475,17 +1562,17 @@ export const ExtractionsView: React.FC<ExtractionsViewProps> = ({ currentUser })
   return (
     <div className="space-y-6 w-full max-w-full min-w-0">
       {/* En-tête de l'écran Extractions */}
-      <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div className="space-y-1 min-w-0">
           <div className="flex items-center gap-2.5 flex-wrap">
             <div className="w-10 h-10 rounded-xl bg-[var(--marque-clair)] flex items-center justify-center text-[var(--marque-fonce)] shrink-0">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-lg font-black text-slate-900 dark:text-white">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-lg font-black text-slate-900 dark:text-white leading-tight">
                 Centre d&apos;Extractions &amp; Exports Certifiés
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Rôle actif : <strong className="text-slate-800 dark:text-slate-200">{currentUser.role}</strong> —{' '}
                 <strong>{uniqueAuthorizedCards.length}</strong>{' '}
                 {uniqueAuthorizedCards.length > 1 ? 'jeux de données autorisés' : 'jeu de données autorisé'}
@@ -1495,19 +1582,23 @@ export const ExtractionsView: React.FC<ExtractionsViewProps> = ({ currentUser })
         </div>
 
         {/* Barre de recherche et filtre par catégorie */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
+        <div
+          className={`grid grid-cols-1 ${
+            categories.length > 1 ? 'sm:grid-cols-2' : ''
+          } xl:flex xl:items-center gap-3 w-full xl:w-auto`}
+        >
           <input
             type="search"
             placeholder="Rechercher un jeu de données..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-10 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[var(--marque-fonce)]"
+            className="w-full xl:w-64 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[var(--marque-fonce)]"
           />
           {categories.length > 1 && (
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200"
+              className="w-full xl:w-64 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200"
             >
               <option value="all">Toutes les catégories ({uniqueAuthorizedCards.length})</option>
               {categories.map((cat) => (
@@ -1662,6 +1753,7 @@ export const ExtractionsView: React.FC<ExtractionsViewProps> = ({ currentUser })
  */
 export interface ExtractionPermissionsMatrixProps {
   currentUser: User;
+  hideHeader?: boolean;
 }
 
 const DISPLAY_ROLES: Array<{ key: string; label: string; badge: string; locked?: boolean }> = [
@@ -1711,12 +1803,15 @@ const MATRIX_DATASETS: string[] = [
 
 export const ExtractionPermissionsMatrix: React.FC<ExtractionPermissionsMatrixProps> = ({
   currentUser,
+  hideHeader = false,
 }) => {
   const [permMap, setPermMap] = useState<Record<string, boolean>>({});
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; details: string; created_at: string; user_id: string }>>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [savingCell, setSavingCell] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [roleFilter, setRoleFilter] = useState<string>('ALL');
+  const [datasetQuery, setDatasetQuery] = useState<string>('');
 
   const loadMatrix = useCallback(async () => {
     if (currentUser.role !== 'Administrateur') return;
@@ -1816,23 +1911,46 @@ export const ExtractionPermissionsMatrix: React.FC<ExtractionPermissionsMatrixPr
     }
   };
 
+  const visibleRoles = DISPLAY_ROLES.filter((r) => roleFilter === 'ALL' || r.key === roleFilter);
+  const filteredDatasets = MATRIX_DATASETS.filter((jeu) => {
+    if (!datasetQuery.trim()) return true;
+    const q = datasetQuery.trim().toLowerCase();
+    const meta = getDatasetMeta(jeu);
+    return (
+      meta.title.toLowerCase().includes(q) ||
+      jeu.toLowerCase().includes(q) ||
+      meta.category.toLowerCase().includes(q)
+    );
+  });
+
   return (
-    <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-5 w-full max-w-full min-w-0">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[var(--marque-clair)] flex items-center justify-center text-[var(--marque-fonce)] shrink-0">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-base font-black text-slate-900 dark:text-white">
-              Droits d&apos;extraction (Rôle × Jeu de données)
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Cochez ou décochez les jeux autorisés pour chaque rôle. Toutes les modifications sont appliquées immédiatement en base et journalisées dans l&apos;audit.
-            </p>
+    <div
+      className={
+        hideHeader
+          ? 'space-y-4 w-full max-w-full min-w-0'
+          : 'p-4 sm:p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 w-full max-w-full min-w-0'
+      }
+    >
+      {!hideHeader && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[var(--marque-clair)] flex items-center justify-center text-[var(--marque-fonce)] shrink-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-[18px] font-bold text-slate-900 dark:text-white leading-snug">
+                Droits d&apos;extraction
+              </h3>
+              <div className="flex items-center gap-1 mt-0.5">
+                <p className="text-[14px] text-slate-500 dark:text-slate-400 leading-snug">
+                  Matrice des autorisations d&apos;export par rôle.
+                </p>
+                <InfoTooltip text="Cochez ou décochez les jeux autorisés pour chaque rôle. Toutes les modifications sont appliquées immédiatement en base et journalisées dans l'audit." />
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {feedback && (
         <div
@@ -1851,65 +1969,118 @@ export const ExtractionPermissionsMatrix: React.FC<ExtractionPermissionsMatrixPr
         </div>
       )}
 
-      {/* Tableau Rôle par Jeu avec cases à cocher */}
-      <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden w-full max-w-full">
-        <div className="overflow-x-auto max-h-[65vh] overflow-y-auto w-full max-w-full">
-          <table className="w-full text-xs text-left border-collapse">
-            <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 uppercase text-[10px] font-bold">
-              <tr>
-                <th className="py-3 px-3 sticky left-0 z-30 bg-slate-50 dark:bg-slate-800 shadow-[1px_0_0_0_rgba(226,232,240,1)] dark:shadow-[1px_0_0_0_rgba(51,65,85,1)]">
-                  Jeu de données
-                </th>
-                {DISPLAY_ROLES.map((role) => (
-                  <th key={role.key} className="py-3 px-2.5 text-center">
-                    <div className="font-black text-slate-900 dark:text-white leading-tight">{role.label}</div>
-                    <div className="text-[9px] font-mono text-slate-400 mt-0.5">{role.badge}</div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {loading ? (
-                <tr>
-                  <td colSpan={DISPLAY_ROLES.length + 1} className="py-8 text-center text-slate-400">
-                    Chargement de la matrice des droits d&apos;extraction...
-                  </td>
-                </tr>
-              ) : (
-                MATRIX_DATASETS.map((jeu) => {
-                  const meta = getDatasetMeta(jeu);
-                  return (
-                    <tr key={jeu} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition">
-                      <td className="py-2.5 px-3 sticky left-0 z-10 bg-white dark:bg-slate-900 shadow-[1px_0_0_0_rgba(241,245,249,1)] dark:shadow-[1px_0_0_0_rgba(30,41,59,1)]">
-                        <div className="font-bold text-slate-900 dark:text-white">{meta.title}</div>
-                        <div className="text-[10px] font-mono text-slate-400">{jeu}</div>
-                      </td>
-                      {DISPLAY_ROLES.map((role) => {
-                        const checked = isAllowed(role.key, jeu);
-                        const isBusy = savingCell === `${role.key}::${jeu}`;
-                        return (
-                          <td key={`${role.key}::${jeu}`} className="py-2.5 px-2.5 text-center align-middle">
-                            <label className="inline-flex items-center justify-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={Boolean(role.locked) || isBusy}
-                                onChange={(e) => void handleToggle(role.key, jeu, e.target.checked)}
-                                aria-label={`Droit ${meta.title} pour ${role.label}`}
-                                className="w-4 h-4 rounded accent-[#15803D] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                              />
-                            </label>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+      {/* Filtres rapides : par rôle et par jeu de données */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+            Filtrer par rôle
+          </label>
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            className="w-full h-[46px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-bold text-slate-900 dark:text-white"
+          >
+            <option value="ALL">Tous les rôles ({DISPLAY_ROLES.length})</option>
+            {DISPLAY_ROLES.map((r) => (
+              <option key={r.key} value={r.key}>
+                {r.label} ({r.badge})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+            Rechercher un jeu de données
+          </label>
+          <input
+            type="text"
+            value={datasetQuery}
+            onChange={(e) => setDatasetQuery(e.target.value)}
+            placeholder="Ex: Stock, Lots, Ventes, Réceptions..."
+            className="w-full h-[46px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-white"
+          />
         </div>
       </div>
+
+      {/* Liste de cartes par jeu de données : aucune case à cocher ni colonne tronquée */}
+      {loading ? (
+        <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+          Chargement des droits d&apos;extraction...
+        </div>
+      ) : filteredDatasets.length === 0 ? (
+        <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+          Aucun jeu de données ne correspond à votre recherche.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredDatasets.map((jeu) => {
+            const meta = getDatasetMeta(jeu);
+            return (
+              <div
+                key={jeu}
+                className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 p-3.5 sm:p-4 space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/70 dark:border-slate-800 pb-2.5">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
+                      {meta.title}
+                    </div>
+                    <div className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                      {jeu}
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300 shrink-0">
+                    {meta.category}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {visibleRoles.map((role) => {
+                    const checked = isAllowed(role.key, jeu);
+                    const isBusy = savingCell === `${role.key}::${jeu}`;
+                    const isDisabled = Boolean(role.locked) || isBusy;
+                    return (
+                      <label
+                        key={`${role.key}::${jeu}`}
+                        className={`min-h-[48px] px-3.5 py-2.5 rounded-xl border flex items-center justify-between gap-3 transition select-none ${
+                          isDisabled
+                            ? 'cursor-not-allowed opacity-75'
+                            : 'cursor-pointer hover:border-[#15803D]'
+                        } ${
+                          checked
+                            ? 'border-[#15803D]/50 bg-[#15803D]/8 dark:bg-[#15803D]/15'
+                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1 pr-1">
+                          <div className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
+                            {role.label}
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                            {role.badge}
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={isDisabled}
+                            onChange={(e) => void handleToggle(role.key, jeu, e.target.checked)}
+                            aria-label={`Droit ${meta.title} pour ${role.label}`}
+                            className="w-5 h-5 shrink-0 rounded accent-[#15803D] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          />
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Journal des modifications de droits d'extraction */}
       {auditLogs.length > 0 && (
@@ -1933,6 +2104,19 @@ export const ExtractionPermissionsMatrix: React.FC<ExtractionPermissionsMatrixPr
           </div>
         </div>
       )}
+
+      {/* Bouton principal vert en bas de la section */}
+      <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => void loadMatrix()}
+          disabled={loading}
+          className="h-[48px] min-h-[48px] px-5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <span>Actualiser les droits d&apos;extraction</span>
+        </button>
+      </div>
     </div>
   );
 };

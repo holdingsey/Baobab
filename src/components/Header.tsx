@@ -42,6 +42,9 @@ import {
   getActivePushSubscription,
   requestAndSubscribePush,
   fetchUserPushStatus,
+  getPushBannerDismissInfo,
+  dismissPushBannerFor7Days,
+  clearPushBannerDismissal,
 } from '../utils/pushNotifications';
 
 interface HeaderProps {
@@ -184,30 +187,38 @@ export const Header: React.FC<HeaderProps> = ({
     syncAppBadge(unreadCount);
   }, [unreadCount]);
 
-  // Vérifie l'état d'abonnement push après connexion pour afficher l'invite discrète "Activer les notifications"
+  // Vérifie l'état d'abonnement push après connexion pour afficher la bannière dans le flux de la page
   const checkPushSubscriptionState = React.useCallback(async () => {
-    await ensureUserAuthToken(currentUser.id, currentUser.role);
     const support = getPushSupportInfo();
     if (!support.supported) {
       setShowPushInvite(false);
       return;
     }
-    const dismissedKey = `baobab_push_invite_dismissed_${currentUser.id}`;
-    if (sessionStorage.getItem(dismissedKey) === '1') {
+    const dismissInfo = getPushBannerDismissInfo(currentUser.id);
+    if (dismissInfo.dismissed) {
       setShowPushInvite(false);
       return;
     }
-    const localSub = await getActivePushSubscription(currentUser.id);
-    if (localSub && support.permission === 'granted') {
-      // Si l'appareil a déjà un abonnement local et la permission accordée, on s'assure qu'il est lié à l'utilisateur courant
-      const status = await fetchUserPushStatus(currentUser.id, currentUser.role);
-      if (status && status.devices && status.devices.length > 0 && status.preferences.enabled) {
+    if (support.permission === 'denied') {
+      dismissPushBannerFor7Days(currentUser.id, 'refused');
+      setShowPushInvite(false);
+      return;
+    }
+    try {
+      const dismissedKey = `baobab_push_invite_dismissed_${currentUser.id}`;
+      if (sessionStorage.getItem(dismissedKey) === '1') {
         setShowPushInvite(false);
         return;
       }
+      if (localStorage.getItem(`baobab_push_enabled_${currentUser.id}`) === '1' && support.permission === 'granted') {
+        setShowPushInvite(false);
+        return;
+      }
+    } catch {
+      // ignore storage errors
     }
     setShowPushInvite(true);
-  }, [currentUser.id, currentUser.role]);
+  }, [currentUser.id]);
 
   React.useEffect(() => {
     checkPushSubscriptionState();
@@ -249,10 +260,14 @@ export const Header: React.FC<HeaderProps> = ({
     try {
       const res = await requestAndSubscribePush(currentUser.id, currentUser.role);
       if (res.ok) {
+        clearPushBannerDismissal(currentUser.id);
         setShowPushInvite(false);
+        window.dispatchEvent(new Event('baobab-push-subscription-changed'));
       } else {
-        // Si refusé ou non supporté, ouvre le panneau des réglages qui affiche le message clair et la marche à suivre
-        setShowNotifSettingsModal(true);
+        // Si refusée, ne réapparaît pas avant 7 jours et un rappel discret reste dans Réglages > Notifications
+        dismissPushBannerFor7Days(currentUser.id, 'refused');
+        setShowPushInvite(false);
+        window.dispatchEvent(new Event('baobab-push-subscription-changed'));
       }
     } finally {
       setPushInviteBusy(false);
@@ -260,9 +275,54 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const handleDismissPushInvite = () => {
-    sessionStorage.setItem(`baobab_push_invite_dismissed_${currentUser.id}`, '1');
+    dismissPushBannerFor7Days(currentUser.id, 'closed');
     setShowPushInvite(false);
+    window.dispatchEvent(new Event('baobab-push-subscription-changed'));
   };
+
+  const [notifFilter, setNotifFilter] = React.useState<'all' | 'unread'>('all');
+
+  // Bloque le défilement de la page derrière le panneau ouvert et gère la fermeture par geste retour (popstate) ou Échap
+  React.useEffect(() => {
+    if (!showNotifMenu) return;
+
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    let pushedHistory = false;
+    try {
+      window.history.pushState({ baobabNotifOpen: true }, '');
+      pushedHistory = true;
+    } catch {
+      // ignore history errors
+    }
+
+    const handlePopState = () => {
+      setShowNotifMenu(false);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowNotifMenu(false);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('keydown', handleKeyDown);
+      if (pushedHistory && window.history.state?.baobabNotifOpen) {
+        try {
+          window.history.back();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [showNotifMenu]);
 
   const markAsRead = async (id: string) => {
     const targetNotif = notifications.find(n => n.id === id);
@@ -327,15 +387,72 @@ export const Header: React.FC<HeaderProps> = ({
         type: n.type,
       });
     }
-    setSelectedNotification({ ...n, is_read: 1 });
     setShowNotifMenu(false);
+    const action = getNotificationActionTarget(n);
+    if (action && onNavigateTab) {
+      onNavigateTab(action.tab);
+      return;
+    }
+    setSelectedNotification({ ...n, is_read: 1 });
   };
+
+  const formatRelativeNotifDate = (isoStr?: string) => {
+    if (!isoStr) return "À l'instant";
+    try {
+      const normalized = isoStr.includes('T') ? isoStr : `${isoStr}T12:00:00`;
+      const date = new Date(normalized);
+      if (Number.isNaN(date.getTime())) return isoStr;
+      const diffMs = Date.now() - date.getTime();
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin < 1) return "À l'instant";
+      if (diffMin < 60) return `Il y a ${diffMin} min`;
+      const diffHours = Math.floor(diffMin / 60);
+      if (diffHours < 24) return `Il y a ${diffHours} h`;
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays === 1) return 'Hier';
+      if (diffDays < 7) return `Il y a ${diffDays} j`;
+      return date.toLocaleDateString('fr-FR', {
+        day: '2-digit',
+        month: 'short',
+      });
+    } catch {
+      return isoStr;
+    }
+  };
+
+  const formatTwoLinesDetail = (msg?: string) => {
+    const clean = String(msg || '').replace(/\s+/g, ' ').trim();
+    if (clean.length <= 85) return clean;
+    const sliced = clean.slice(0, 82);
+    const lastSpace = sliced.lastIndexOf(' ');
+    return `${lastSpace > 45 ? sliced.slice(0, lastSpace) : sliced}…`;
+  };
+
+  const filteredNotifications = React.useMemo(() => {
+    if (notifFilter === 'unread') {
+      return notifications.filter((n) => !n.is_read);
+    }
+    return notifications;
+  }, [notifications, notifFilter]);
 
   const getNotificationActionTarget = (n: any): { tab: string; label: string; icon: React.ReactNode } | null => {
     if (!onNavigateTab || !n) return null;
     const type = String(n.type || '');
     const ref = String(n.reference || '');
     const title = String(n.title || '').toLowerCase();
+
+    if (
+      type === 'alerte_anomalie' ||
+      ref.startsWith('ANO-') ||
+      title.includes('alerte critique')
+    ) {
+      if (currentUser.role === 'Vendeur') return null;
+      return {
+        tab: 'alertes',
+        label: 'Ouvrir Écran Alertes',
+        icon: <Bell className="w-3.5 h-3.5" />,
+      };
+    }
 
     if (
       type === 'demande_annulation_vente' ||
@@ -478,7 +595,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-30 w-full max-w-full h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 transform-gpu">
+      <header className="sticky top-0 z-30 w-full max-w-full h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between gap-2 md:gap-2.5 px-3 md:px-5 lg:px-6 h-16 w-full max-w-full">
           {/* Gauche : Hamburger (Mobile & Tablette < 1024 px) + Logo */}
           <div className="flex items-center gap-2 md:gap-2.5 shrink-0 min-w-0">
@@ -519,7 +636,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="w-11 h-11 min-w-[44px] min-h-[44px] lg:w-auto lg:px-3 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 transition cursor-pointer shrink-0"
             >
               <Search className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-              <span className="hidden lg:inline text-xs font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+              <span className="hidden lg:inline text-xs font-bold text-slate-700 dark:text-slate-200">
                 Rechercher...
               </span>
               <kbd className="hidden xl:inline-flex items-center px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-[10px] font-mono font-bold text-slate-600 dark:text-slate-300">
@@ -578,133 +695,161 @@ export const Header: React.FC<HeaderProps> = ({
 
               {showNotifMenu && (
                 <>
+                  {/* Fond cliquable pour fermer le panneau */}
                   <div
-                    className="fixed inset-0 z-40 bg-black/25 sm:bg-transparent"
+                    className="fixed inset-0 z-[90] bg-black/25 md:bg-transparent"
                     onClick={() => setShowNotifMenu(false)}
                   />
-                  <div className="fixed left-2.5 right-2.5 top-[4.25rem] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-96 max-w-[calc(100vw-1.25rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-3 sm:p-3.5 text-xs">
-                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
-                      <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5 min-w-0">
-                        <Bell className="w-3.5 h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                        <span className="truncate">Notifications &bull; {getDisplayRole(currentUser.role, currentUser.code)}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {unreadCount > 0 && (
+
+                  {/* Panneau des notifications compact :
+                      - Mobile (< 768 px) : panneau flottant compact sous l'en-tête (max-h 68dvh)
+                      - Tablette & PC (>= 768 px) : ancré sous la cloche, largeur 360 px, hauteur max 65dvh
+                  */}
+                  <div
+                    role="dialog"
+                    aria-label="Notifications"
+                    style={{ writingMode: 'horizontal-tb' }}
+                    className="baobab-notif-panel fixed left-3 right-3 top-[4.1rem] max-h-[68dvh] z-[100] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col overflow-hidden md:absolute md:inset-auto md:right-0 md:top-full md:mt-2 md:w-[360px] md:max-w-[calc(100vw-24px)] md:max-h-[65dvh]"
+                  >
+                    {/* EN-TÊTE COMPACT SUR DEUX LIGNES */}
+                    <div className="px-3 pt-2.5 pb-2 border-b border-slate-200 dark:border-slate-800 space-y-1.5 shrink-0">
+                      {/* Ligne 1 : Titre "Notifications" + bulle rouge #DC2626 à gauche, icônes réglages et croix à droite */}
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                          <h2
+                            style={{ writingMode: 'horizontal-tb' }}
+                            className="text-[14px] font-extrabold text-slate-900 dark:text-white whitespace-normal leading-tight"
+                          >
+                            Notifications
+                          </h2>
+                          {unreadCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#DC2626] text-white text-[10px] font-black leading-none shrink-0">
+                              {unreadCount}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
-                            onClick={markAllAsRead}
-                            className="px-2 py-0.5 rounded-lg bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] text-[10px] font-bold hover:opacity-90 cursor-pointer"
+                            onClick={() => {
+                              setShowNotifMenu(false);
+                              setShowNotifSettingsModal(true);
+                            }}
+                            title="Réglages des notifications"
+                            aria-label="Réglages des notifications"
+                            className="w-8 h-8 min-w-[32px] min-h-[32px] rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 inline-flex items-center justify-center cursor-pointer transition shrink-0"
                           >
-                            Tout marquer comme lu ({unreadCount})
+                            <Settings className="w-4 h-4" />
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowNotifMenu(false);
-                            setShowNotifSettingsModal(true);
-                          }}
-                          title="Réglages des notifications"
-                          className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 hover:text-[var(--marque-fonce)] dark:text-slate-300 dark:hover:text-[var(--marque-eclaircie)] cursor-pointer"
-                          aria-label="Réglages des notifications"
-                        >
-                          <Settings className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowNotifMenu(false)}
-                          className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
-                          aria-label="Fermer les notifications"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowNotifMenu(false)}
+                            title="Fermer les notifications"
+                            aria-label="Fermer les notifications"
+                            className="w-8 h-8 min-w-[32px] min-h-[32px] rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 inline-flex items-center justify-center cursor-pointer transition shrink-0"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Ligne 2 : Bouton "Tout marquer comme lu" pleine largeur compact */}
+                      <button
+                        type="button"
+                        onClick={markAllAsRead}
+                        disabled={unreadCount === 0}
+                        className="w-full min-h-[34px] h-[34px] px-3 rounded-lg bg-[var(--marque-clair)] hover:opacity-90 disabled:opacity-50 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-bold text-[12px] inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed transition"
+                      >
+                        <Check className="w-3.5 h-3.5 shrink-0" />
+                        <span>Tout marquer comme lu</span>
+                      </button>
                     </div>
 
-                    <div className="max-h-[68vh] sm:max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 py-1">
-                      {notifications.length === 0 ? (
-                        <div className="py-6 text-center text-slate-400 text-xs">
-                          Aucune notification pour le moment.
+                    {/* FILTRES COMPACTS : puces "Toutes" et "Non lues" */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto px-3 py-1.5 border-b border-slate-200 dark:border-slate-800 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setNotifFilter('all')}
+                        className={`min-h-[28px] px-2.5 py-0.5 rounded-full text-[11px] font-bold shrink-0 transition cursor-pointer inline-flex items-center ${
+                          notifFilter === 'all'
+                            ? 'bg-[var(--marque-fonce)] text-white shadow-2xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>Toutes</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNotifFilter('unread')}
+                        className={`min-h-[28px] px-2.5 py-0.5 rounded-full text-[11px] font-bold shrink-0 transition cursor-pointer inline-flex items-center ${
+                          notifFilter === 'unread'
+                            ? 'bg-[var(--marque-fonce)] text-white shadow-2xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>Non lues</span>
+                      </button>
+                    </div>
+
+                    {/* LISTE COMPACTE : zone défilante */}
+                    <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800">
+                      {filteredNotifications.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center text-center py-8 px-4 gap-2">
+                          <Bell className="w-8 h-8 text-slate-400 dark:text-slate-500 stroke-[1.75]" />
+                          <p className="text-[12px] font-semibold text-slate-500 dark:text-slate-400">
+                            Aucune notification
+                          </p>
                         </div>
                       ) : (
-                        notifications.map((n) => (
-                          <div
-                            key={n.id}
-                            onClick={() => handleOpenNotificationMessage(n)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                handleOpenNotificationMessage(n);
-                              }
-                            }}
-                            className={`p-2.5 sm:p-3 rounded-xl transition cursor-pointer ${
-                              !n.is_read
-                                ? 'bg-[var(--marque-clair)] border-l-2 border-[var(--marque-fonce)] dark:border-[var(--marque-eclaircie)]'
-                                : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <span
-                                className={`font-bold text-xs leading-snug break-words ${
-                                  n.type === 'ecart' || n.type === 'rejet_demande_achat' || n.type === 'rejet_pdv'
-                                    ? 'text-[#B91C1C] dark:text-red-400'
-                                    : n.type === 'rectification_facture'
-                                    ? 'text-[#92400E] dark:text-amber-400'
-                                    : n.type === 'validation_demande_achat' ||
-                                      n.type === 'facture_rectifiee' ||
-                                      n.type === 'validation_pdv'
-                                    ? 'text-[#15803D] dark:text-emerald-400'
-                                    : 'text-slate-800 dark:text-slate-200'
-                                }`}
-                              >
-                                {n.title}
-                              </span>
-                              <span className="text-[9px] text-slate-400 whitespace-nowrap shrink-0">
-                                {n.created_at?.split('T')[0] || ''}
-                              </span>
-                            </div>
-
-                            <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-1 leading-snug line-clamp-2 break-words">
-                              {n.message}
-                            </p>
-
-                            <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-800 flex flex-wrap items-center justify-between gap-1.5">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
+                        filteredNotifications.map((n) => {
+                          const isUnread = !n.is_read;
+                          return (
+                            <div
+                              key={n.id}
+                              onClick={() => handleOpenNotificationMessage(n)}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
                                   handleOpenNotificationMessage(n);
-                                }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--marque-clair)] hover:bg-[var(--marque-fonce)] text-[var(--marque-fonce)] hover:text-white dark:text-[var(--marque-eclaircie)] font-bold text-[10px] transition cursor-pointer"
-                              >
-                                <ExternalLink className="w-3 h-3" />
-                                <span>Ouvrir le message</span>
-                              </button>
+                                }
+                              }}
+                              className={`w-full px-3 py-2 text-left transition cursor-pointer flex items-start gap-2 ${
+                                isUnread
+                                  ? 'bg-[var(--marque-clair)]/60 dark:bg-slate-800/80 hover:bg-[var(--marque-clair)] dark:hover:bg-slate-800'
+                                  : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                              }`}
+                            >
+                              {/* Pastille non lue (point bleu de marque) */}
+                              <div className="pt-1.5 shrink-0 w-2 flex justify-center">
+                                {isUnread && (
+                                  <span
+                                    aria-label="Non lue"
+                                    className="w-2 h-2 rounded-full bg-[var(--marque-fonce)] dark:bg-[var(--marque-eclaircie)] block"
+                                  />
+                                )}
+                              </div>
 
-                              {n.proof && onOpenDocument && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    markAsRead(n.id);
-                                    setShowNotifMenu(false);
-                                    onOpenDocument({
-                                      ...n.proof,
-                                      type: 'mini_thermique',
-                                      isProofPreview: true,
-                                    });
-                                  }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#92400E] hover:bg-[#78350F] text-white font-black text-[10px] shadow-xs cursor-pointer"
-                                >
-                                  <Receipt className="w-3 h-3" />
-                                  <span>Voir Preuve Thermique</span>
-                                </button>
-                              )}
+                              {/* Contenu de la carte de notification */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <div className="font-bold text-[12.5px] text-slate-900 dark:text-white leading-snug whitespace-normal break-words flex-1 min-w-0">
+                                    {n.title}
+                                  </div>
+                                  <span className="text-[10.5px] text-slate-400 dark:text-slate-500 shrink-0">
+                                    {formatRelativeNotifDate(n.created_at)}
+                                  </span>
+                                </div>
+
+                                <p className="text-[11.5px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug whitespace-normal break-words">
+                                  {formatTwoLinesDetail(n.message)}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -724,11 +869,11 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="h-9 w-9 rounded-full bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
                   {currentUser.name.charAt(0)}
                 </div>
-                <div className="hidden lg:flex flex-col text-left max-w-[110px]">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight truncate">
+                <div className="hidden lg:flex flex-col text-left min-w-0">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight">
                     {currentUser.name.split(' ')[0]}
                   </span>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 leading-none truncate">
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 leading-none">
                     {getDisplayRole(currentUser.role, currentUser.code)}
                   </span>
                 </div>
@@ -764,13 +909,13 @@ export const Header: React.FC<HeaderProps> = ({
                           />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-black text-slate-900 dark:text-white truncate">
+                          <div className="font-black text-slate-900 dark:text-white leading-snug">
                             {currentUser.name}
                           </div>
-                          <div className="text-[11px] font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] truncate">
+                          <div className="text-[11px] font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] leading-snug">
                             {getDisplayRole(currentUser.role, currentUser.code)} &bull; {currentUser.code}
                           </div>
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
                             {currentUser.email}
                           </div>
                         </div>
@@ -783,30 +928,30 @@ export const Header: React.FC<HeaderProps> = ({
                         type="button"
                         onClick={() => setSimulatedOffline(!isSimulatedOffline())}
                         title={connectionTooltip}
-                        className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+                        className="min-h-[48px] h-auto px-3 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
                       >
                         <span
                           className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                             online ? 'bg-[#15803D]' : 'bg-slate-400 dark:bg-slate-500'
                           }`}
                         />
-                        <span className="truncate">{online ? 'En ligne' : 'Hors ligne'}</span>
+                        <span>{online ? 'En ligne' : 'Hors ligne'}</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={onToggleTheme}
-                        className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+                        className="min-h-[48px] h-auto px-3 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
                       >
                         {theme === 'dark' ? (
                           <>
                             <Sun className="w-4 h-4 text-amber-400 shrink-0" />
-                            <span className="truncate">Thème clair</span>
+                            <span>Thème clair</span>
                           </>
                         ) : (
                           <>
                             <Moon className="w-4 h-4 text-[var(--marque-fonce)] shrink-0" />
-                            <span className="truncate">Thème sombre</span>
+                            <span>Thème sombre</span>
                           </>
                         )}
                       </button>
@@ -836,15 +981,15 @@ export const Header: React.FC<HeaderProps> = ({
                                   }
                                   setShowProfileMenu(false);
                                 }}
-                                className={`w-full min-h-[44px] p-2 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer ${
+                                className={`w-full min-h-[48px] h-auto p-2.5 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer ${
                                   isCurrent
                                     ? 'bg-[var(--marque-fonce)] text-[var(--marque-texte-sur-plein)] font-bold'
                                     : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
                                 }`}
                               >
                                 <div className="min-w-0 flex-1">
-                                  <div className="truncate font-semibold text-xs flex items-center gap-1.5">
-                                    <span className="truncate">{u.name}</span>
+                                  <div className="font-semibold text-xs flex flex-wrap items-center gap-1.5">
+                                    <span>{u.name}</span>
                                     <span
                                       className={`text-[10px] font-mono px-1 rounded shrink-0 ${
                                         isCurrent
@@ -856,7 +1001,7 @@ export const Header: React.FC<HeaderProps> = ({
                                     </span>
                                   </div>
                                   <div
-                                    className={`text-[10px] truncate ${
+                                    className={`text-[10px] leading-snug ${
                                       isCurrent ? 'text-white/90' : 'text-slate-500 dark:text-slate-400'
                                     }`}
                                   >
@@ -876,44 +1021,65 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
         </div>
+      </header>
 
-        {/* Invite discrète "Activer les notifications" après connexion (sans texte tronqué ni débordement) */}
-        {showPushInvite && (
-          <div className="px-3 sm:px-5 lg:px-6 py-2 bg-[var(--marque-clair)] dark:bg-slate-800/95 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs w-full max-w-full">
-            <div className="flex items-start sm:items-center gap-2 min-w-0">
-              <Bell className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0 mt-0.5 sm:mt-0" />
-              <span className="text-slate-700 dark:text-slate-200 font-medium leading-snug break-words">
-                Recevez les alertes Baobab Distribution en temps réel sur cet appareil.
-              </span>
+      {/* Bannière d'activation des notifications dans le flux de la page, sous l'en-tête et AU-DESSUS du titre (marge haut/bas 16 px, jamais fixe ni absolue) */}
+      {showPushInvite && (
+        <div
+          role="region"
+          aria-label="Activation des notifications"
+          className="w-full max-w-full px-3.5 sm:px-6 lg:px-8 my-[16px]"
+        >
+          <div className="max-w-7xl mx-auto w-full rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3.5 sm:px-5 sm:py-3.5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-start justify-between gap-2.5 min-w-0 flex-1">
+              <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+                <div className="w-9 h-9 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] flex items-center justify-center shrink-0">
+                  <Bell className="w-4 h-4" />
+                </div>
+                <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-100 font-semibold leading-snug break-words">
+                  Activez les notifications pour recevoir les alertes de ventes, stocks et validations en temps réel sur cet appareil.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleDismissPushInvite}
+                className="md:hidden w-[44px] h-[44px] min-w-[44px] min-h-[44px] rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 inline-flex items-center justify-center cursor-pointer shrink-0 transition"
+                aria-label="Fermer la bannière de notifications"
+                title="Fermer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+
+            <div className="flex items-center gap-2 shrink-0 w-full md:w-auto">
               <button
                 type="button"
                 onClick={handleActivateNotificationsClick}
                 disabled={pushInviteBusy}
-                className="px-3 py-1 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] font-extrabold text-xs transition cursor-pointer disabled:opacity-60 whitespace-nowrap"
+                className="flex-1 md:flex-initial h-[44px] min-h-[44px] px-4 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-60 whitespace-nowrap shadow-2xs"
               >
-                {pushInviteBusy ? 'Activation...' : 'Activer les notifications'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowNotifSettingsModal(true)}
-                className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 font-bold text-xs hover:bg-slate-50 transition cursor-pointer whitespace-nowrap"
-              >
-                Réglages
+                {pushInviteBusy ? 'Activation...' : 'Activer'}
               </button>
               <button
                 type="button"
                 onClick={handleDismissPushInvite}
-                className="p-1 rounded-lg text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white cursor-pointer"
-                aria-label="Masquer l'invite de notifications"
+                className="flex-1 md:flex-initial h-[44px] min-h-[44px] px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 font-bold text-xs sm:text-sm inline-flex items-center justify-center transition cursor-pointer whitespace-nowrap"
               >
-                <X className="w-3.5 h-3.5" />
+                Plus tard
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissPushInvite}
+                className="hidden md:inline-flex w-[44px] h-[44px] min-w-[44px] min-h-[44px] rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 items-center justify-center cursor-pointer shrink-0 transition"
+                aria-label="Fermer la bannière de notifications"
+                title="Fermer"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>
-        )}
-      </header>
+        </div>
+      )}
 
       {/* Modal Recherche Globale (Ctrl+K / Loupe) */}
       <GlobalSearchModal

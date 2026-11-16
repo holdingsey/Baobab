@@ -844,7 +844,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                     )}
                   </div>
 
-                  <div className="mt-2.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300 truncate">
+                  <div className="mt-2.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300 leading-snug">
                     {v.activity_label}
                   </div>
 
@@ -956,7 +956,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                         referrerPolicy="no-referrer"
                         className="w-6 h-6 rounded-lg object-cover border border-white/40 shrink-0"
                       />
-                      <span className="truncate">
+                      <span className="leading-snug">
                         {p.name} <span className="opacity-75 text-[10px]">({p.neighborhood})</span>
                       </span>
                     </span>
@@ -1003,7 +1003,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                 >
                   {mergedVendorPositions.map((v) => (
                     <option key={v.vendor_id} value={v.vendor_id}>
-                      {v.vendor_name} ({v.vendor_code}) — {v.vendor_team}
+                      {v.vendor_name} ({v.vendor_code})
                     </option>
                   ))}
                 </select>
@@ -1098,7 +1098,6 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
               <h3 className="text-lg font-black text-slate-900 dark:text-white">
                 {selectedVendorInfo.vendor_name}
               </h3>
-              <p className="text-slate-500 -mt-2">{selectedVendorInfo.vendor_team}</p>
 
               <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800 font-mono text-[11px] space-y-1.5">
                 <div className="font-sans font-bold text-[#008DA9] flex items-center gap-1.5">
@@ -1202,7 +1201,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                     <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
                       Image de profil PDV &bull; {selectedPdv.status === 'valide' ? 'Validé' : 'Non Validé'}
                     </div>
-                    <h3 className="text-base font-black text-slate-900 dark:text-white leading-snug truncate">
+                    <h3 className="text-base font-black text-slate-900 dark:text-white leading-snug">
                       {selectedPdv.name}
                     </h3>
                   </div>

@@ -669,3 +669,63 @@ export async function triggerTestPushNotification(
     };
   }
 }
+
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function getPushBannerDismissInfo(userId?: string): {
+  dismissed: boolean;
+  until: number | null;
+  reason?: string;
+} {
+  try {
+    const now = Date.now();
+    const userKey = userId ? `baobab_push_invite_until_${userId}` : '';
+    const rawUserUntil = userKey ? localStorage.getItem(userKey) : null;
+    const rawGlobalUntil = localStorage.getItem('baobab_push_invite_until');
+    const until = Math.max(Number(rawUserUntil || 0), Number(rawGlobalUntil || 0));
+    if (until > now) {
+      const reason =
+        (userId ? localStorage.getItem(`baobab_push_invite_reason_${userId}`) : null) ||
+        localStorage.getItem('baobab_push_invite_reason') ||
+        'closed';
+      return { dismissed: true, until, reason };
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return { dismissed: false, until: null };
+}
+
+export function dismissPushBannerFor7Days(
+  userId?: string,
+  reason: 'closed' | 'refused' = 'closed'
+): void {
+  try {
+    const until = String(Date.now() + SEVEN_DAYS_MS);
+    localStorage.setItem('baobab_push_invite_until', until);
+    localStorage.setItem('baobab_push_invite_reason', reason);
+    if (userId) {
+      localStorage.setItem(`baobab_push_invite_until_${userId}`, until);
+      localStorage.setItem(`baobab_push_invite_reason_${userId}`, reason);
+      sessionStorage.setItem(`baobab_push_invite_dismissed_${userId}`, '1');
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function clearPushBannerDismissal(userId?: string): void {
+  try {
+    localStorage.removeItem('baobab_push_invite_until');
+    localStorage.removeItem('baobab_push_invite_reason');
+    if (userId) {
+      localStorage.removeItem(`baobab_push_invite_until_${userId}`);
+      localStorage.removeItem(`baobab_push_invite_reason_${userId}`);
+      sessionStorage.removeItem(`baobab_push_invite_dismissed_${userId}`);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+

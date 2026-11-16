@@ -4,7 +4,7 @@ import { UserSession } from './LoginScreen';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
 import { PhoneField, FORM_FIELD_CLASS } from './FormControls';
-import { DataTable, DataTableColumn } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 
 interface UsersAdminViewProps {
@@ -28,7 +28,6 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('+223 ');
   const [role, setRole] = useState<'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur'>('Vendeur');
-  const [team, setTeam] = useState('Équipe Sotuba / Rive Gauche');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -53,7 +52,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
           role,
           team:
             role === 'Vendeur'
-              ? team
+              ? ''
               : role === 'Directeur des opérations de vente'
               ? 'Direction des Opérations de Vente'
               : role === 'Sales Admin'
@@ -201,11 +200,11 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
         </div>
 
         <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-          <span className="text-[10px] font-bold uppercase text-slate-400">Équipes Vendeurs</span>
+          <span className="text-[10px] font-bold uppercase text-slate-400">Vendeurs</span>
           <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
             {vendorsCount} <span className="text-xs font-bold">vendeurs</span>
           </div>
-          <span className="text-[11px] text-slate-500 block mt-0.5">Dépôt-vente Bamako</span>
+          <span className="text-[11px] text-slate-500 block mt-0.5">Dépôt-vente</span>
         </div>
       </div>
 
@@ -253,146 +252,151 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
         </div>
       )}
 
-      {/* Tableau partagé des utilisateurs */}
-      <DataTable<UserSession>
+      {/* Liste de cartes partagée des utilisateurs */}
+      <CardList<UserSession>
         data={filteredUsers}
         rowKey={(u) => u.id}
-        mobileTitle={(u) => (
-          <span>
-            <span className="font-mono text-teal-600 dark:text-teal-400 mr-1.5">{u.code}</span>
-            {u.name}
-          </span>
-        )}
-        mobileBadge={(u) => (
-          <span
-            className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-              u.role === 'Administrateur'
-                ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
-                : u.role === 'Directeur des opérations de vente'
-                ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
-                : u.role === 'Sales Admin'
-                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                : u.role === 'Gestionnaire de stock' || u.role === 'Magasinier'
-                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                : u.role === 'Comptable'
-                ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
-                : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
-            }`}
-          >
-            {u.role === 'Sales Admin' ? 'Sales Admin (Contrôleur)' : u.role === 'Magasinier' ? 'Gestionnaire de stock' : u.role}
-          </span>
-        )}
-        columns={[
+        pageSize={20}
+        searchable={true}
+        searchPlaceholder="Rechercher par nom, code, rôle, équipe, e-mail, téléphone..."
+        searchPredicate={(u, q) =>
+          [u.code, u.name, u.role, u.team, u.email, u.phone]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(q)
+        }
+        sortOptions={[
           {
-            key: 'user',
-            header: 'Code & Utilisateur',
-            hideInMobileCard: true,
-            cell: (u) => (
-              <div>
-                <div className="font-mono font-bold text-teal-600 dark:text-teal-400">{u.code}</div>
-                <div className="font-semibold text-slate-900 dark:text-white mt-0.5">{u.name}</div>
-              </div>
-            ),
+            key: 'code_asc',
+            label: 'Code utilisateur (A → Z)',
+            compare: (a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'fr'),
+          },
+          {
+            key: 'name_asc',
+            label: 'Nom (A → Z)',
+            compare: (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'),
+          },
+          {
+            key: 'role_asc',
+            label: 'Rôle (A → Z)',
+            compare: (a, b) => String(a.role || '').localeCompare(String(b.role || ''), 'fr'),
+          },
+        ]}
+        defaultSortKey="code_asc"
+        emptyMessage="Aucun utilisateur trouvé pour ce filtre."
+        title={(u) => (
+          <div className="flex flex-wrap items-baseline justify-between gap-2 w-full min-w-0">
+            <span className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+              {u.name}
+            </span>
+            <span className="font-mono font-extrabold text-xs text-teal-600 dark:text-teal-400 [overflow-wrap:anywhere]">
+              {u.code}
+            </span>
+          </div>
+        )}
+        badges={(u) => (
+          <>
+            <span
+              className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-bold ${
+                u.role === 'Administrateur'
+                  ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                  : u.role === 'Directeur des opérations de vente'
+                  ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
+                  : u.role === 'Sales Admin'
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  : u.role === 'Gestionnaire de stock' || u.role === 'Magasinier'
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                  : u.role === 'Comptable'
+                  ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
+                  : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
+              }`}
+            >
+              {u.role === 'Sales Admin'
+                ? 'Sales Admin (Contrôleur)'
+                : u.role === 'Magasinier'
+                ? 'Gestionnaire de stock'
+                : u.role}
+            </span>
+            {u.must_change_password === 1 ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[11px] font-bold">
+                <KeyRound className="w-3 h-3 shrink-0" />
+                <span>Mot de passe provisoire</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 text-[11px] font-bold">
+                <CheckCircle2 className="w-3 h-3 shrink-0" />
+                <span>Actif</span>
+              </span>
+            )}
+          </>
+        )}
+        fields={[
+          {
+            key: 'code',
+            label: 'Code utilisateur',
+            render: (u) => <span className="font-mono font-bold text-teal-600 dark:text-teal-400">{u.code}</span>,
+          },
+          {
+            key: 'name',
+            label: 'Nom complet',
+            render: (u) => <strong className="text-slate-900 dark:text-white">{u.name}</strong>,
           },
           {
             key: 'role',
-            header: 'Rôle & Équipe',
-            mobileLabel: 'Équipe',
-            mobileValue: (u) => u.team || '—',
-            cell: (u) => (
-              <div>
-                <span
-                  className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                    u.role === 'Administrateur'
-                      ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
-                      : u.role === 'Directeur des opérations de vente'
-                      ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
-                      : u.role === 'Sales Admin'
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                      : u.role === 'Gestionnaire de stock' || u.role === 'Magasinier'
-                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                      : u.role === 'Comptable'
-                      ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
-                      : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
-                  }`}
-                >
-                  {u.role === 'Sales Admin' ? 'Sales Admin (Contrôleur)' : u.role === 'Magasinier' ? 'Gestionnaire de stock' : u.role}
-                </span>
-                <div className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-1">
-                  {u.team || '—'}
-                </div>
-              </div>
-            ),
+            label: 'Rôle',
+            render: (u) =>
+              u.role === 'Sales Admin'
+                ? 'Sales Admin (Contrôleur)'
+                : u.role === 'Magasinier'
+                ? 'Gestionnaire de stock'
+                : u.role,
           },
           {
-            key: 'contact',
-            header: 'Contact (Email / Tél)',
-            mobileLabel: 'Contact',
-            secondary: true,
-            mobileValue: (u) => `${u.email} • ${u.phone || '—'}`,
-            cell: (u) => (
-              <div>
-                <div className="text-slate-700 dark:text-slate-200 font-medium">{u.email}</div>
-                <div className="text-[11px] text-slate-500 whitespace-nowrap">{u.phone || '—'}</div>
-              </div>
-            ),
+            key: 'team',
+            label: 'Service',
+            hidden: (u) => u.role === 'Vendeur' || !u.team,
+            render: (u) => u.team || '—',
+          },
+          {
+            key: 'email',
+            label: 'E-mail',
+            render: (u) => <span className="[overflow-wrap:anywhere]">{u.email}</span>,
+          },
+          {
+            key: 'phone',
+            label: 'Téléphone',
+            render: (u) => <span className="font-mono">{u.phone || '—'}</span>,
           },
           {
             key: 'security',
-            header: 'Sécurité MDP',
-            mobileLabel: 'Sécurité MDP',
-            align: 'center',
-            secondary: true,
-            cell: (u) =>
+            label: 'Sécurité mot de passe',
+            render: (u) =>
               u.must_change_password === 1 ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                  <KeyRound className="w-3 h-3" /> Mot de passe provisoire
+                <span className="font-semibold text-amber-700 dark:text-amber-300">
+                  Mot de passe provisoire (à changer)
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
-                  <CheckCircle2 className="w-3 h-3" /> Actif
+                <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                  Mot de passe actif
                 </span>
               ),
           },
-          {
-            key: 'actions',
-            header: 'Accès Direct Admin',
-            align: 'right',
-            hideInMobileCard: true,
-            cell: (u) => {
-              const isCurrent = u.id === currentUserId;
-              if (!onSwitchUser) return null;
-              return (
-                <button
-                  type="button"
-                  onClick={() => onSwitchUser(u)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition cursor-pointer ${
-                    isCurrent
-                      ? 'bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
-                      : 'bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white shadow-xs'
-                  }`}
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>{isCurrent ? 'Compte actif' : 'Accéder au compte'}</span>
-                </button>
-              );
-            },
-          },
         ]}
-        mobileActions={(u) => {
+        renderActions={(u) => {
           const isCurrent = u.id === currentUserId;
           if (!onSwitchUser) return null;
           return (
             <button
               type="button"
               onClick={() => onSwitchUser(u)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition cursor-pointer ${
+              className={`inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2 rounded-xl font-bold text-xs transition cursor-pointer ${
                 isCurrent
                   ? 'bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
                   : 'bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white shadow-xs'
               }`}
             >
-              <LogIn className="w-3.5 h-3.5" />
+              <LogIn className="w-4 h-4 shrink-0" />
               <span>{isCurrent ? 'Session active' : 'Accéder au compte'}</span>
             </button>
           );
@@ -481,22 +485,6 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
               placeholder="76 01 23 45"
             />
           </div>
-
-          {role === 'Vendeur' && (
-            <div>
-              <label className="block text-[14px] font-medium text-slate-900 dark:text-white mb-2">
-                Équipe (optionnel)
-              </label>
-              <input
-                type="text"
-                placeholder="Ex: Équipe Sotuba, Équipe Rive Droite, Équipe Centre..."
-                value={team}
-                onChange={(e) => setTeam(e.target.value)}
-                required
-                className={FORM_FIELD_CLASS}
-              />
-            </div>
-          )}
 
           <p className="text-[14px] text-slate-900 dark:text-white">
             Un mot de passe provisoire sera généré (à changer à la première connexion).

@@ -54,16 +54,16 @@
   *,
   *::before,
   *::after {
-    box-sizing: border-box;
+    box-sizing: border-box !important;
   }
 
-  /* 2. html, body, #root : width 100%, max-width 100%, overflow-x hidden */
+  /* 2. html, body, #root : width 100%, max-width 100%, overflow-x clip (préserve position: sticky au scroll) */
   html,
   body,
   #root {
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   html {
@@ -74,7 +74,6 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
-    overflow-y: auto;
   }
 
   @media (min-width: 640px) {
@@ -104,12 +103,18 @@
     height: auto;
   }
 
-  /* 4. Tous les enfants de flex et de grid : min-width 0. Conteneurs flex avec texte long : min-width 0 */
+  /* 4. Tous les enfants de flex et de grid : min-width 0 */
   :where(.flex, .inline-flex, .grid, .inline-grid) {
     min-width: 0;
   }
 
   :where(.flex, .inline-flex, .grid, .inline-grid) > * {
+    min-width: 0;
+  }
+
+  /* Dans une grille, chaque bouton prend 100 % de sa cellule (min-width 0) */
+  :where(.grid, .inline-grid) > button {
+    width: 100%;
     min-width: 0;
   }
 
@@ -129,35 +134,37 @@
   blockquote,
   small,
   strong,
-  em {
+  em,
+  a,
+  div {
     overflow-wrap: anywhere;
     word-break: normal;
-    max-width: 100%;
   }
 
-  /* 6. Nombres et montants : white-space nowrap, taille de police adaptative (clamp) */
+  /* 6. Nombres et montants : white-space nowrap uniquement pour les montants, avec police adaptative clamp() */
   .baobab-amount {
     white-space: nowrap !important;
     overflow-wrap: normal !important;
     word-break: normal !important;
-    font-size: clamp(0.875rem, 2.2vw + 0.35rem, 1.35rem);
+    font-size: clamp(0.85rem, 2vw + 0.3rem, 1.35rem);
     line-height: 1.25;
   }
 
   .text-2xl .baobab-amount,
   .sm\:text-2xl .baobab-amount {
-    font-size: clamp(0.95rem, 2.5vw + 0.4rem, 1.55rem);
+    font-size: clamp(0.95rem, 2.3vw + 0.35rem, 1.55rem);
   }
 
-  /* 7. Cartes et panneaux : overflow visible pour les bulles de compteur, overflow-x hidden sur le conteneur de page */
+  /* 7. Cartes et panneaux : aucune hauteur fixe, aucun overflow hidden sur du texte */
   main {
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
-  :where(.rounded-2xl, .rounded-xl, .rounded-3xl):not(.overflow-hidden):not(.overflow-y-auto):not(.overflow-x-auto) {
+  :where(.rounded-2xl, .rounded-xl, .rounded-3xl):not(.overflow-y-auto):not(.overflow-x-auto):not(.baobab-notif-panel) {
     overflow: visible;
+    height: auto;
   }
 
   button,
@@ -166,6 +173,22 @@
   select,
   textarea {
     touch-action: manipulation;
+  }
+
+  /* Boutons : retour à la ligne autorisé, jamais de texte coupé */
+  button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    height: auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  button > span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
   }
 
   input[type="checkbox"],
@@ -185,11 +208,31 @@
     max-width: 100%;
   }
 
-  select,
+  select {
+    width: 100%;
+    max-width: min(100%, calc(100vw - 24px));
+    min-height: 48px !important;
+    height: auto !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+    padding-left: 14px !important;
+    padding-right: 32px !important;
+    font-size: 16px !important;
+    line-height: 1.35 !important;
+    border-radius: 12px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    text-overflow: clip !important;
+    opacity: 1 !important;
+    transition: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
   input[type="date"],
   input[type="time"],
   input[type="search"] {
-    max-width: calc(100vw - 32px);
+    max-width: min(100%, calc(100vw - 24px));
   }
 
   @media (min-width: 768px) {
@@ -205,10 +248,10 @@
     white-space: normal !important;
     word-break: normal !important;
     overflow-wrap: anywhere !important;
+    max-width: 100vw;
   }
 
-  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]),
-  select {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]) {
     height: 48px !important;
     min-height: 48px !important;
     padding-left: 14px !important;
@@ -217,6 +260,49 @@
     line-height: 1.5 !important;
     border-radius: 12px !important;
     opacity: 1 !important;
+    transition: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
+  /* Champs numériques et quantités : suppression des flèches natives qui rognent les chiffres, padding horizontal réduit et largeur minimale garantie */
+  input[type="number"] {
+    -moz-appearance: textfield !important;
+    appearance: textfield !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    min-width: 68px !important;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+  }
+
+  input.text-center {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    text-align: center !important;
+  }
+
+  /* Préserver l'espace pour l'icône loupe à gauche et le bouton effacer (X) à droite dans tous les champs de recherche */
+  input.pl-8,
+  input.pl-9,
+  input.pl-10,
+  input.pl-11,
+  input.pl-12,
+  input[type="search"] {
+    padding-left: 42px !important;
+  }
+
+  input.pr-8,
+  input.pr-9,
+  input.pr-10,
+  input.pr-11,
+  input.pr-12,
+  input[type="search"] {
+    padding-right: 40px !important;
   }
 
   input.baobab-search-input-52 {
@@ -228,6 +314,8 @@
     line-height: 1.5 !important;
     border-radius: 12px !important;
     opacity: 1 !important;
+    transition: none !important;
+    transform: none !important;
   }
 
   textarea {
@@ -237,6 +325,9 @@
     line-height: 1.5 !important;
     border-radius: 12px !important;
     opacity: 1 !important;
+    transition: none !important;
+    transform: none !important;
+    will-change: auto !important;
   }
 
   html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]),
@@ -275,7 +366,8 @@
   html:not(.dark) textarea:focus-visible {
     outline: none !important;
     border-color: var(--marque-fonce) !important;
-    box-shadow: 0 0 0 3px rgba(0, 107, 130, 0.35) !important;
+    box-shadow: none !important;
+    transform: none !important;
   }
 
   html.dark input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):focus,
@@ -286,7 +378,8 @@
   html.dark textarea:focus-visible {
     outline: none !important;
     border-color: var(--marque-eclaircie) !important;
-    box-shadow: 0 0 0 3px rgba(56, 202, 230, 0.45) !important;
+    box-shadow: none !important;
+    transform: none !important;
   }
 
   input[aria-invalid="true"],
@@ -303,6 +396,42 @@
 
   html.dark form label {
     color: #F8FAFC;
+  }
+
+  .form-row-2 {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+    width: 100%;
+  }
+
+  @media (min-width: 640px) {
+    .form-row-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+  }
+
+  .form-row-2 > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .form-row-2 > div > label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1.3rem;
+  }
+
+  .form-row-2 > div > input,
+  .form-row-2 > div > select,
+  .form-row-2 > div > textarea {
+    width: 100%;
+    display: block;
   }
 
   code,
@@ -330,7 +459,48 @@
   }
 }
 
-/* Rehaussement automatique des très petites tailles de texte dans toute l'application */
+/* Stabilisation des champs de saisie hors @layer :
+   - Police minimale de 16px (évite le zoom automatique sur mobile au focus)
+   - Aucune transition de mise en page ni d'ombre portée pendant la frappe
+   - Aucun décalage au focus */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]),
+select,
+textarea {
+  font-size: 16px !important;
+  transition: none !important;
+  transform: none !important;
+  will-change: auto !important;
+}
+
+/* Suppression globale de tout line-clamp et text-overflow ellipsis sur les textes */
+.truncate:not(.baobab-bottom-nav-label),
+.line-clamp-1,
+.line-clamp-2,
+.line-clamp-3,
+.text-ellipsis {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  -webkit-line-clamp: unset !important;
+}
+
+/* Barre du bas : 5 colonnes strictement égales (repeat(5, 1fr)), libellés d'un mot court de 11 px, une ligne, sans chevauchement */
+.baobab-bottom-nav-grid {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  width: 100% !important;
+}
+
+.baobab-bottom-nav-label {
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* Rehaussement automatique des très petites tailles de texte (hors barre du bas) */
 .text-\[9px\] {
   font-size: 0.76rem !important;
   line-height: 1.15rem !important;
@@ -341,9 +511,9 @@
   line-height: 1.2rem !important;
 }
 
-.text-\[11px\] {
-  font-size: 0.86rem !important;
-  line-height: 1.3rem !important;
+.text-\[11px\]:not(.baobab-bottom-nav-label) {
+  font-size: 0.84rem !important;
+  line-height: 1.25rem !important;
 }
 
 /* Optimisation globale des tableaux sur Mobile & Tablette : préserver le scroll horizontal fluide et la lisibilité */
@@ -357,7 +527,6 @@
     border-collapse: collapse;
   }
 
-  /* Pour les tableaux standard non scrollables */
   table:not([class*="min-w-"]) th,
   table:not([class*="min-w-"]) td {
     padding-left: 0.5rem;
@@ -367,21 +536,11 @@
   }
 }
 
-/* Empêche formellement tout écrasement ou découpage vertical lettre par lettre dans les tableaux et boutons */
+/* Empêche le découpage vertical lettre par lettre dans les en-têtes de tableaux */
 table th,
-table td,
-table th *,
-table td *,
-button,
-button * {
-  overflow-wrap: normal !important;
-  word-break: normal !important;
-}
-
-table th,
-button,
-.whitespace-nowrap {
-  white-space: nowrap;
+table td {
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 /* Styles de la feuille A4 portrait (210 x 297 mm = 794 x 1123 px à 96 dpi, marges de 15 mm = 57 px) */

@@ -679,6 +679,19 @@ export function buildSafePushContent(params: {
       pushBody = 'Décision enregistrée sur votre demande d\'achat';
     }
   }
+  // 9. ALERTES D'ANOMALIES CRITIQUES
+  else if (
+    type === 'alerte_anomalie' ||
+    refStr.startsWith('ANO-') ||
+    lowerTitle.includes('alerte critique') ||
+    lowerTitle.includes('anomalie')
+  ) {
+    category = 'peremption';
+    tag = 'baobab-alerte-anomalie';
+    tab = 'alertes';
+    pushTitle = title || 'Alerte Critique • Anomalie détectée';
+    pushBody = 'Nouvelle alerte critique à examiner dans le module Alertes';
+  }
 
   const url = `/?tab=${encodeURIComponent(tab)}&notifId=${encodeURIComponent(notificationId)}`;
 

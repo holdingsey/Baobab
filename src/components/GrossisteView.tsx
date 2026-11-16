@@ -26,7 +26,7 @@ import { exportTableToPdf } from '../utils/pdfExport';
 import { AdaptiveAmount } from '../utils/formatAmount';
 import { FormModal } from './FormModal';
 import { InfoTooltip } from './InfoTooltip';
-import { DataTable } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 import {
   PhoneField,
@@ -760,33 +760,54 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
             </div>
           </div>
 
-          <DataTable
+          <CardList<any>
             data={filteredOrders}
             rowKey={(o) => o.id}
             pageSize={20}
+            searchable={false}
+            sortOptions={[
+              {
+                key: 'date_desc',
+                label: 'Date (plus récentes)',
+                compare: (a, b) => String(b.date || '').localeCompare(String(a.date || '')),
+              },
+              {
+                key: 'amount_desc',
+                label: 'Montant net (décroissant)',
+                compare: (a, b) => Number(b.total_amount || 0) - Number(a.total_amount || 0),
+              },
+              {
+                key: 'boxes_desc',
+                label: 'Cartons (décroissant)',
+                compare: (a, b) => Number(b.total_boxes || 0) - Number(a.total_boxes || 0),
+              },
+            ]}
+            defaultSortKey="date_desc"
             emptyMessage="Aucune commande en gros ne correspond aux critères sélectionnés."
-            rowClassName={(o) =>
+            cardClassName={(o) =>
               o.delivery_status === 'annulee'
-                ? 'opacity-65 bg-rose-50/20 dark:bg-rose-950/10'
+                ? 'opacity-70 bg-rose-50/20 dark:bg-rose-950/10'
                 : ''
             }
-            mobileTitle={(o) => (
-              <div>
-                <span className="font-mono font-extrabold text-xs text-[#008DA9] dark:text-teal-400">
+            title={(o) => (
+              <div className="flex flex-wrap items-baseline justify-between gap-2 w-full min-w-0">
+                <span className="font-mono font-extrabold text-sm sm:text-base text-[#008DA9] dark:text-teal-400 [overflow-wrap:anywhere]">
                   {o.reference}
                 </span>
-                <div className="font-bold text-sm text-slate-900 dark:text-white mt-0.5">
-                  {o.client_name}
-                </div>
-                <div className="text-xs text-slate-500">
-                  {o.client_code} &bull; {o.client_neighborhood} ({o.client_city || 'Bamako'})
-                </div>
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 [overflow-wrap:anywhere]">
+                  {o.date} {o.order_time ? `à ${o.order_time}` : ''}
+                </span>
               </div>
             )}
-            mobileBadge={(o) => (
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
+            subtitle={(o) => (
+              <span className="font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+                {o.client_name} ({o.client_code}) &bull; {o.client_neighborhood} ({o.client_city || 'Bamako'})
+              </span>
+            )}
+            badges={(o) => (
+              <>
                 <span
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold ${
                     o.delivery_status === 'livree'
                       ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                       : o.delivery_status === 'annulee'
@@ -794,35 +815,123 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                       : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                   }`}
                 >
-                  {o.delivery_status === 'livree'
-                    ? 'Livrée'
-                    : o.delivery_status === 'annulee'
-                    ? 'Annulée'
-                    : 'En préparation'}
+                  {o.delivery_status === 'livree' ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  ) : o.delivery_status === 'annulee' ? (
+                    <XCircle className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>
+                    {o.delivery_status === 'livree'
+                      ? 'Livrée'
+                      : o.delivery_status === 'annulee'
+                      ? 'Annulée'
+                      : 'En préparation'}
+                  </span>
                 </span>
                 <span
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold ${
                     o.payment_status === 'paye'
                       ? 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
                       : o.payment_status === 'annulee'
-                      ? 'bg-rose-100 text-rose-800'
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                       : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                   }`}
                 >
-                  {o.payment_status === 'paye' ? 'Payé' : o.payment_status === 'annulee' ? 'Annulé' : 'À encaisser'}
+                  {o.payment_status === 'paye'
+                    ? 'Payé'
+                    : o.payment_status === 'annulee'
+                    ? 'Annulé'
+                    : 'Attente paiement'}
                 </span>
-              </div>
+              </>
             )}
-            mobileActions={(o) => {
+            fields={[
+              {
+                key: 'client',
+                label: 'Client en gros',
+                render: (o) => (
+                  <span className="[overflow-wrap:anywhere]">
+                    <strong className="text-slate-900 dark:text-white">{o.client_name}</strong>{' '}
+                    <span className="font-mono text-xs text-slate-500">({o.client_code})</span>
+                  </span>
+                ),
+              },
+              {
+                key: 'quartier',
+                label: 'Quartier / Ville',
+                render: (o) => `${o.client_neighborhood} (${o.client_city || 'Bamako'})`,
+              },
+              {
+                key: 'items',
+                label: 'Détail cartons (SKUs)',
+                render: (o) => {
+                  const items = Array.isArray(o.items) ? o.items : [];
+                  return (
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 dark:text-white">
+                        {o.total_boxes} carton{Number(o.total_boxes) > 1 ? 's' : ''}
+                      </div>
+                      {items.map((it: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="text-xs text-slate-700 dark:text-slate-300 [overflow-wrap:anywhere]"
+                        >
+                          &bull; {it.name} :{' '}
+                          <strong className="font-extrabold text-slate-900 dark:text-white">
+                            {it.qtyBoxes} carton{Number(it.qtyBoxes) > 1 ? 's' : ''}
+                          </strong>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                },
+              },
+              {
+                key: 'remise',
+                label: 'Remise commerciale',
+                render: (o) =>
+                  Number(o.discount_percent) > 0 ? (
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                      -{o.discount_percent} % (-{Number(o.discount_amount || 0).toLocaleString('fr-FR')} FCFA)
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">Tarif standard</span>
+                  ),
+              },
+              {
+                key: 'reglement',
+                label: 'Mode de règlement',
+                render: (o) => o.payment_mode,
+              },
+              {
+                key: 'notes',
+                label: 'Notes',
+                hidden: (o) => !o.notes,
+                render: (o) => <span className="italic text-slate-600 dark:text-slate-300">{o.notes}</span>,
+              },
+              {
+                key: 'net_amount',
+                label: 'Net à payer',
+                isAmount: true,
+                render: (o) => (
+                  <span className="font-black text-base text-[#008DA9] dark:text-teal-400 whitespace-nowrap">
+                    {Number(o.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+              },
+            ]}
+            renderActions={(o) => {
               const isCancelled = o.delivery_status === 'annulee';
               return (
-                <div className="flex flex-wrap items-center gap-2">
+                <>
                   <button
                     type="button"
                     onClick={() => handleOpenPrintableOrder(o)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs cursor-pointer"
                   >
-                    <Printer className="w-3.5 h-3.5 text-[#008DA9]" />
+                    <Printer className="w-4 h-4 text-[#008DA9] shrink-0" />
                     <span>Facture / BL Gros</span>
                   </button>
 
@@ -830,9 +939,9 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleUpdateOrderStatus(o.id, { delivery_status: 'livree' })}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
                     >
-                      <Truck className="w-3.5 h-3.5" />
+                      <Truck className="w-4 h-4 shrink-0" />
                       <span>Valider Livraison</span>
                     </button>
                   )}
@@ -841,9 +950,9 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleUpdateOrderStatus(o.id, { payment_status: 'paye' })}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
                     >
-                      <CreditCard className="w-3.5 h-3.5" />
+                      <CreditCard className="w-4 h-4 shrink-0" />
                       <span>Marquer Payée</span>
                     </button>
                   )}
@@ -855,13 +964,13 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                         setCancellingOrder(o);
                         setCancelReason('');
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs cursor-pointer"
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs cursor-pointer"
                     >
-                      <XCircle className="w-3.5 h-3.5" />
+                      <XCircle className="w-4 h-4 shrink-0" />
                       <span>Annuler</span>
                     </button>
                   )}
-                </div>
+                </>
               );
             }}
             totalsFooter={
@@ -883,213 +992,6 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                 </span>
               </div>
             }
-            columns={[
-              {
-                key: 'ref',
-                header: 'Réf. & Date',
-                mobileLabel: 'Date',
-                render: (o) => (
-                  <div>
-                    <div className="font-mono font-extrabold text-[#008DA9] dark:text-teal-400">
-                      {o.reference}
-                    </div>
-                    <div className="text-slate-500 mt-0.5">
-                      {o.date} {o.order_time ? `à ${o.order_time}` : ''}
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                key: 'client',
-                header: 'Client en Gros',
-                hideOnMobileCard: true,
-                render: (o) => (
-                  <div>
-                    <div className="font-bold text-slate-900 dark:text-white">{o.client_name}</div>
-                    <div className="text-slate-500 mt-0.5">
-                      <span className="font-mono font-semibold text-slate-600 dark:text-slate-400">
-                        {o.client_code}
-                      </span>
-                      {' • '}
-                      {o.client_neighborhood} ({o.client_city || 'Bamako'})
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                key: 'items',
-                header: 'Détail Cartons (SKUs)',
-                mobileLabel: 'Cartons (SKUs)',
-                isSecondary: true,
-                render: (o) => {
-                  const items = Array.isArray(o.items) ? o.items : [];
-                  return (
-                    <div>
-                      <div className="flex flex-wrap gap-1">
-                        {items.map((it: any, idx: number) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium"
-                          >
-                            <span>{it.name}:</span>
-                            <strong className="text-slate-900 dark:text-white">{it.qtyBoxes} ctn</strong>
-                          </span>
-                        ))}
-                      </div>
-                      {o.notes && (
-                        <div className="text-[11px] text-slate-400 italic mt-1">{o.notes}</div>
-                      )}
-                    </div>
-                  );
-                },
-              },
-              {
-                key: 'volume',
-                header: 'Volume & Remise',
-                mobileLabel: 'Volume',
-                align: 'right',
-                isNumeric: true,
-                render: (o) => (
-                  <div>
-                    <div className="font-extrabold text-slate-900 dark:text-white">
-                      {o.total_boxes} cartons
-                    </div>
-                    {Number(o.discount_percent) > 0 ? (
-                      <div className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                        Remise -{o.discount_percent}% (-
-                        {Number(o.discount_amount || 0).toLocaleString('fr-FR')} F)
-                      </div>
-                    ) : (
-                      <div className="text-slate-400">Tarif standard</div>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                key: 'amount',
-                header: 'Net à Payer',
-                mobileLabel: 'Net à payer',
-                align: 'right',
-                isNumeric: true,
-                render: (o) => (
-                  <div>
-                    <div className="font-black text-sm text-slate-900 dark:text-white">
-                      {Number(o.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                    </div>
-                    <div className="text-slate-400">{o.payment_mode}</div>
-                  </div>
-                ),
-              },
-              {
-                key: 'status',
-                header: 'Paiement & Livraison',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: (o) => (
-                  <div className="flex flex-col items-center gap-1">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                        o.delivery_status === 'livree'
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                          : o.delivery_status === 'annulee'
-                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                      }`}
-                    >
-                      {o.delivery_status === 'livree' ? (
-                        <CheckCircle2 className="w-3 h-3" />
-                      ) : o.delivery_status === 'annulee' ? (
-                        <XCircle className="w-3 h-3" />
-                      ) : (
-                        <Clock className="w-3 h-3" />
-                      )}
-                      {o.delivery_status === 'livree'
-                        ? 'Livrée'
-                        : o.delivery_status === 'annulee'
-                        ? 'Annulée'
-                        : 'En préparation'}
-                    </span>
-
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        o.payment_status === 'paye'
-                          ? 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
-                          : o.payment_status === 'annulee'
-                          ? 'bg-rose-100 text-rose-800'
-                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                      }`}
-                    >
-                      {o.payment_status === 'paye'
-                        ? 'Payé'
-                        : o.payment_status === 'annulee'
-                        ? 'Annulé'
-                        : 'Attente paiement'}
-                    </span>
-                  </div>
-                ),
-              },
-              {
-                key: 'actions',
-                header: 'Actions',
-                align: 'right',
-                hideOnMobileCard: true,
-                render: (o) => {
-                  const isCancelled = o.delivery_status === 'annulee';
-                  return (
-                    <div className="inline-flex items-center justify-end gap-1.5 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenPrintableOrder(o)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs cursor-pointer"
-                        title="Imprimer la Facture / Bon de livraison Grossiste"
-                      >
-                        <Printer className="w-3.5 h-3.5 text-[#008DA9]" />
-                        <span>Facture Gros</span>
-                      </button>
-
-                      {!isCancelled && o.delivery_status === 'en_preparation' && (
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateOrderStatus(o.id, { delivery_status: 'livree' })}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
-                          title="Confirmer la livraison de la commande en gros"
-                        >
-                          <Truck className="w-3.5 h-3.5" />
-                          <span>Livrer</span>
-                        </button>
-                      )}
-
-                      {!isCancelled && o.payment_status === 'en_attente_paiement' && (
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateOrderStatus(o.id, { payment_status: 'paye' })}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs cursor-pointer"
-                          title="Confirmer l'encaissement de la commande en gros"
-                        >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          <span>Encaisser</span>
-                        </button>
-                      )}
-
-                      {!isCancelled && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCancellingOrder(o);
-                            setCancelReason('');
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs cursor-pointer"
-                          title="Annuler la commande en gros"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>Annuler</span>
-                        </button>
-                      )}
-                    </div>
-                  );
-                },
-              },
-            ]}
           />
         </div>
       )}
@@ -1186,24 +1088,32 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                           : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="font-mono text-[11px] font-bold text-[#008DA9] dark:text-teal-400">
                             {p.code}
                           </span>
-                          <div className="font-extrabold text-sm text-slate-900 dark:text-white">
-                            {p.name}
+                          <span className="text-[10px] uppercase font-bold text-slate-400">
+                            {p.gamme}
+                          </span>
+                        </div>
+                        <div className="font-extrabold text-sm text-slate-900 dark:text-white break-words">
+                          {p.name}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {p.packaging} &bull;{' '}
+                          <strong className="text-slate-700 dark:text-slate-200">
+                            {Number(p.price_box).toLocaleString('fr-FR')} FCFA / carton
+                          </strong>
+                        </div>
+                        <div className="pt-1 flex flex-col gap-0.5 text-xs">
+                          <div className="text-slate-600 dark:text-slate-300">
+                            Stock disponible : <strong className="text-teal-700 dark:text-teal-400">{p.stock_depot} ctn</strong>
                           </div>
-                          <div className="text-xs text-slate-500">
-                            {p.packaging} &bull;{' '}
-                            <strong className="text-slate-700 dark:text-slate-200">
-                              {Number(p.price_box).toLocaleString('fr-FR')} FCFA / carton
-                            </strong>
+                          <div className="text-slate-500 dark:text-slate-400">
+                            Dépôt central : <strong>{p.stock_depot} ctn</strong>
                           </div>
                         </div>
-                        <span className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                          Stock: {p.stock_depot} ctn
-                        </span>
                       </div>
 
                       <div className="mt-3 flex items-center gap-2">
@@ -1216,7 +1126,7 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                             setQuantities((prev) => ({ ...prev, [p.id]: val }));
                           }}
                           placeholder="0 carton"
-                          className="w-28 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-black text-slate-900 dark:text-white text-center"
+                          className="w-32 min-w-[96px] px-2 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-base font-mono font-black text-slate-900 dark:text-white text-center"
                         />
 
                         <div className="flex flex-wrap gap-1">
@@ -1281,7 +1191,7 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
                     step={0.5}
                     value={discountPercent}
                     onChange={(e) => setDiscountPercent(Math.max(0, Math.min(30, Number(e.target.value) || 0)))}
-                    className="w-24 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-black text-sm text-slate-900 dark:text-white text-center"
+                    className="w-28 min-w-[84px] px-2 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono font-black text-base text-slate-900 dark:text-white text-center"
                   />
                   <div className="flex flex-wrap gap-1">
                     {[0, 2, 3, 5, 8].map((pct) => (
@@ -1388,13 +1298,13 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
             <button
               type="submit"
               disabled={submittingOrder || basketTotalBoxes === 0}
-              className="w-full h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] disabled:opacity-50 text-white font-bold text-[16px] shadow-sm transition cursor-pointer flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] h-auto py-3 px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] disabled:opacity-50 text-white font-bold text-[16px] shadow-sm transition cursor-pointer flex items-center justify-center gap-2"
             >
-              <CheckCircle2 className="w-4 h-4" />
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>
                 {submittingOrder
-                  ? 'Enregistrement en cours...'
-                  : `Valider la Commande en Gros (${basketTotalBoxes} ctn)`}
+                  ? 'Enregistrement...'
+                  : 'Valider la commande'}
               </span>
             </button>
           </div>
@@ -1469,121 +1379,161 @@ export const GrossisteView: React.FC<GrossisteViewProps> = ({
             </div>
           </div>
 
-          {/* Clients Grid (Responsive Cards on Mobile/Tablet/Desktop) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredClients.map((client) => (
-              <div
-                key={client.id}
-                className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col justify-between space-y-4 hover:border-[#008DA9]/60 transition"
-              >
-                <div className="space-y-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-extrabold text-xs text-[#008DA9] dark:text-teal-400">
-                          {client.code}
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                          {client.category}
-                        </span>
-                        {Number(client.default_discount_percent) > 0 && (
-                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                            <Percent className="w-3 h-3" />
-                            Remise {client.default_discount_percent}%
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-base font-extrabold text-slate-900 dark:text-white mt-1">
-                        {client.company_name}
-                      </h3>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-300 pt-1">
-                    <div className="flex items-center gap-1.5">
-                      <UserCheck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span>
-                        Gérant : <strong className="text-slate-900 dark:text-white">{client.manager_name}</strong>
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <strong className="text-slate-900 dark:text-white">{client.phone}</strong>
-                    </div>
-                    <div className="flex items-center gap-1.5 sm:col-span-2">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span>
-                        {client.neighborhood} ({client.city})
-                        {client.address ? ` — ${client.address}` : ''}
-                      </span>
-                    </div>
-                  </div>
-
-                  {(client.nif || client.rccm) && (
-                    <div className="flex flex-wrap gap-3 text-[11px] text-slate-500 pt-1">
-                      {client.nif && (
-                        <span>
-                          NIF : <strong className="font-mono text-slate-700 dark:text-slate-300">{client.nif}</strong>
-                        </span>
-                      )}
-                      {client.rccm && (
-                        <span>
-                          RCCM : <strong className="font-mono text-slate-700 dark:text-slate-300">{client.rccm}</strong>
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {client.notes && (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 italic bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-xl">
-                      {client.notes}
-                    </p>
-                  )}
-                </div>
-
-                {/* Client Purchase Summary & Quick Actions */}
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-4 text-xs">
-                    <div>
-                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Commandes</span>
-                      <strong className="text-slate-900 dark:text-white font-extrabold">
-                        {client.orders_count || 0} cmd ({client.total_boxes_ordered || 0} ctn)
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block text-[10px] uppercase font-bold">CA Cumulé</span>
-                      <strong className="text-[#008DA9] dark:text-teal-400 font-black">
-                        {Number(client.total_ca_fcfa || 0).toLocaleString('fr-FR')} FCFA
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEditClientModal(client)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Modifier</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleSelectClientForOrder(client.id);
-                        setSubTab('nouvelle-commande-gros');
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs cursor-pointer"
-                    >
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      <span>Commander</span>
-                    </button>
-                  </div>
-                </div>
+          <CardList<any>
+            data={filteredClients}
+            rowKey={(client) => client.id}
+            pageSize={20}
+            searchable={false}
+            sortOptions={[
+              {
+                key: 'ca_desc',
+                label: 'CA cumulé (décroissant)',
+                compare: (a, b) => Number(b.total_ca_fcfa || 0) - Number(a.total_ca_fcfa || 0),
+              },
+              {
+                key: 'name_asc',
+                label: 'Société (A → Z)',
+                compare: (a, b) => String(a.company_name || '').localeCompare(String(b.company_name || ''), 'fr'),
+              },
+              {
+                key: 'orders_desc',
+                label: 'Commandes (décroissant)',
+                compare: (a, b) => Number(b.orders_count || 0) - Number(a.orders_count || 0),
+              },
+            ]}
+            defaultSortKey="ca_desc"
+            emptyMessage="Aucun client en gros trouvé pour ces critères."
+            title={(client) => (
+              <div className="flex flex-wrap items-baseline justify-between gap-2 w-full min-w-0">
+                <span className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+                  {client.company_name}
+                </span>
+                <span className="font-mono font-extrabold text-xs text-[#008DA9] dark:text-teal-400 [overflow-wrap:anywhere]">
+                  {client.code}
+                </span>
               </div>
-            ))}
-          </div>
+            )}
+            badges={(client) => (
+              <>
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-50 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                  {client.category}
+                </span>
+                {Number(client.default_discount_percent) > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                    <Percent className="w-3 h-3 shrink-0" />
+                    <span>Remise {client.default_discount_percent} %</span>
+                  </span>
+                )}
+              </>
+            )}
+            fields={[
+              {
+                key: 'code',
+                label: 'Code client',
+                render: (client) => <span className="font-mono font-bold">{client.code}</span>,
+              },
+              {
+                key: 'company',
+                label: 'Société',
+                render: (client) => <strong className="text-slate-900 dark:text-white">{client.company_name}</strong>,
+              },
+              {
+                key: 'manager',
+                label: 'Gérant',
+                render: (client) => client.manager_name,
+              },
+              {
+                key: 'phone',
+                label: 'Téléphone',
+                render: (client) => <span className="font-mono">{client.phone}</span>,
+              },
+              {
+                key: 'location',
+                label: 'Quartier / Ville',
+                render: (client) => `${client.neighborhood} (${client.city || 'Bamako'})`,
+              },
+              {
+                key: 'address',
+                label: 'Adresse',
+                hidden: (client) => !client.address,
+                render: (client) => client.address,
+              },
+              {
+                key: 'nif',
+                label: 'NIF',
+                hidden: (client) => !client.nif,
+                render: (client) => <span className="font-mono">{client.nif}</span>,
+              },
+              {
+                key: 'rccm',
+                label: 'RCCM',
+                hidden: (client) => !client.rccm,
+                render: (client) => <span className="font-mono">{client.rccm}</span>,
+              },
+              {
+                key: 'notes',
+                label: 'Notes',
+                hidden: (client) => !client.notes,
+                render: (client) => <span className="italic text-slate-600 dark:text-slate-300">{client.notes}</span>,
+              },
+              {
+                key: 'orders',
+                label: 'Commandes passées',
+                isAmount: true,
+                render: (client) => (
+                  <span className="font-extrabold text-slate-900 dark:text-white whitespace-nowrap">
+                    {client.orders_count || 0} cmd ({client.total_boxes_ordered || 0} cartons)
+                  </span>
+                ),
+              },
+              {
+                key: 'ca_cumule',
+                label: 'CA cumulé',
+                isAmount: true,
+                render: (client) => (
+                  <span className="font-black text-base text-[#008DA9] dark:text-teal-400 whitespace-nowrap">
+                    {Number(client.total_ca_fcfa || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+              },
+            ]}
+            renderActions={(client) => (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openEditClientModal(client)}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer"
+                >
+                  <Edit3 className="w-4 h-4 shrink-0" />
+                  <span>Modifier</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSelectClientForOrder(client.id);
+                    setSubTab('nouvelle-commande-gros');
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs cursor-pointer"
+                >
+                  <PlusCircle className="w-4 h-4 shrink-0" />
+                  <span>Commander</span>
+                </button>
+              </>
+            )}
+            totalsFooter={
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Total clients en gros ({filteredClients.length})</span>
+                <span className="whitespace-nowrap font-black text-[var(--marque-fonce)] dark:text-teal-300">
+                  CA cumulé :{' '}
+                  {filteredClients
+                    .reduce((s, c) => s + Number(c.total_ca_fcfa || 0), 0)
+                    .toLocaleString('fr-FR')}{' '}
+                  FCFA
+                </span>
+              </div>
+            }
+          />
         </div>
       )}
 

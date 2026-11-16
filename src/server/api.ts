@@ -30,6 +30,14 @@ import {
   handleExportFullDatabase,
   handleDownloadBackupFile,
 } from './backupService.js';
+import {
+  initAnomalyEngine,
+  evaluateAllAnomalyRules,
+  handleGetAnomalies,
+  handleUpdateAnomalyStatus,
+  handleUpdateAnomalyThresholds,
+  handleRunAnomalyScanNow,
+} from './anomalyEngine.js';
 
 export const apiRouter = Router();
 
@@ -37,6 +45,42 @@ initPushTables();
 ensureVapidConfigured();
 initSearchEngine();
 initBackupSystem();
+initAnomalyEngine();
+
+// Exécution automatique des règles d'anomalies côté serveur à chaque événement métier
+apiRouter.use((req, res, next) => {
+  if (
+    (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') &&
+    !req.path.startsWith('/anomalies') &&
+    !req.path.startsWith('/alertes') &&
+    !req.path.startsWith('/notifications')
+  ) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        try {
+          evaluateAllAnomalyRules({ trigger: `${req.method} ${req.path}`, sendPush: true });
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }
+  next();
+});
+
+// Routes de détection d'anomalies et d'alertes (avec contrôle serveur strict des droits par rôle)
+apiRouter.get('/anomalies', handleGetAnomalies);
+apiRouter.get('/alertes', handleGetAnomalies);
+apiRouter.patch('/anomalies/:id/status', handleUpdateAnomalyStatus);
+apiRouter.post('/anomalies/:id/status', handleUpdateAnomalyStatus);
+apiRouter.patch('/alertes/:id/statut', handleUpdateAnomalyStatus);
+apiRouter.post('/alertes/:id/statut', handleUpdateAnomalyStatus);
+apiRouter.put('/anomalies/thresholds', handleUpdateAnomalyThresholds);
+apiRouter.post('/anomalies/thresholds', handleUpdateAnomalyThresholds);
+apiRouter.put('/alertes/seuils', handleUpdateAnomalyThresholds);
+apiRouter.post('/alertes/seuils', handleUpdateAnomalyThresholds);
+apiRouter.post('/anomalies/scan', handleRunAnomalyScanNow);
+apiRouter.post('/alertes/analyser', handleRunAnomalyScanNow);
 
 // Global Search Route (/api/recherche)
 apiRouter.get('/recherche', handleGlobalSearch);
@@ -109,6 +153,175 @@ apiRouter.get('/settings', (req, res) => {
       settings[row.key] = row.value;
     }
     res.json({ success: true, settings });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Mise à jour complète des paramètres de la société, sécurité (PIN), seuils et préférences globales
+const handleUpdateSettings = (req: any, res: any) => {
+  try {
+    const payload = req.body && typeof req.body === 'object' ? (req.body.settings || req.body) : {};
+    const upsertStmt = db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+
+    const protectedInternalKeys = new Set([
+      'runtime_vapid_public',
+      'runtime_vapid_private',
+      'auth_token_secret',
+    ]);
+
+    for (const [k, v] of Object.entries(payload)) {
+      if (!k || protectedInternalKeys.has(k)) continue;
+      if (v === undefined || v === null) continue;
+      upsertStmt.run(String(k).trim(), String(v));
+    }
+
+    const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+    const settings: Record<string, string> = {};
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+
+    res.json({
+      success: true,
+      message: 'Paramètres enregistrés avec succès.',
+      settings,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde des paramètres';
+    res.status(500).json({ success: false, error: message });
+  }
+};
+
+apiRouter.put('/settings', handleUpdateSettings);
+apiRouter.post('/settings', handleUpdateSettings);
+
+// Mise à jour des seuils métier globaux + seuils / prix par produit du catalogue
+apiRouter.put('/settings/thresholds', (req, res) => {
+  try {
+    const { settings: thresholdsSettings, products: productUpdates } = req.body || {};
+    const upsertSetting = db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    const updateProduct = db.prepare(`
+      UPDATE products
+      SET threshold_depot = COALESCE(?, threshold_depot),
+          price_box = COALESCE(?, price_box),
+          units_per_box = COALESCE(?, units_per_box),
+          name = COALESCE(?, name)
+      WHERE id = ?
+    `);
+
+    if (thresholdsSettings && typeof thresholdsSettings === 'object') {
+      for (const [k, v] of Object.entries(thresholdsSettings)) {
+        if (v !== undefined && v !== null) {
+          upsertSetting.run(String(k), String(v));
+        }
+      }
+    }
+    if (Array.isArray(productUpdates)) {
+      for (const p of productUpdates) {
+        if (!p || !p.id) continue;
+        const th = p.threshold_depot !== undefined ? Math.max(0, Number(p.threshold_depot) || 0) : null;
+        const pr = p.price_box !== undefined ? Math.max(0, Number(p.price_box) || 0) : null;
+        const upb = p.units_per_box !== undefined ? Math.max(1, Number(p.units_per_box) || 1) : null;
+        const nm = p.name && String(p.name).trim() ? String(p.name).trim() : null;
+        updateProduct.run(th, pr, upb, nm, String(p.id));
+      }
+    }
+
+    const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+    const settings: Record<string, string> = {};
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+    const products = db.prepare('SELECT * FROM products ORDER BY name ASC').all();
+
+    res.json({
+      success: true,
+      message: 'Seuils et paramètres métier enregistrés avec succès.',
+      settings,
+      products,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Actions sur les données (démo et vidage contrôlé)
+apiRouter.post('/settings/data/action', (req, res) => {
+  try {
+    const mode = String(req.body?.mode || 'refresh');
+    if (mode === 'clear_transactions') {
+      const tables = [
+        'sale_items',
+        'sales',
+        'versements',
+        'chargement_items',
+        'chargements',
+        'receptions',
+        'purchase_requests',
+        'wholesale_order_items',
+        'wholesale_orders',
+        'notifications',
+      ];
+      for (const tbl of tables) {
+        try {
+          db.prepare(`DELETE FROM ${tbl}`).run();
+        } catch {
+          // ignore if table does not exist
+        }
+      }
+      return res.json({
+        success: true,
+        message: 'Toutes les opérations de test (ventes, versements, chargements, réceptions, commandes) ont été vidées.',
+      });
+    }
+
+    if (mode === 'reset_defaults') {
+      const defaults: Record<string, string> = {
+        company_name: 'Baobab Distribution SARL',
+        slogan: 'Négoce et Distribution Agroalimentaire',
+        country: 'Mali',
+        city: 'Bamako',
+        timezone: 'Africa/Bamako',
+        currency: 'FCFA',
+        address: 'Zone Industrielle de Sotuba, Bamako - Mali',
+        phone: '+223 20 22 45 88 / +223 76 12 34 56',
+        email: 'contact@baobab-distribution.ml',
+        nif: '084129532M',
+        rccm: 'MA.BKO.2018.B.4129',
+        fefo_critical_days: '30',
+        fefo_warning_days: '90',
+        low_stock_threshold: '25',
+        tva_rate: '18',
+        max_inventory_gap_boxes: '5',
+        thermal_width_mm: '80',
+        pin_digits: '4',
+      };
+      const upsert = db.prepare(`
+        INSERT INTO settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `);
+      for (const [k, v] of Object.entries(defaults)) {
+        upsert.run(k, v);
+      }
+      return res.json({
+        success: true,
+        message: 'Paramètres par défaut de démonstration restaurés avec succès.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Données synchronisées avec succès.',
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
@@ -259,19 +472,26 @@ apiRouter.post('/users', requireAdmin, (req, res) => {
 
     const id = `usr-${Date.now()}`;
     const createdAt = new Date().toISOString().split('T')[0];
-    const hashedInitialPassword = hashPasswordScrypt(
-      req.body?.password ? String(req.body.password) : `Baobab#${code}`
-    );
+    const rawPin = req.body?.password ? String(req.body.password).trim() : '1234';
+    if (req.body?.password && !/^\d{4}$/.test(rawPin)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le code PIN doit être composé d’exactement 4 chiffres.',
+      });
+    }
+    const hashedInitialPassword = hashPasswordScrypt(rawPin);
+
+    const effectiveTeam = role === 'Vendeur' ? '' : (team || '');
 
     db.prepare(`
       INSERT INTO users (id, code, name, email, role, phone, team, must_change_password, password_hash, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run(id, code, name, email, role, phone || '', team || '', hashedInitialPassword, createdAt);
+    `).run(id, code, name, email, role, phone || '', effectiveTeam, hashedInitialPassword, createdAt);
 
     res.json({
       success: true,
-      message: `Compte ${code} créé avec mot de passe provisoire.`,
-      user: { id, code, name, email, role, phone, team, must_change_password: 1, created_at: createdAt }
+      message: `Compte ${code} créé avec code PIN provisoire à 4 chiffres.`,
+      user: { id, code, name, email, role, phone, team: effectiveTeam, must_change_password: 1, created_at: createdAt }
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -279,16 +499,98 @@ apiRouter.post('/users', requireAdmin, (req, res) => {
   }
 });
 
-// Mot de passe provisoire à changer à la première connexion (toujours haché avec scrypt)
+// Code PIN à 4 chiffres à changer à la première connexion ou depuis Réglages > Sécurité (PIN)
 apiRouter.patch('/users/:id/change-password', (req, res) => {
   try {
     const { id } = req.params;
-    const rawNewPwd = String(req.body?.newPassword || req.body?.password || 'Baobab2026!');
+    const rawNewPwd = String(req.body?.newPassword || req.body?.password || '1234').trim();
+    if (!/^\d{4}$/.test(rawNewPwd)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le code PIN doit comporter exactement 4 chiffres.',
+      });
+    }
     const newHash = hashPasswordScrypt(rawNewPwd);
     db.prepare('UPDATE users SET must_change_password = 0, password_hash = ? WHERE id = ?').run(newHash, id);
-    res.json({ success: true, message: 'Mot de passe mis à jour avec succès.' });
+    res.json({ success: true, message: 'Code PIN à 4 chiffres mis à jour avec succès.' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Modification complète d'un utilisateur existant (nom, code, email, téléphone, rôle, équipe, mot de passe / PIN)
+apiRouter.put('/users/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Utilisateur introuvable.' });
+    }
+
+    const nextName = req.body?.name !== undefined ? String(req.body.name).trim() : existing.name;
+    const nextCode = req.body?.code !== undefined ? String(req.body.code).trim().toUpperCase() : existing.code;
+    const nextEmail = req.body?.email !== undefined ? String(req.body.email).trim() : existing.email;
+    const nextPhone = req.body?.phone !== undefined ? String(req.body.phone).trim() : existing.phone;
+    const nextRole = req.body?.role !== undefined ? String(req.body.role).trim() : existing.role;
+    const rawNextTeam = req.body?.team !== undefined ? String(req.body.team).trim() : existing.team;
+    const nextTeam = nextRole === 'Vendeur' ? '' : rawNextTeam;
+
+    if (!nextName || !nextCode) {
+      return res.status(400).json({ success: false, error: 'Le nom et le code utilisateur sont obligatoires.' });
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET name = ?, code = ?, email = ?, phone = ?, role = ?, team = ?
+      WHERE id = ?
+    `).run(nextName, nextCode, nextEmail, nextPhone, nextRole, nextTeam, id);
+
+    if (req.body?.password && String(req.body.password).trim()) {
+      const rawPin = String(req.body.password).trim();
+      if (!/^\d{4}$/.test(rawPin)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Le code PIN doit comporter exactement 4 chiffres.',
+        });
+      }
+      const newHash = hashPasswordScrypt(rawPin);
+      db.prepare('UPDATE users SET must_change_password = 0, password_hash = ? WHERE id = ?').run(newHash, id);
+    }
+
+    const updated = db.prepare('SELECT id, code, name, email, role, phone, team, must_change_password, created_at FROM users WHERE id = ?').get(id);
+    res.json({
+      success: true,
+      message: `Utilisateur ${nextName} (${nextCode}) mis à jour avec succès.`,
+      user: updated,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur lors de la modification de l\'utilisateur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Suppression d'un utilisateur (hors Administrateur principal)
+apiRouter.delete('/users/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Utilisateur introuvable.' });
+    }
+    if (existing.role === 'Administrateur') {
+      const admins = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'Administrateur'").get() as { count: number };
+      if (admins.count <= 1) {
+        return res.status(400).json({ success: false, error: 'Impossible de supprimer le compte Administrateur principal.' });
+      }
+    }
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.json({
+      success: true,
+      message: `Compte ${existing.name} (${existing.code}) supprimé.`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur lors de la suppression';
     res.status(500).json({ success: false, error: message });
   }
 });
@@ -2405,6 +2707,213 @@ apiRouter.post('/inventaires-depot', requireMagasinierOrSalesAdmin, (req, res) =
 });
 
 // 9. VENTES (Vendeur seul - L'Administrateur ne vend jamais)
+function ensureSaleThermalTicketNumber(saleRow: any): string {
+  const existing = String(saleRow?.thermal_ticket_number || '').trim();
+  if (existing && existing.startsWith('TKT-THERM-')) {
+    return existing;
+  }
+  const baseRaw = existing
+    ? existing.replace(/^TKT-/, 'TKT-THERM-')
+    : String(saleRow?.number || saleRow?.id || '').replace(/^VTE-/, 'TKT-THERM-');
+  let candidate = baseRaw.startsWith('TKT-THERM-') ? baseRaw : `TKT-THERM-${baseRaw.toUpperCase()}`;
+
+  // Ensure uniqueness in sales table
+  const conflict = db
+    .prepare('SELECT id FROM sales WHERE thermal_ticket_number = ? AND id != ?')
+    .get(candidate, saleRow?.id || '') as any;
+  if (conflict) {
+    candidate = `${candidate}-${String(saleRow?.id || Date.now()).slice(-4).toUpperCase()}`;
+  }
+
+  if (saleRow?.id) {
+    try {
+      db.prepare('UPDATE sales SET thermal_ticket_number = ? WHERE id = ?').run(candidate, saleRow.id);
+    } catch {
+      // ignore if read-only
+    }
+  }
+  return candidate;
+}
+
+function buildSaleDocumentsFromRow(r: any) {
+  let saleTime = r.sale_time;
+  if (!saleTime) {
+    if (r.offline_recorded_at && String(r.offline_recorded_at).includes('T')) {
+      saleTime = String(r.offline_recorded_at).split('T')[1].slice(0, 5);
+    } else if (r.created_at && String(r.created_at).includes('T')) {
+      saleTime = String(r.created_at).split('T')[1].slice(0, 5);
+    } else {
+      saleTime = '10:30';
+    }
+  }
+
+  const parsedItems = typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || []);
+  const normalizedItems = Array.isArray(parsedItems)
+    ? parsedItems.map((it: any, idx: number) => {
+        const qty = Number(it.qtyBoxes ?? it.qty ?? it.quantity ?? 1);
+        const price = Number(it.unitPrice ?? it.price ?? 0);
+        const total = Number(it.total ?? qty * price);
+        return {
+          id: `${r.id || 'sale'}-${idx}`,
+          code: it.code || 'ART',
+          name: it.name || it.description || 'Produit Baobab',
+          description: it.name || it.description || 'Produit Baobab',
+          qty,
+          qtyBoxes: qty,
+          quantity: qty,
+          price,
+          unitPrice: price,
+          total,
+        };
+      })
+    : [];
+
+  const computedHt = normalizedItems.reduce((sum: number, it: any) => sum + Number(it.total || 0), 0);
+  const subtotalHt = Number(r.total_amount || computedHt || 0);
+  const withTva = Boolean(r.with_tva);
+  const tvaRate = withTva ? Number(r.tva_rate || 18) : 0;
+  const tvaAmount = withTva ? Number(r.tva_amount || Math.round(subtotalHt * 0.18)) : 0;
+  const totalTtc = withTva ? Number(r.total_ttc || subtotalHt + tvaAmount) : subtotalHt;
+
+  const thermalTicketNumber = ensureSaleThermalTicketNumber(r);
+  const invoiceNumber = r.invoice_number || String(r.number || '').replace(/^VTE-/, 'FAC-');
+  const isCancelled = r.status === 'annulee';
+  const paymentMethod = r.payment_type || 'Comptant';
+  const payLower = String(paymentMethod).toLowerCase();
+  const isAcquittee =
+    !isCancelled &&
+    !payLower.includes('crédit') &&
+    !payLower.includes('credit') &&
+    !payLower.includes('attente');
+
+  const ticket = {
+    id: `therm-${r.id}`,
+    saleId: r.id,
+    number: thermalTicketNumber,
+    ticketNumber: thermalTicketNumber,
+    thermalTicketNumber,
+    saleNumber: r.number,
+    invoiceNumber,
+    type: 'mini_thermique' as const,
+    docTypeTitle: 'TICKET DE VENTE',
+    date: `${r.date} à ${saleTime}`,
+    rawDate: r.date,
+    saleTime,
+    clientName: `${r.pdv_name || 'PDV'}${r.pdv_neighborhood ? ` (${r.pdv_neighborhood})` : ''}`,
+    clientPhone: r.pdv_phone || '+223 76 00 00 00',
+    vendorId: r.vendor_id,
+    vendorName: r.vendor_name || 'Vendeur Baobab',
+    vendorCode: r.vendor_code || 'BAO-VND',
+    vendorTeam: r.vendor_team || '',
+    vendorPhone: r.vendor_phone || '+223 75 44 22 11',
+    pdvId: r.pdv_id,
+    pdvName: r.pdv_name || 'PDV',
+    pdvCode: r.pdv_code || '',
+    pdvNeighborhood: r.pdv_neighborhood || 'Bamako',
+    pdvManager: r.pdv_manager || '',
+    pdvPhone: r.pdv_phone || '+223 76 00 00 00',
+    items: normalizedItems,
+    subtotal: subtotalHt,
+    subtotalHt,
+    withTva,
+    taxRate: tvaRate,
+    tvaRate,
+    taxAmount: tvaAmount,
+    tvaAmount,
+    total: totalTtc,
+    totalTtc,
+    paymentMethod,
+    isAcquittee,
+    cashierName: `${r.vendor_name || 'Vendeur'} (${r.vendor_code || 'BAO'})`,
+    status: isCancelled
+      ? 'TICKET ANNULÉ'
+      : isAcquittee
+      ? 'ACQUITTÉ'
+      : 'À PAYER',
+  };
+
+  const invoice = {
+    id: `inv-a4-${r.id}`,
+    saleId: r.id,
+    number: invoiceNumber,
+    invoiceNumber,
+    saleNumber: r.number,
+    thermalTicketNumber,
+    type: 'facture' as const,
+    docTypeTitle: 'FACTURE DE VENTE PDV',
+    date: r.date,
+    saleTime,
+    clientName: `${r.pdv_name || 'PDV'}${r.pdv_neighborhood ? ` (${r.pdv_neighborhood})` : ''}`,
+    clientPhone: r.pdv_phone || '+223 76 00 00 00',
+    vendorId: r.vendor_id,
+    vendorName: r.vendor_name || 'Vendeur Baobab',
+    vendorCode: r.vendor_code || 'BAO-VND',
+    vendorTeam: r.vendor_team || '',
+    vendorPhone: r.vendor_phone || '+223 75 44 22 11',
+    pdvId: r.pdv_id,
+    pdvName: r.pdv_name || 'PDV',
+    pdvCode: r.pdv_code || '',
+    pdvNeighborhood: r.pdv_neighborhood || 'Bamako',
+    pdvManager: r.pdv_manager || '',
+    pdvPhone: r.pdv_phone || '+223 76 00 00 00',
+    versementRef: r.versement_reference || undefined,
+    items: normalizedItems,
+    subtotal: subtotalHt,
+    subtotalHt,
+    withTva,
+    taxRate: tvaRate,
+    tvaRate,
+    taxAmount: tvaAmount,
+    tvaAmount,
+    total: totalTtc,
+    totalTtc,
+    paymentMethod,
+    isAcquittee,
+    cashierName: `${r.vendor_name || 'Vendeur'} (${r.vendor_code || 'BAO'})`,
+    status: isCancelled
+      ? 'FACTURE ANNULÉE'
+      : withTva
+      ? 'Facturée TTC (TVA 18%)'
+      : 'Facturée HT (Sans TVA)',
+  };
+
+  return { ticket, invoice, saleTime, subtotalHt, withTva, tvaRate, tvaAmount, totalTtc, thermalTicketNumber, invoiceNumber, normalizedItems };
+}
+
+function findSaleRowByIdentifier(identifier: string): any {
+  const clean = String(identifier || '').trim();
+  if (!clean) return null;
+  return db.prepare(`
+    SELECT s.*,
+           u.name as vendor_name, u.code as vendor_code, u.team as vendor_team, u.phone as vendor_phone,
+           p.name as pdv_name, p.code as pdv_code, p.neighborhood as pdv_neighborhood,
+           p.manager_name as pdv_manager, p.phone as pdv_phone,
+           v.reference as versement_reference
+    FROM sales s
+    JOIN users u ON s.vendor_id = u.id
+    JOIN points_de_vente p ON s.pdv_id = p.id
+    LEFT JOIN versements v ON s.versement_id = v.id
+    WHERE s.id = ? OR s.number = ? OR s.thermal_ticket_number = ? OR s.invoice_number = ?
+    LIMIT 1
+  `).get(clean, clean, clean, clean) as any;
+}
+
+function checkVendorAccessToSale(req: any, saleRow: any): boolean {
+  const role = getUserRole(req);
+  if (role !== 'Vendeur') return true;
+  const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+  const headerUserCode = typeof req.headers['x-user-code'] === 'string' ? req.headers['x-user-code'].trim() : '';
+  const queryUserId = typeof req.query?.vendor_id === 'string' ? req.query.vendor_id.trim() : '';
+  const effectiveUserId = headerUserId || queryUserId;
+  if (!effectiveUserId && !headerUserCode) {
+    return true;
+  }
+  return (
+    (Boolean(effectiveUserId) && saleRow.vendor_id === effectiveUserId) ||
+    (Boolean(headerUserCode) && saleRow.vendor_code === headerUserCode)
+  );
+}
+
 apiRouter.get('/sales', (req, res) => {
   try {
     const rows = db.prepare(`
@@ -2420,39 +2929,31 @@ apiRouter.get('/sales', (req, res) => {
       ORDER BY s.date DESC, COALESCE(s.sale_time, '00:00') DESC, s.created_at DESC, s.number DESC
     `).all();
 
-    const sales = rows.map((r: any) => {
-      let saleTime = r.sale_time;
-      if (!saleTime) {
-        if (r.offline_recorded_at && String(r.offline_recorded_at).includes('T')) {
-          saleTime = String(r.offline_recorded_at).split('T')[1].slice(0, 5);
-        } else if (r.created_at && String(r.created_at).includes('T')) {
-          saleTime = String(r.created_at).split('T')[1].slice(0, 5);
-        } else {
-          saleTime = '10:30';
-        }
-      }
-      const subtotalHt = Number(r.total_amount || 0);
-      const withTva = Boolean(r.with_tva);
-      const tvaRate = withTva ? Number(r.tva_rate || 18) : 0;
-      const tvaAmount = withTva ? Number(r.tva_amount || Math.round(subtotalHt * 0.18)) : 0;
-      const totalTtc = withTva ? Number(r.total_ttc || subtotalHt + tvaAmount) : subtotalHt;
+    const role = getUserRole(req);
+    const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+    const headerUserCode = typeof req.headers['x-user-code'] === 'string' ? req.headers['x-user-code'].trim() : '';
 
-      const thermalTicketNumber =
-        r.thermal_ticket_number ||
-        String(r.number || r.id || '').replace(/^VTE-/, 'TKT-THERM-');
+    const filteredRows =
+      role === 'Vendeur' && (headerUserId || headerUserCode)
+        ? rows.filter(
+            (r: any) =>
+              (headerUserId && r.vendor_id === headerUserId) ||
+              (headerUserCode && r.vendor_code === headerUserCode)
+          )
+        : rows;
 
+    const sales = filteredRows.map((r: any) => {
+      const built = buildSaleDocumentsFromRow(r);
       return {
         ...r,
-        sale_time: saleTime,
-        thermal_ticket_number: thermalTicketNumber.startsWith('TKT-')
-          ? thermalTicketNumber
-          : `TKT-THERM-${thermalTicketNumber}`,
+        sale_time: built.saleTime,
+        thermal_ticket_number: built.thermalTicketNumber,
         invoice_generated: Boolean(r.invoice_generated),
-        invoice_number: r.invoice_number || String(r.number || '').replace(/^VTE-/, 'FAC-'),
-        with_tva: withTva,
-        tva_rate: tvaRate,
-        tva_amount: tvaAmount,
-        total_ttc: totalTtc,
+        invoice_number: built.invoiceNumber,
+        with_tva: built.withTva,
+        tva_rate: built.tvaRate,
+        tva_amount: built.tvaAmount,
+        total_ttc: built.totalTtc,
         rectification_status: r.rectification_status || null,
         rectification_reason: r.rectification_reason || null,
         rectification_requested_at: r.rectification_requested_at || null,
@@ -2467,6 +2968,106 @@ apiRouter.get('/sales', (req, res) => {
       };
     });
     res.json({ success: true, sales });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Route dédiée 1 : Ticket thermique 80 mm (TKT-THERM-...) d'une vente
+apiRouter.get(['/sales/:id/ticket', '/tickets/:id'], (req, res) => {
+  try {
+    const saleRow = findSaleRowByIdentifier(req.params.id);
+    if (!saleRow) {
+      return res.status(404).json({ success: false, error: 'Ticket ou vente introuvable.' });
+    }
+    if (!checkVendorAccessToSale(req, saleRow)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé : le Vendeur ne peut consulter que les tickets de ses propres ventes.',
+      });
+    }
+    const { ticket } = buildSaleDocumentsFromRow(saleRow);
+    res.json({ success: true, ticket });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Route dédiée 2 : Facture A4 (FAC-...) d'une vente
+apiRouter.get(['/sales/:id/invoice', '/invoices/:id'], (req, res) => {
+  try {
+    const saleRow = findSaleRowByIdentifier(req.params.id);
+    if (!saleRow) {
+      return res.status(404).json({ success: false, error: 'Facture ou vente introuvable.' });
+    }
+    if (!checkVendorAccessToSale(req, saleRow)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Accès refusé : le Vendeur ne peut consulter que les factures de ses propres ventes.',
+      });
+    }
+    const { invoice } = buildSaleDocumentsFromRow(saleRow);
+    res.json({ success: true, invoice });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Route POS caisse directe (/api/invoices) : sépare strictement Reçu de Caisse (REC-...) et Facture A4 (FAC-...)
+apiRouter.post('/invoices', (req, res) => {
+  try {
+    const { type, clientName, clientPhone, items, paymentMethod, cashierName } = req.body || {};
+    const rawItems = Array.isArray(items) ? items : [];
+    const total = rawItems.reduce(
+      (sum: number, it: any) => sum + Number(it.total ?? Number(it.qty || 1) * Number(it.price || 0)),
+      0
+    );
+    const nowObj = new Date();
+    const dateStr = nowObj.toISOString().split('T')[0];
+    const timeStr = `${String(nowObj.getHours()).padStart(2, '0')}:${String(nowObj.getMinutes()).padStart(2, '0')}`;
+    const rand = Math.floor(10000 + Math.random() * 90000);
+    const isReceipt = type === 'recu' || type === 'recu_caisse' || type === 'receipt';
+    const docNum = isReceipt ? `REC-2026-${rand}` : `FAC-2026-${rand}`;
+
+    const invoicePayload = {
+      id: `${isReceipt ? 'rec' : 'fac'}-${Date.now()}`,
+      number: docNum,
+      type: isReceipt ? ('recu_caisse' as const) : ('facture' as const),
+      docTypeTitle: isReceipt ? 'REÇU DE CAISSE' : 'FACTURE DE VENTE PDV',
+      date: dateStr,
+      saleTime: timeStr,
+      clientName: clientName || 'Client Comptant',
+      clientPhone: clientPhone || '+223 70 00 00 00',
+      items: rawItems.map((it: any, idx: number) => ({
+        id: `pos-${idx}`,
+        code: it.code || `ART-0${idx + 1}`,
+        name: it.name || 'Article Baobab',
+        description: it.name || 'Article Baobab',
+        qty: Number(it.qty || 1),
+        quantity: Number(it.qty || 1),
+        price: Number(it.price || 0),
+        unitPrice: Number(it.price || 0),
+        total: Number(it.total ?? Number(it.qty || 1) * Number(it.price || 0)),
+      })),
+      subtotal: total,
+      subtotalHt: total,
+      withTva: false,
+      taxRate: 0,
+      tvaRate: 0,
+      taxAmount: 0,
+      tvaAmount: 0,
+      total,
+      totalTtc: total,
+      paymentMethod: paymentMethod || 'Espèces',
+      isAcquittee: true,
+      cashierName: cashierName || 'Caisse Principale Baobab',
+      status: isReceipt ? 'Encaissé en Caisse' : 'Facturée HT (Sans TVA)',
+    };
+
+    res.json({ success: true, invoice: invoicePayload });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
@@ -2897,10 +3498,10 @@ apiRouter.post('/sales/:id/review-cancel-request', requireAdminOrDirecteurOps, (
 });
 
 // Génération / Création de facture par vente : STRICTEMENT réservée au Comptable (le vendeur ne peut pas créer ni modifier de factures)
-apiRouter.post('/sales/:id/generate-invoice', requireComptable, (req, res) => {
+apiRouter.post('/sales/:id/generate-invoice', requireRole(['Comptable', 'Directeur des opérations de vente', 'Sales Admin', 'Administrateur'], 'Génération ou modification de facture'), (req, res) => {
   try {
     const { id } = req.params;
-    const { with_tva, versement_id, updated_items } = req.body;
+    const { with_tva, versement_id, updated_items, pdv_id, payment_type, rectification_note } = req.body;
     const userRole = getUserRole(req);
 
     const sale = db.prepare(`
@@ -2918,15 +3519,19 @@ apiRouter.post('/sales/:id/generate-invoice', requireComptable, (req, res) => {
       return res.status(404).json({ success: false, error: 'Vente introuvable.' });
     }
 
+    const targetPdv = pdv_id
+      ? (db.prepare('SELECT * FROM points_de_vente WHERE id = ?').get(pdv_id) as any) || null
+      : null;
+
     const wasAlreadyGenerated = Boolean(sale.invoice_generated);
     const finalItems = Array.isArray(updated_items) && updated_items.length > 0
       ? updated_items.map((it: any) => ({
           productId: it.productId || it.code,
           code: it.code,
           name: it.name,
-          qtyBoxes: Number(it.qtyBoxes ?? it.qty ?? 1),
-          unitPrice: Number(it.unitPrice ?? it.price ?? 0),
-          total: Number(it.qtyBoxes ?? it.qty ?? 1) * Number(it.unitPrice ?? it.price ?? 0),
+          qtyBoxes: Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1)),
+          unitPrice: Math.max(0, Number(it.unitPrice ?? it.price ?? 0)),
+          total: Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1)) * Math.max(0, Number(it.unitPrice ?? it.price ?? 0)),
         }))
       : (typeof sale.items === 'string' ? JSON.parse(sale.items) : sale.items);
 
@@ -2938,9 +3543,19 @@ apiRouter.post('/sales/:id/generate-invoice', requireComptable, (req, res) => {
     const invoiceNumber = sale.invoice_number || String(sale.number || '').replace(/^VTE-/, 'FAC-');
     const nowIso = new Date().toISOString();
 
+    const pendingRect = db.prepare(`
+      SELECT id, thermal_receipt_number FROM invoice_rectifications
+      WHERE sale_id = ? AND status = 'en_attente'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(id) as any;
+
+    const nextRectStatus = pendingRect ? 'rectifiee' : sale.rectification_status || null;
+
     db.prepare(`
       UPDATE sales
-      SET items = ?,
+      SET pdv_id = COALESCE(?, pdv_id),
+          payment_type = COALESCE(?, payment_type),
+          items = ?,
           total_amount = ?,
           invoice_generated = 1,
           invoice_number = ?,
@@ -2949,10 +3564,13 @@ apiRouter.post('/sales/:id/generate-invoice', requireComptable, (req, res) => {
           tva_amount = ?,
           total_ttc = ?,
           versement_id = COALESCE(?, versement_id),
+          rectification_status = ?,
           invoice_generated_at = ?,
           invoice_generated_by = 'Fatoumata Coulibaly (Comptable)'
       WHERE id = ?
     `).run(
+      targetPdv ? targetPdv.id : null,
+      payment_type || null,
       JSON.stringify(finalItems),
       subtotalHt,
       invoiceNumber,
@@ -2961,9 +3579,25 @@ apiRouter.post('/sales/:id/generate-invoice', requireComptable, (req, res) => {
       tvaAmount,
       totalTtc,
       versement_id || null,
+      nextRectStatus,
       nowIso,
       id
     );
+
+    if (pendingRect) {
+      db.prepare(`
+        UPDATE invoice_rectifications
+        SET status = 'rectifiee',
+            response_note = ?,
+            handled_by = 'Fatoumata Coulibaly (Comptable)',
+            handled_at = ?
+        WHERE sale_id = ? AND status = 'en_attente'
+      `).run(
+        rectification_note || `Facture ${invoiceNumber} modifiée et rectifiée (${totalTtc.toLocaleString('fr-FR')} FCFA ${applyTva ? 'TTC' : 'HT'}).`,
+        nowIso,
+        id
+      );
+    }
 
     // Notify the vendor that the Comptable has created/updated their invoice
     sendNotification(
@@ -3884,8 +4518,8 @@ apiRouter.get('/invoice-rectifications', (req, res) => {
   }
 });
 
-// Le Vendeur soumet une demande de rectification sur une facture créée par le Comptable en joignant la Mini Facture Thermique de sa vente comme preuve
-apiRouter.post('/invoice-rectifications', requireVendeur, (req, res) => {
+// Soumission d'une demande de rectification sur une facture en joignant la Mini Facture Thermique de la vente comme preuve
+apiRouter.post('/invoice-rectifications', requireRole(['Vendeur', 'Directeur des opérations de vente', 'Sales Admin', 'Comptable', 'Administrateur'], 'Demande de rectification de facture'), (req, res) => {
   try {
     const {
       sale_id,
@@ -3893,6 +4527,8 @@ apiRouter.post('/invoice-rectifications', requireVendeur, (req, res) => {
       reason,
       thermal_receipt,
       thermal_receipt_override,
+      requested_items,
+      requested_with_tva,
     } = req.body;
 
     if (!sale_id) {
@@ -3931,7 +4567,25 @@ apiRouter.post('/invoice-rectifications', requireVendeur, (req, res) => {
       WHERE s.id = ?
     `).get(targetProofSaleId) as any || invoiceSale;
 
-    const parsedProofItems = typeof proofSale.items === 'string' ? JSON.parse(proofSale.items) : (proofSale.items || []);
+    const rawProofItems = Array.isArray(requested_items) && requested_items.length > 0
+      ? requested_items
+      : (typeof proofSale.items === 'string' ? JSON.parse(proofSale.items) : (proofSale.items || []));
+    const normalizedProofItems = rawProofItems.map((it: any) => {
+      const qty = Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1));
+      const price = Math.max(0, Number(it.unitPrice ?? it.price ?? 0));
+      return {
+        productId: it.productId || it.code,
+        code: it.code,
+        name: it.name,
+        qty,
+        qtyBoxes: qty,
+        price,
+        unitPrice: price,
+        total: qty * price,
+      };
+    });
+    const computedProofTotal = normalizedProofItems.reduce((sum: number, it: any) => sum + Number(it.total || 0), 0);
+
     const thermalTicketNum =
       proofSale.thermal_ticket_number ||
       String(proofSale.number || proofSale.id).replace(/^VTE-/, 'TKT-THERM-');
@@ -3939,7 +4593,9 @@ apiRouter.post('/invoice-rectifications', requireVendeur, (req, res) => {
       invoiceSale.invoice_number ||
       String(invoiceSale.number || invoiceSale.id).replace(/^VTE-/, 'FAC-');
 
-    const thermalReceiptProof = thermal_receipt || thermal_receipt_override || {
+    const baseThermal = thermal_receipt || thermal_receipt_override || {};
+    const thermalReceiptProof = {
+      ...baseThermal,
       id: proofSale.id,
       number: thermalTicketNum,
       ticketNumber: thermalTicketNum,
@@ -3961,17 +4617,13 @@ apiRouter.post('/invoice-rectifications', requireVendeur, (req, res) => {
       pdvNeighborhood: proofSale.pdv_neighborhood,
       pdvPhone: proofSale.pdv_phone,
       paymentMethod: proofSale.payment_type || 'Comptant',
-      totalAmount: Number(proofSale.total_amount || 0),
-      total: Number(proofSale.total_amount || 0),
+      requestedWithTva: requested_with_tva !== undefined ? Boolean(requested_with_tva) : Boolean(invoiceSale.with_tva),
+      totalAmount: computedProofTotal,
+      total: computedProofTotal,
+      subtotalHt: computedProofTotal,
       cashierName: `${proofSale.vendor_name} (${proofSale.vendor_code})`,
       status: 'Ticket Thermique Certifié (Preuve de vente)',
-      items: parsedProofItems.map((it: any) => ({
-        code: it.code,
-        name: it.name,
-        qty: Number(it.qtyBoxes ?? it.qty ?? 1),
-        price: Number(it.unitPrice ?? it.price ?? 0),
-        total: Number(it.total ?? (Number(it.qtyBoxes ?? 1) * Number(it.unitPrice ?? 0))),
-      })),
+      items: normalizedProofItems,
     };
 
     const nowIso = new Date().toISOString();
@@ -4070,11 +4722,11 @@ apiRouter.post('/invoice-rectifications', requireVendeur, (req, res) => {
   }
 });
 
-// Le Comptable traite (rectifie ou rejette) la demande de rectification du vendeur
-apiRouter.post('/invoice-rectifications/:id/resolve', requireComptable, (req, res) => {
+// Le Comptable (ou Administrateur / DOV) traite (rectifie ou rejette) la demande de rectification
+apiRouter.post('/invoice-rectifications/:id/resolve', requireRole(['Comptable', 'Directeur des opérations de vente', 'Sales Admin', 'Administrateur'], 'Traitement de rectification de facture'), (req, res) => {
   try {
     const { id } = req.params;
-    const { action, decision, with_tva, updated_items, response_note, comptable_note } = req.body;
+    const { action, decision, with_tva, updated_items, pdv_id, payment_type, response_note, comptable_note } = req.body;
 
     const rect = db.prepare('SELECT * FROM invoice_rectifications WHERE id = ?').get(id) as any;
     if (!rect) {
@@ -4084,6 +4736,15 @@ apiRouter.post('/invoice-rectifications/:id/resolve', requireComptable, (req, re
     const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(rect.sale_id) as any;
     if (!sale) {
       return res.status(404).json({ success: false, error: 'Facture associée introuvable.' });
+    }
+
+    let parsedRectProof: any = null;
+    try {
+      parsedRectProof = typeof rect.thermal_receipt_json === 'string'
+        ? JSON.parse(rect.thermal_receipt_json)
+        : rect.thermal_receipt_json;
+    } catch {
+      parsedRectProof = null;
     }
 
     const nowIso = new Date().toISOString();
@@ -4100,27 +4761,40 @@ apiRouter.post('/invoice-rectifications/:id/resolve', requireComptable, (req, re
     db.exec('BEGIN TRANSACTION');
     try {
       if (!isRejected) {
-        let finalItems = typeof sale.items === 'string' ? JSON.parse(sale.items) : sale.items;
-        if (Array.isArray(updated_items) && updated_items.length > 0) {
-          finalItems = updated_items.map((it: any) => ({
-            productId: it.productId || it.code,
-            code: it.code,
-            name: it.name,
-            qtyBoxes: Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1)),
-            unitPrice: Math.max(0, Number(it.unitPrice ?? it.price ?? 0)),
-            total: Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1)) * Math.max(0, Number(it.unitPrice ?? it.price ?? 0)),
-          }));
-        }
+        const sourceItems =
+          Array.isArray(updated_items) && updated_items.length > 0
+            ? updated_items
+            : Array.isArray(parsedRectProof?.items) && parsedRectProof.items.length > 0
+            ? parsedRectProof.items
+            : typeof sale.items === 'string'
+            ? JSON.parse(sale.items)
+            : sale.items;
+
+        const finalItems = sourceItems.map((it: any) => ({
+          productId: it.productId || it.code,
+          code: it.code,
+          name: it.name,
+          qtyBoxes: Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1)),
+          unitPrice: Math.max(0, Number(it.unitPrice ?? it.price ?? 0)),
+          total: Math.max(1, Number(it.qtyBoxes ?? it.qty ?? 1)) * Math.max(0, Number(it.unitPrice ?? it.price ?? 0)),
+        }));
 
         const subtotalHt = finalItems.reduce((sum: number, it: any) => sum + Number(it.total || 0), 0);
-        const applyTva = with_tva !== undefined ? Boolean(with_tva) : Boolean(sale.with_tva);
+        const applyTva =
+          with_tva !== undefined
+            ? Boolean(with_tva)
+            : parsedRectProof?.requestedWithTva !== undefined
+            ? Boolean(parsedRectProof.requestedWithTva)
+            : Boolean(sale.with_tva);
         const tvaRate = applyTva ? 18 : 0;
         const tvaAmount = applyTva ? Math.round(subtotalHt * 0.18) : 0;
         const totalTtc = subtotalHt + tvaAmount;
 
         db.prepare(`
           UPDATE sales
-          SET items = ?,
+          SET pdv_id = COALESCE(?, pdv_id),
+              payment_type = COALESCE(?, payment_type),
+              items = ?,
               total_amount = ?,
               with_tva = ?,
               tva_rate = ?,
@@ -4132,6 +4806,8 @@ apiRouter.post('/invoice-rectifications/:id/resolve', requireComptable, (req, re
               invoice_generated_by = 'Fatoumata Coulibaly (Comptable)'
           WHERE id = ?
         `).run(
+          pdv_id || null,
+          payment_type || null,
           JSON.stringify(finalItems),
           subtotalHt,
           applyTva ? 1 : 0,
@@ -4239,7 +4915,7 @@ apiRouter.get('/purchase-requests', (req, res) => {
   }
 });
 
-// Création d'une demande d'achat par le Gestionnaire de stock ou le Comptable (avec motif optionnel)
+// Création d'une demande d'achat par le Gestionnaire de stock ou le Comptable uniquement (avec motif optionnel)
 apiRouter.post(
   '/purchase-requests',
   requireRole(['Gestionnaire de stock', 'Magasinier', 'Comptable'], 'Création d\'une demande d\'achat'),
@@ -4258,6 +4934,16 @@ apiRouter.post(
       } = req.body;
 
       const userRole = getUserRole(req);
+      if (
+        userRole === 'Administrateur' ||
+        userRole === 'Sales Admin' ||
+        (userRole !== 'Gestionnaire de stock' && userRole !== 'Magasinier' && userRole !== 'Comptable')
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: 'Seuls le Gestionnaire de stock et le Comptable peuvent créer une demande d\'achat. L\'Administrateur et le Sales Admin valident ou refusent les demandes.',
+        });
+      }
       if (!title || String(title).trim().length === 0) {
         return res.status(400).json({
           success: false,
@@ -4336,23 +5022,32 @@ apiRouter.post(
         nowIso
       );
 
-      // Notification envoyée à l'Administrateur
+      // Notification envoyée à l'Administrateur et au Sales Admin
+      const notifMeta = {
+        metadataJson: JSON.stringify({
+          purchaseRequestId: id,
+          reference: ref,
+          requesterRole: userRole,
+          requesterName: finalRequesterName,
+          totalAmount: computedTotal,
+          requestMotif: optionalMotif,
+        }),
+      };
       sendNotification(
         'Administrateur',
         `Nouvelle demande d'achat (${userRole}) : ${ref}`,
         `${finalRequesterName} (${userRole} • ${finalRequesterCode}) a soumis une demande d'achat "${String(title).trim()}" d'un montant de ${computedTotal.toLocaleString('fr-FR')} FCFA.${optionalMotif ? ` Motif : "${optionalMotif}".` : ' (Aucun motif précisé — optionnel).'} En attente de validation ou rejet.`,
         'demande_achat',
         ref,
-        {
-          metadataJson: JSON.stringify({
-            purchaseRequestId: id,
-            reference: ref,
-            requesterRole: userRole,
-            requesterName: finalRequesterName,
-            totalAmount: computedTotal,
-            requestMotif: optionalMotif,
-          }),
-        }
+        notifMeta
+      );
+      sendNotification(
+        'Sales Admin',
+        `Nouvelle demande d'achat (${userRole}) : ${ref}`,
+        `${finalRequesterName} (${userRole} • ${finalRequesterCode}) a soumis une demande d'achat "${String(title).trim()}" d'un montant de ${computedTotal.toLocaleString('fr-FR')} FCFA.${optionalMotif ? ` Motif : "${optionalMotif}".` : ' (Aucun motif précisé — optionnel).'} En attente de validation ou rejet.`,
+        'demande_achat',
+        ref,
+        notifMeta
       );
 
       recordAudit(
@@ -4394,11 +5089,11 @@ apiRouter.post(
   }
 );
 
-// Validation ou Rejet d'une demande d'achat par l'Administrateur (avec motif optionnel) + Notification au Magasinier ou Comptable
-apiRouter.post('/purchase-requests/:id/decision', requireAdmin, (req, res) => {
+// Validation ou Rejet d'une demande d'achat par l'Administrateur ou le Sales Admin (avec motif optionnel) + Notification au Magasinier ou Comptable
+apiRouter.post('/purchase-requests/:id/decision', requireSalesAdmin, (req, res) => {
   try {
     const { id } = req.params;
-    const { status: rawStatus, decision: rawDecision, admin_motif } = req.body;
+    const { status: rawStatus, decision: rawDecision, admin_motif, reviewed_by } = req.body;
     const status = rawStatus || rawDecision; // 'validee' | 'rejetee'
 
     if (status !== 'validee' && status !== 'rejetee') {
@@ -4413,6 +5108,16 @@ apiRouter.post('/purchase-requests/:id/decision', requireAdmin, (req, res) => {
       return res.status(404).json({ success: false, error: 'Demande d\'achat introuvable.' });
     }
 
+    const reviewerRole = getUserRole(req);
+    const defaultReviewerLabel =
+      reviewerRole === 'Sales Admin'
+        ? 'Salif Keïta (Sales Admin)'
+        : 'Amadou Touré (Administrateur)';
+    const finalReviewedBy =
+      reviewed_by && String(reviewed_by).trim().length > 0
+        ? String(reviewed_by).trim()
+        : defaultReviewerLabel;
+
     const optionalAdminMotif =
       admin_motif && String(admin_motif).trim().length > 0
         ? String(admin_motif).trim()
@@ -4424,17 +5129,18 @@ apiRouter.post('/purchase-requests/:id/decision', requireAdmin, (req, res) => {
       UPDATE purchase_requests
       SET status = ?,
           admin_motif = ?,
-          reviewed_by = 'Amadou Touré (Administrateur)',
+          reviewed_by = ?,
           reviewed_at = ?
       WHERE id = ?
-    `).run(status, optionalAdminMotif, nowIso, id);
+    `).run(status, optionalAdminMotif, finalReviewedBy, nowIso, id);
 
     markNotificationsReadByReference('Administrateur', pr.reference);
+    markNotificationsReadByReference('Sales Admin', pr.reference);
 
-    // Le Magasinier ou le Comptable reçoit une notification de validation ou de rejet de l'Admin
+    // Le Magasinier ou le Comptable reçoit une notification de validation ou de rejet
     const decisionLabel = isApproved ? 'VALIDÉE' : 'REJETÉE';
-    const notifTitle = `Demande d'achat ${pr.reference} ${decisionLabel} par l'Administrateur`;
-    const notifMessage = `Votre demande d'achat "${pr.title}" (${Number(pr.total_amount || 0).toLocaleString('fr-FR')} FCFA) a été ${isApproved ? 'ACCEPTÉE / VALIDÉE' : 'REJETÉE'} par l'Administrateur.${optionalAdminMotif ? ` Motif de l'Administrateur : "${optionalAdminMotif}".` : ''}`;
+    const notifTitle = `Demande d'achat ${pr.reference} ${decisionLabel} par ${reviewerRole}`;
+    const notifMessage = `Votre demande d'achat "${pr.title}" (${Number(pr.total_amount || 0).toLocaleString('fr-FR')} FCFA) a été ${isApproved ? 'ACCEPTÉE / VALIDÉE' : 'REJETÉE'} par ${finalReviewedBy}.${optionalAdminMotif ? ` Motif : "${optionalAdminMotif}".` : ''}`;
 
     sendNotification(
       pr.requester_role, // 'Magasinier' ou 'Comptable'
@@ -4457,9 +5163,9 @@ apiRouter.post('/purchase-requests/:id/decision', requireAdmin, (req, res) => {
       isApproved ? 'VALIDATION_DEMANDE_ACHAT' : 'REJET_DEMANDE_ACHAT',
       'PURCHASE_REQUEST',
       id,
-      'Administrateur',
+      reviewerRole,
       pr.requester_id,
-      `Demande d'achat ${pr.reference} (${pr.requester_name} - ${pr.requester_role}) ${isApproved ? 'validée' : 'rejetée'} par l'Administrateur.${optionalAdminMotif ? ` Motif : "${optionalAdminMotif}".` : ''}`
+      `Demande d'achat ${pr.reference} (${pr.requester_name} - ${pr.requester_role}) ${isApproved ? 'validée' : 'rejetée'} par ${finalReviewedBy}.${optionalAdminMotif ? ` Motif : "${optionalAdminMotif}".` : ''}`
     );
 
     const updated = db.prepare('SELECT * FROM purchase_requests WHERE id = ?').get(id) as any;

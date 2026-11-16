@@ -190,11 +190,11 @@ export const POSView: React.FC<POSViewProps> = ({
                   key={item.product.id}
                   className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2"
                 >
-                  <div className="overflow-hidden min-w-0">
-                    <div className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-snug">
                       {item.product.name}
                     </div>
-                    <div className="text-[11px] text-teal-600 dark:text-teal-400 font-semibold">
+                    <div className="text-[11px] text-teal-600 dark:text-teal-400 font-semibold baobab-amount">
                       {(item.product.price * item.qty).toLocaleString('fr-FR')} FCFA
                     </div>
                   </div>

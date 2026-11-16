@@ -28,13 +28,14 @@ import {
   AlertTriangle,
   X,
   ShoppingBag,
+  ArrowUpDown,
 } from 'lucide-react';
 import { InvoiceData } from './PrintableDocument';
 import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
 import { exportTableToCsv } from '../utils/csvExport';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
-import { DataTable, DataTableColumn } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 import {
   PaymentMethodSelector,
@@ -112,6 +113,21 @@ export function getSaleSortKey(sale: any): string {
   return `${datePart}T${timePart}:00`;
 }
 
+export function getCancelRequestSortKey(sale: any): string {
+  const rawReqTs =
+    sale?.cancel_requested_at ||
+    sale?.cancel_reviewed_at ||
+    sale?.cancelled_at ||
+    '';
+  if (rawReqTs && typeof rawReqTs === 'string') {
+    const normalized = rawReqTs.trim().replace(' ', 'T');
+    if (/^\d{4}-\d{2}-\d{2}/.test(normalized)) {
+      return normalized;
+    }
+  }
+  return getSaleSortKey(sale);
+}
+
 export function getThermalTicketNumber(sale: any): string {
   if (sale?.thermal_ticket_number) return sale.thermal_ticket_number;
   const numStr = String(sale?.number || sale?.id || '');
@@ -125,15 +141,29 @@ export function buildMiniThermalReceiptDoc(sale: any): InvoiceData {
   const saleTime = getSaleTime(sale);
   const formattedDate = formatSaleDateFr(sale.date);
   const ticketNo = getThermalTicketNumber(sale);
+  const isCancelled = sale.status === 'annulee';
+  const totalHt = Number(sale.subtotal_ht || sale.total_amount || 0);
+  const withTva = Boolean(sale.with_tva);
+  const tvaRate = withTva ? Number(sale.tva_rate || 18) : 0;
+  const tvaAmt = Number(sale.tva_amount || (withTva ? Math.round(totalHt * (tvaRate / 100)) : 0));
+  const totalTtc = Number(sale.total_ttc || totalHt + tvaAmt);
+  const paymentLower = String(sale.payment_type || 'Comptant').toLowerCase();
+  const isCredit =
+    paymentLower.includes('crédit') ||
+    paymentLower.includes('credit') ||
+    paymentLower.includes('à payer') ||
+    paymentLower.includes('a payer');
   return {
     id: sale.id,
+    saleId: sale.id,
     number: ticketNo,
     saleNumber: sale.number,
     thermalTicketNumber: ticketNo,
     saleTime,
     type: 'mini_thermique',
+    docTypeTitle: 'TICKET DE VENTE',
     date: `${formattedDate} à ${saleTime}`,
-    clientName: `${sale.pdv_name} (${sale.pdv_neighborhood})`,
+    clientName: `${sale.pdv_name}${sale.pdv_neighborhood ? ` (${sale.pdv_neighborhood})` : ''}`,
     clientPhone: sale.pdv_phone || '+223 76 00 00 00',
     vendorName: sale.vendor_name,
     vendorCode: sale.vendor_code,
@@ -144,7 +174,11 @@ export function buildMiniThermalReceiptDoc(sale: any): InvoiceData {
     pdvNeighborhood: sale.pdv_neighborhood,
     pdvManager: sale.pdv_manager,
     pdvPhone: sale.pdv_phone || '+223 76 00 00 00',
-    subtotalHt: Number(sale.total_amount || 0),
+    withTva,
+    subtotalHt: totalHt,
+    tvaRate,
+    tvaAmount: tvaAmt,
+    totalTtc,
     items: (sale.items || []).map((it: any) => ({
       code: it.code,
       name: it.name,
@@ -152,10 +186,13 @@ export function buildMiniThermalReceiptDoc(sale: any): InvoiceData {
       price: it.unitPrice ?? it.price ?? 0,
       total: it.total ?? 0,
     })),
-    total: Number(sale.total_amount || 0),
+    total: totalTtc,
     paymentMethod: sale.payment_type || 'Comptant',
     cashierName: `${sale.vendor_name} (${sale.vendor_code})`,
-    status: sale.isPendingOffline
+    isAcquittee: !isCancelled && !isCredit,
+    status: isCancelled
+      ? `TICKET ANNULÉ (${sale.cancel_reason || 'Direction des ventes'})`
+      : sale.isPendingOffline
       ? 'Ticket Thermique Hors-Ligne (Preuve de vente)'
       : 'Ticket Thermique Certifié (Preuve de vente)',
   };
@@ -167,17 +204,27 @@ export function buildA4ClientInvoiceDoc(sale: any): InvoiceData {
   const invoiceNo = sale.invoice_number || `FAC-${String(sale.number || '').replace('VTE-', '')}`;
   const isCancelled = sale.status === 'annulee';
   const totalHt = Number(sale.subtotal_ht || sale.total_amount || 0);
-  const tvaAmt = Number(sale.tva_amount || 0);
-  const totalTtc = Number(sale.total_ttc || sale.total_amount || 0);
+  const withTva = Boolean(sale.with_tva);
+  const tvaRate = withTva ? Number(sale.tva_rate || 18) : 0;
+  const tvaAmt = Number(sale.tva_amount || (withTva ? Math.round(totalHt * (tvaRate / 100)) : 0));
+  const totalTtc = Number(sale.total_ttc || totalHt + tvaAmt);
+  const paymentLower = String(sale.payment_type || 'Comptant').toLowerCase();
+  const isCredit =
+    paymentLower.includes('crédit') ||
+    paymentLower.includes('credit') ||
+    paymentLower.includes('à payer') ||
+    paymentLower.includes('a payer');
   return {
     id: sale.id,
+    saleId: sale.id,
     number: invoiceNo,
     saleNumber: sale.number,
     thermalTicketNumber: getThermalTicketNumber(sale),
     saleTime,
     type: 'facture',
+    docTypeTitle: 'FACTURE DE VENTE PDV',
     date: `${formattedDate} à ${saleTime}`,
-    clientName: `${sale.pdv_name} (${sale.pdv_neighborhood})`,
+    clientName: `${sale.pdv_name}${sale.pdv_neighborhood ? ` (${sale.pdv_neighborhood})` : ''}`,
     clientPhone: sale.pdv_phone || '+223 76 00 00 00',
     vendorName: sale.vendor_name,
     vendorCode: sale.vendor_code,
@@ -188,8 +235,11 @@ export function buildA4ClientInvoiceDoc(sale: any): InvoiceData {
     pdvNeighborhood: sale.pdv_neighborhood,
     pdvManager: sale.pdv_manager,
     pdvPhone: sale.pdv_phone || '+223 76 00 00 00',
+    withTva,
     subtotalHt: totalHt,
+    tvaRate,
     tvaAmount: tvaAmt,
+    totalTtc,
     items: (sale.items || []).map((it: any) => ({
       code: it.code,
       name: it.name,
@@ -200,6 +250,7 @@ export function buildA4ClientInvoiceDoc(sale: any): InvoiceData {
     total: totalTtc,
     paymentMethod: sale.payment_type || 'Comptant',
     cashierName: `${sale.vendor_name} (${sale.vendor_code})`,
+    isAcquittee: !isCancelled && !isCredit,
     status: isCancelled
       ? `FACTURE ANNULÉE (${sale.cancel_reason || 'Direction des ventes'})`
       : 'Facture Client PDV Valide',
@@ -223,6 +274,69 @@ export const VentesView: React.FC<VentesViewProps> = ({
   const isSalesAdmin = currentUser.role === 'Sales Admin';
   const canCancelSale = isSalesAdmin || isAdmin || isDirecteurOps;
   const canCreateSale = isVendeur || isAdmin;
+
+  const handleOpenSaleInvoice = async (s: any) => {
+    if (!s?.id || s.isPendingOffline || String(s.id).startsWith('off-')) {
+      onOpenDocument(buildA4ClientInvoiceDoc(s));
+      return;
+    }
+    try {
+      const res = await fetch(`/api/sales/${encodeURIComponent(s.id)}/invoice`, {
+        headers: {
+          'x-user-role': currentUser.role,
+          'x-user-id': currentUser.id,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.invoice) {
+          onOpenDocument({
+            ...buildA4ClientInvoiceDoc(s),
+            ...data.invoice,
+            type: 'facture',
+            docTypeTitle: 'FACTURE DE VENTE PDV',
+          });
+          return;
+        }
+      }
+    } catch {
+      // fallback to local builder
+    }
+    onOpenDocument(buildA4ClientInvoiceDoc(s));
+  };
+
+  const handleOpenSaleTicket = async (s: any) => {
+    if (!s?.id || s.isPendingOffline || String(s.id).startsWith('off-')) {
+      onOpenDocument(buildMiniThermalReceiptDoc(s));
+      return;
+    }
+    try {
+      const res = await fetch(`/api/sales/${encodeURIComponent(s.id)}/ticket`, {
+        headers: {
+          'x-user-role': currentUser.role,
+          'x-user-id': currentUser.id,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ticket) {
+          if (data.ticket.thermalTicketNumber && !s.thermal_ticket_number) {
+            s.thermal_ticket_number = data.ticket.thermalTicketNumber;
+          }
+          onOpenDocument({
+            ...buildMiniThermalReceiptDoc(s),
+            ...data.ticket,
+            type: 'mini_thermique',
+            docTypeTitle: 'TICKET DE VENTE',
+          });
+          return;
+        }
+      }
+    } catch {
+      // fallback to local builder
+    }
+    onOpenDocument(buildMiniThermalReceiptDoc(s));
+  };
 
   // Sub-tabs for Directeur des opérations de vente & Admin ('globale' | 'demandes-annulation' | 'par-vendeur' | 'historique-sku' | 'nouvelle')
   const [directorSubTab, setDirectorSubTab] = useState<'globale' | 'demandes-annulation' | 'par-vendeur' | 'historique-sku' | 'nouvelle'>(() => {
@@ -386,9 +500,12 @@ export const VentesView: React.FC<VentesViewProps> = ({
     }
   };
 
-  // Filters for sales history
+  // Filters & sort for sales history
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVendorCode, setFilterVendorCode] = useState('all');
+  const [salesSortBy, setSalesSortBy] = useState<
+    'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc' | 'number_asc'
+  >('date_desc');
 
   // Filter vendor's active chargements
   const effectiveVendorUser = useMemo(() => {
@@ -399,7 +516,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
         id: 'usr-vnd-1',
         name: 'Oumar Konaté',
         code: 'BAO-VND-001',
-        team: 'Équipe Sotuba / Rive Gauche',
+        team: '',
         role: 'Vendeur',
       }
     );
@@ -767,22 +884,34 @@ export const VentesView: React.FC<VentesViewProps> = ({
     });
   }, [pendingOfflineSales, sales]);
 
+  const compareCancelRequestsNewestFirst = useCallback((a: any, b: any): number => {
+    const reqKeyA = getCancelRequestSortKey(a);
+    const reqKeyB = getCancelRequestSortKey(b);
+    if (reqKeyA !== reqKeyB) {
+      return reqKeyB.localeCompare(reqKeyA); // Plus récent au plus ancien
+    }
+    const saleKeyA = getSaleSortKey(a);
+    const saleKeyB = getSaleSortKey(b);
+    if (saleKeyA !== saleKeyB) {
+      return saleKeyB.localeCompare(saleKeyA);
+    }
+    return String(b.number || b.id || '').localeCompare(String(a.number || a.id || ''));
+  }, []);
+
   const pendingCancelRequests = useMemo(
-    () => sortedCombinedSales.filter((s) => s.cancel_request_status === 'en_attente' && s.status !== 'annulee'),
-    [sortedCombinedSales]
+    () =>
+      sortedCombinedSales
+        .filter((s) => s.cancel_request_status === 'en_attente' && s.status !== 'annulee')
+        .sort(compareCancelRequestsNewestFirst),
+    [sortedCombinedSales, compareCancelRequestsNewestFirst]
   );
 
   const allCancelRequests = useMemo(
     () =>
       sortedCombinedSales
-        .filter((s) => Boolean(s.cancel_request_status))
-        .sort((a, b) => {
-          const aPend = a.cancel_request_status === 'en_attente' && a.status !== 'annulee' ? 0 : 1;
-          const bPend = b.cancel_request_status === 'en_attente' && b.status !== 'annulee' ? 0 : 1;
-          if (aPend !== bPend) return aPend - bPend;
-          return getSaleSortKey(b).localeCompare(getSaleSortKey(a));
-        }),
-    [sortedCombinedSales]
+        .filter((s) => Boolean(s.cancel_request_status || s.cancel_request_reason))
+        .sort(compareCancelRequestsNewestFirst),
+    [sortedCombinedSales, compareCancelRequestsNewestFirst]
   );
 
   // Build vendor profiles list for Admin view
@@ -807,7 +936,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
         name: u.name || 'Vendeur',
         email: u.email || '',
         phone: u.phone || '+223 76 00 00 00',
-        team: u.team || 'Équipe Commerciale Bamako',
+        team: '',
       });
     }
 
@@ -820,7 +949,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
           name: s.vendor_name || 'Vendeur',
           email: '',
           phone: '+223 76 00 00 00',
-          team: s.vendor_team || 'Équipe Commerciale Bamako',
+          team: '',
         });
       }
     }
@@ -872,8 +1001,46 @@ export const VentesView: React.FC<VentesViewProps> = ({
 
   const vendorCodes = Array.from(new Set(sortedCombinedSales.map((s) => s.vendor_code).filter(Boolean)));
 
+  const resolveCancelAuthorLabel = useCallback(
+    (s: any): string => {
+      const rawAuthor = s?.cancel_requested_by || s?.cancelled_by || '';
+      if (rawAuthor) {
+        const found = (usersList || []).find(
+          (u: any) => u.id === rawAuthor || u.code === rawAuthor || u.name === rawAuthor
+        );
+        if (found) {
+          return `${found.name} (${found.code || found.role})`;
+        }
+        return String(rawAuthor);
+      }
+      if (s?.vendor_name) {
+        return `${s.vendor_name}${s.vendor_code ? ` (${s.vendor_code})` : ''}`;
+      }
+      return 'Direction des opérations de vente';
+    },
+    [usersList]
+  );
+
+  const formatCancelDateTime = useCallback((s: any): string => {
+    const rawTs = s?.cancel_requested_at || s?.cancel_reviewed_at || s?.cancelled_at || '';
+    if (rawTs && typeof rawTs === 'string') {
+      if (rawTs.includes('T')) {
+        const [dPart, tPart] = rawTs.split('T');
+        const timeClean = (tPart || '').slice(0, 5);
+        return `${formatSaleDateFr(dPart)}${timeClean ? ` à ${timeClean}` : ''}`;
+      }
+      if (rawTs.includes(' ')) {
+        const [dPart, tPart] = rawTs.split(' ');
+        const timeClean = (tPart || '').slice(0, 5);
+        return `${formatSaleDateFr(dPart)}${timeClean ? ` à ${timeClean}` : ''}`;
+      }
+      return `${formatSaleDateFr(rawTs)} à ${getSaleTime(s)}`;
+    }
+    return `${formatSaleDateFr(s?.date)} à ${getSaleTime(s)}`;
+  }, []);
+
   const filteredSales = useMemo(() => {
-    return visibleSales.filter((s) => {
+    const matching = visibleSales.filter((s) => {
       const matchesVendor =
         (isAdmin || isDirecteurOps) && selectedAdminVendor
           ? true
@@ -881,20 +1048,61 @@ export const VentesView: React.FC<VentesViewProps> = ({
       const q = searchTerm.toLowerCase();
       const saleTime = getSaleTime(s);
       const invoiceRef = s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`;
+      const thermalRef = getThermalTicketNumber(s);
       const matchesSearch =
         !q ||
         (s.number || '').toLowerCase().includes(q) ||
         invoiceRef.toLowerCase().includes(q) ||
+        thermalRef.toLowerCase().includes(q) ||
         (s.pdv_name || '').toLowerCase().includes(q) ||
         (s.pdv_neighborhood || '').toLowerCase().includes(q) ||
         (s.vendor_name || '').toLowerCase().includes(q) ||
         (s.vendor_code || '').toLowerCase().includes(q) ||
+        (s.payment_type || '').toLowerCase().includes(q) ||
+        (s.cancel_request_reason || '').toLowerCase().includes(q) ||
+        (s.cancel_reason || '').toLowerCase().includes(q) ||
         (s.date || '').toLowerCase().includes(q) ||
         formatSaleDateFr(s.date).toLowerCase().includes(q) ||
         saleTime.toLowerCase().includes(q);
       return matchesVendor && matchesSearch;
     });
-  }, [visibleSales, isAdmin, isDirecteurOps, selectedAdminVendor, filterVendorCode, searchTerm]);
+
+    const sorted = [...matching];
+    sorted.sort((a, b) => {
+      if (salesSortBy === 'date_asc') {
+        const keyA = getSaleSortKey(a);
+        const keyB = getSaleSortKey(b);
+        if (keyA !== keyB) return keyA.localeCompare(keyB);
+        return String(a.number || a.id || '').localeCompare(String(b.number || b.id || ''));
+      }
+      if (salesSortBy === 'amount_desc') {
+        return Number(b.total_amount || 0) - Number(a.total_amount || 0);
+      }
+      if (salesSortBy === 'amount_asc') {
+        return Number(a.total_amount || 0) - Number(b.total_amount || 0);
+      }
+      if (salesSortBy === 'number_asc') {
+        return String(a.number || a.id || '').localeCompare(String(b.number || b.id || ''), 'fr', {
+          numeric: true,
+        });
+      }
+      // date_desc (défaut : du plus récent au plus ancien)
+      const keyA = getSaleSortKey(a);
+      const keyB = getSaleSortKey(b);
+      if (keyA !== keyB) return keyB.localeCompare(keyA);
+      return String(b.number || b.id || '').localeCompare(String(a.number || a.id || ''));
+    });
+
+    return sorted;
+  }, [
+    visibleSales,
+    isAdmin,
+    isDirecteurOps,
+    selectedAdminVendor,
+    filterVendorCode,
+    searchTerm,
+    salesSortBy,
+  ]);
 
   const totalFilteredAmount = filteredSales
     .filter((s) => s.status !== 'annulee')
@@ -1578,13 +1786,15 @@ export const VentesView: React.FC<VentesViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {products.map((p) => {
                 const qtyInCart = cart[p.id] || 0;
+                const vendorBoxes =
+                  myChargement?.items?.find((it: any) => it.productId === p.id)?.allocatedBoxes ?? 0;
                 return (
                   <div
                     key={p.id}
-                    className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col justify-between"
+                    className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col justify-between h-auto"
                   >
-                    <div>
-                      <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-bold">
                           {p.code}
                         </span>
@@ -1592,13 +1802,21 @@ export const VentesView: React.FC<VentesViewProps> = ({
                           {p.gamme}
                         </span>
                       </div>
-                      <h3 className="mt-2 text-base font-bold text-slate-900 dark:text-white">
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white break-words">
                         {p.name}
                       </h3>
-                      <p className="text-xs text-slate-500 mt-0.5">{p.packaging}</p>
+                      <p className="text-xs text-slate-500">{p.packaging}</p>
+                      <div className="pt-1.5 flex flex-col gap-0.5 text-xs">
+                        <div className="text-slate-600 dark:text-slate-300">
+                          Mon stock : <strong className="text-teal-700 dark:text-teal-400">{vendorBoxes} ctn</strong>
+                        </div>
+                        <div className="text-slate-500 dark:text-slate-400">
+                          Dépôt : <strong>{p.stock_depot} ctn</strong>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                       <div>
                         <div className="text-base font-black text-slate-900 dark:text-white">
                           {p.price_box.toLocaleString('fr-FR')} <span className="text-xs text-[#008DA9]">FCFA</span>
@@ -1661,11 +1879,11 @@ export const VentesView: React.FC<VentesViewProps> = ({
                   <select
                     value={selectedSaleVendorId}
                     onChange={(e) => setSelectedSaleVendorId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                    className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-semibold focus:outline-none transition-none"
                   >
                     {vendorProfiles.map((vp) => (
                       <option key={vp.id} value={vp.id}>
-                        {vp.name} ({vp.code}) — {vp.team}
+                        {vp.name} ({vp.code})
                       </option>
                     ))}
                   </select>
@@ -1680,7 +1898,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                   value={selectedPdvId}
                   onChange={(e) => setSelectedPdvId(e.target.value)}
                   required
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-semibold focus:outline-none transition-none"
                 >
                   {validPdvs.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -1769,13 +1987,13 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 <button
                   type="submit"
                   disabled={cartItems.length === 0 || isSubmitting}
-                  className="w-full min-h-[48px] py-2.5 px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] disabled:opacity-50 text-[var(--marque-texte-sur-plein)] font-bold text-sm leading-tight text-center break-words flex items-center justify-center gap-2 shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)]"
+                  className="w-full min-h-[48px] h-auto py-3 px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] disabled:opacity-50 text-[var(--marque-texte-sur-plein)] font-bold text-sm leading-tight text-center break-words flex items-center justify-center gap-2 shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)]"
                 >
                   <Receipt className="w-4 h-4 shrink-0" />
                   <span>
                     {online
-                      ? 'Valider la Vente & Générer Mini Facture Thermique'
-                      : 'Enregistrer Hors-Ligne & Générer Mini Facture Thermique'}
+                      ? 'Valider la vente'
+                      : 'Enregistrer hors-ligne'}
                   </span>
                 </button>
               </div>
@@ -1874,154 +2092,295 @@ export const VentesView: React.FC<VentesViewProps> = ({
             </div>
           </div>
 
-          {allCancelRequests.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center text-sm text-slate-400">
-              Aucune demande d&apos;annulation de vente soumise par les vendeurs pour le moment.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {allCancelRequests.map((s) => {
-                const totalBoxes = (s.items || []).reduce((acc: number, it: any) => acc + Number(it.qtyBoxes || 0), 0);
-                const isPending = s.cancel_request_status === 'en_attente' && s.status !== 'annulee';
-                const isApproved = s.cancel_request_status === 'approuvee' || s.status === 'annulee';
-                const isRejected = s.cancel_request_status === 'rejetee' && s.status !== 'annulee';
-
-                return (
-                  <div
-                    key={s.id}
-                    className={`rounded-2xl border p-4 sm:p-5 shadow-xs transition space-y-4 ${
-                      isPending
-                        ? 'border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20'
-                        : isApproved
-                        ? 'border-emerald-200 dark:border-emerald-800/70 bg-white dark:bg-slate-900'
-                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+          <CardList<any>
+            data={allCancelRequests}
+            getRowKey={(s) => s.id}
+            searchable
+            searchPlaceholder="Rechercher une demande d'annulation (N° vente, vendeur, PDV, motif)..."
+            defaultSortKey="cancel_requested_at"
+            defaultSortDirection="desc"
+            sortOptions={[
+              {
+                key: 'cancel_requested_at',
+                label: 'Date de la demande (plus récent → plus ancien)',
+                getValue: (s) => getCancelRequestSortKey(s),
+              },
+              {
+                key: 'sale_date',
+                label: 'Date de la vente',
+                getValue: (s) => getSaleSortKey(s),
+              },
+              {
+                key: 'amount',
+                label: 'Montant',
+                getValue: (s) => Number(s.total_amount || 0),
+              },
+            ]}
+            emptyMessage="Aucune demande d'annulation de vente soumise par les vendeurs pour le moment."
+            cardClassName={(s) => {
+              const isPending = s.cancel_request_status === 'en_attente' && s.status !== 'annulee';
+              const isApproved = s.cancel_request_status === 'approuvee' || s.status === 'annulee';
+              if (isPending) {
+                return 'border-amber-300 dark:border-amber-700 bg-amber-50/30 dark:bg-amber-950/20';
+              }
+              if (isApproved) {
+                return 'border-emerald-200 dark:border-emerald-800/70';
+              }
+              return '';
+            }}
+            title={(s) => {
+              const isCancelled = s.status === 'annulee';
+              return (
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 w-full min-w-0">
+                  <span
+                    className={`font-mono font-black min-w-0 [overflow-wrap:anywhere] ${
+                      isCancelled
+                        ? 'line-through text-rose-600 dark:text-rose-400'
+                        : 'text-slate-900 dark:text-white'
                     }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
-                      <div className="flex items-center gap-2.5 flex-wrap">
-                        <span className="font-mono text-sm font-black text-slate-900 dark:text-white">
-                          {s.number}
-                        </span>
-                        <span className="text-xs text-slate-500">
-                          ({formatSaleDateFr(s.date)} à {getSaleTime(s)})
-                        </span>
-                        {isPending && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-500 text-slate-950">
-                            En attente de validation DOV
-                          </span>
-                        )}
-                        {isApproved && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            Annulation Approuvée (Vente annulée)
-                          </span>
-                        )}
-                        {isRejected && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
-                            Demande Refusée
-                          </span>
-                        )}
-                      </div>
+                    {s.number}
+                  </span>
+                  <span className="font-sans text-xs sm:text-sm font-bold text-slate-600 dark:text-slate-300 shrink-0 ml-auto">
+                    Demandée le {formatCancelDateTime(s)}
+                  </span>
+                </div>
+              );
+            }}
+            badges={(s) => {
+              const isCancelled = s.status === 'annulee';
+              const isPending = s.cancel_request_status === 'en_attente' && !isCancelled;
+              const isRejected = s.cancel_request_status === 'rejetee' && !isCancelled;
+              const paymentLabel = s.payment_type || 'Comptant';
+              const payLower = String(paymentLabel).toLowerCase();
+              const isAcquittee =
+                !isCancelled &&
+                !payLower.includes('crédit') &&
+                !payLower.includes('credit') &&
+                !payLower.includes('attente');
 
-                      <div className="text-left sm:text-right">
-                        <span className="text-base font-black text-[#008DA9]">
-                          {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                        </span>
-                        <span className="text-xs text-slate-500 ml-2">({totalBoxes} cartons &bull; {s.payment_type || 'Comptant'})</span>
+              return (
+                <>
+                  {isPending && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-amber-500 text-slate-950">
+                      Demande annulation DOV
+                    </span>
+                  )}
+                  {isCancelled && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
+                      Annulée
+                    </span>
+                  )}
+                  {isRejected && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
+                      Demande refusée DOV
+                    </span>
+                  )}
+                  <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                    {paymentLabel}
+                  </span>
+                  {!isCancelled && (
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                        isAcquittee
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                      }`}
+                    >
+                      {isAcquittee ? 'Acquittée' : 'À payer'}
+                    </span>
+                  )}
+                </>
+              );
+            }}
+            fields={[
+              {
+                key: 'cancel_date',
+                label: 'Date de la demande',
+                value: (s) => (
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {formatCancelDateTime(s)}
+                  </span>
+                ),
+              },
+              {
+                key: 'sale_date',
+                label: 'Date de la vente',
+                value: (s) => `${formatSaleDateFr(s.date)} à ${getSaleTime(s)}`,
+              },
+              {
+                key: 'pdv',
+                label: 'Point de vente',
+                value: (s) =>
+                  `${s.pdv_name || 'PDV'}${s.pdv_neighborhood ? ` (${s.pdv_neighborhood})` : ''}`,
+              },
+              {
+                key: 'vendor',
+                label: 'Vendeur',
+                value: (s) => `${s.vendor_name || 'Vendeur'} (${s.vendor_code || 'BAO'})`,
+              },
+              {
+                key: 'items',
+                label: 'Détail cartons',
+                value: (s) => {
+                  const totalBoxes = (s.items || []).reduce(
+                    (acc: number, it: any) => acc + Number(it.qtyBoxes ?? it.qty ?? 0),
+                    0
+                  );
+                  return (
+                    <div className="space-y-1 text-right min-w-0 max-w-full">
+                      <div className="font-bold text-slate-900 dark:text-white">
+                        {totalBoxes} {totalBoxes > 1 ? 'cartons' : 'carton'}
                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                      <div className="p-3 rounded-xl bg-white dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Vendeur demandeur</span>
-                        <span className="font-black text-slate-900 dark:text-white block mt-0.5">
-                          {s.vendor_name} ({s.vendor_code})
-                        </span>
-                        <span className="text-[11px] text-slate-500">{s.vendor_team || 'Équipe Commerciale'}</span>
-                      </div>
-
-                      <div className="p-3 rounded-xl bg-white dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Client Point de Vente (PDV)</span>
-                        <span className="font-black text-slate-900 dark:text-white block mt-0.5">
-                          {s.pdv_name}
-                        </span>
-                        <span className="text-[11px] text-slate-500">{s.pdv_neighborhood}</span>
-                      </div>
-
-                      <div className="p-3 rounded-xl bg-white dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Détail des produits vendus</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200 block mt-0.5">
-                          {(s.items || []).map((it: any) => `${it.qtyBoxes}x ${it.name}`).join(', ')}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl bg-rose-50/90 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 text-xs space-y-1">
-                      <div className="font-black text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                        <span>Motif de l&apos;erreur déclaré par le vendeur :</span>
-                      </div>
-                      <p className="text-rose-950 dark:text-rose-100 font-medium pl-5">
-                        &laquo; {s.cancel_request_reason || 'Erreur de saisie signalée par le vendeur'} &raquo;
-                      </p>
-                      {s.cancel_rejection_reason && (
-                        <p className="text-xs text-rose-700 dark:text-rose-300 pl-5 pt-1">
-                          <strong>Motif du refus DOV :</strong> {s.cancel_rejection_reason}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => onOpenDocument(buildA4ClientInvoiceDoc(s))}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Voir Facture PDV A4</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onOpenDocument(buildMiniThermalReceiptDoc(s))}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 font-bold text-xs cursor-pointer"
-                        >
-                          <Receipt className="w-3.5 h-3.5" />
-                          <span>Voir Ticket Thermique</span>
-                        </button>
-                      </div>
-
-                      {isPending && (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <button
-                            type="button"
-                            disabled={isReviewingCancelRequest}
-                            onClick={() => {
-                              setRejectingCancelRequestSale(s);
-                              setRejectCancelReason('');
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                      <div className="space-y-0.5 text-xs text-slate-600 dark:text-slate-300 font-medium">
+                        {(s.items || []).map((it: any, idx: number) => (
+                          <div
+                            key={`${it.code || idx}-${idx}`}
+                            className="whitespace-normal [overflow-wrap:anywhere] break-words"
                           >
-                            <X className="w-3.5 h-3.5" />
-                            <span>Refuser la demande</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isReviewingCancelRequest}
-                            onClick={() => handleReviewCancelRequest(s, 'approve')}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-sm transition cursor-pointer disabled:opacity-50"
-                          >
-                            <CheckCircle2 className="w-4 h-4" />
-                            <span>Approuver &amp; Annuler la vente</span>
-                          </button>
-                        </div>
-                      )}
+                            {it.qtyBoxes ?? it.qty ?? 0} &times; {it.name}
+                          </div>
+                        ))}
+                      </div>
                     </div>
+                  );
+                },
+              },
+              {
+                key: 'payment',
+                label: 'Règlement',
+                value: (s) => s.payment_type || 'Comptant',
+              },
+              {
+                key: 'invoice_no',
+                label: 'N° de facture',
+                value: (s) => (
+                  <span className="font-mono font-bold [overflow-wrap:anywhere]">
+                    {s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`}
+                  </span>
+                ),
+              },
+              {
+                key: 'thermal_no',
+                label: 'N° de ticket thermique',
+                value: (s) => (
+                  <span className="font-mono font-bold [overflow-wrap:anywhere]">
+                    {getThermalTicketNumber(s)}
+                  </span>
+                ),
+              },
+              {
+                key: 'amount',
+                label: 'Montant',
+                isAmount: true,
+                value: (s) => (
+                  <span
+                    className={`font-black whitespace-nowrap ${
+                      s.status === 'annulee'
+                        ? 'line-through text-rose-600 dark:text-rose-400'
+                        : 'text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
+                    }`}
+                  >
+                    {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+              },
+            ]}
+            renderExtraContent={(s) => {
+              const motifComplet =
+                s.cancel_request_reason ||
+                s.cancel_reason ||
+                'Erreur de saisie signalée par le vendeur';
+              const authorLabel = resolveCancelAuthorLabel(s);
+              const dateLabel = formatCancelDateTime(s);
+              return (
+                <div className="w-full max-w-full min-w-0 box-border p-3.5 rounded-xl bg-rose-50/90 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 text-xs space-y-1.5 [overflow-wrap:anywhere]">
+                  <div className="font-black text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>Demande d&apos;annulation :</span>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                  <div className="text-rose-950 dark:text-rose-100 font-medium whitespace-normal [overflow-wrap:anywhere] break-words">
+                    <strong>Motif :</strong> &laquo; {motifComplet} &raquo;
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-rose-800 dark:text-rose-200 pt-1 border-t border-rose-200/70 dark:border-rose-800/60">
+                    <span className="[overflow-wrap:anywhere]">
+                      <strong>Auteur :</strong> {authorLabel}
+                    </span>
+                    <span className="[overflow-wrap:anywhere]">
+                      <strong>Date :</strong> {dateLabel}
+                    </span>
+                  </div>
+                  {s.cancel_rejection_reason && (
+                    <div className="text-xs text-rose-700 dark:text-rose-300 pt-1 whitespace-normal [overflow-wrap:anywhere]">
+                      <strong>Motif du refus DOV :</strong> {s.cancel_rejection_reason}
+                    </div>
+                  )}
+                </div>
+              );
+            }}
+            renderActions={(s) => {
+              const isPending = s.cancel_request_status === 'en_attente' && s.status !== 'annulee';
+              const isCancelled = s.status === 'annulee';
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSaleInvoice(s)}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                  >
+                    <FileText className="w-4 h-4 shrink-0" />
+                    <span>Facture</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSaleTicket(s)}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                  >
+                    <Receipt className="w-4 h-4 shrink-0" />
+                    <span>Ticket</span>
+                  </button>
+                  {isPending && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={isReviewingCancelRequest}
+                        onClick={() => {
+                          setRejectingCancelRequestSale(s);
+                          setRejectCancelReason('');
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-bold text-xs sm:text-sm transition cursor-pointer disabled:opacity-50"
+                      >
+                        <X className="w-4 h-4 shrink-0" />
+                        <span>Refuser la demande</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isReviewingCancelRequest}
+                        onClick={() => handleReviewCancelRequest(s, 'approve')}
+                        className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>Annuler</span>
+                      </button>
+                    </>
+                  )}
+                  {!isPending && canCancelSale && !isCancelled && !s.isPendingOffline && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCancellingSale(s);
+                        setCancelReason('');
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                    >
+                      <XCircle className="w-4 h-4 shrink-0" />
+                      <span>Annuler</span>
+                    </button>
+                  )}
+                </>
+              );
+            }}
+          />
         </div>
       )}
 
@@ -2143,7 +2502,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
               </div>
             </div>
 
-            {/* Résumé dynamique instantané de la période sélectionnée (visible immédiatement sur mobile et PC) */}
+            {/* Résumé dynamique instantané de la période sélectionnée */}
             {(() => {
               const activeLines = skuChronologicalLineItems.filter((l) => l.sale.status !== 'annulee');
               const totalBoxesPeriod = activeLines.reduce((sum, l) => sum + l.qtyBoxes, 0);
@@ -2194,7 +2553,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                   type="date"
                   value={skuStartDate}
                   onChange={(e) => setSkuStartDate(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold"
+                  className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-mono font-bold focus:outline-none transition-none"
                 />
               </div>
 
@@ -2206,7 +2565,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                   type="date"
                   value={skuEndDate}
                   onChange={(e) => setSkuEndDate(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold"
+                  className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-mono font-bold focus:outline-none transition-none"
                 />
               </div>
 
@@ -2217,7 +2576,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 <select
                   value={selectedSkuCode}
                   onChange={(e) => setSelectedSkuCode(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
+                  className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-bold focus:outline-none transition-none"
                 >
                   <option value="ALL">Tous les SKU ({products.length} références)</option>
                   {products.map((p) => (
@@ -2235,7 +2594,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 <select
                   value={selectedSkuVendorCode}
                   onChange={(e) => setSelectedSkuVendorCode(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
+                  className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-bold focus:outline-none transition-none"
                 >
                   <option value="ALL">Tous les vendeurs</option>
                   {vendorProfiles.map((vp) => (
@@ -2301,7 +2660,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
             ))}
           </div>
 
-          {/* Tableau chronologique détaillé des ventes par SKU sur la période */}
+          {/* Liste de cartes chronologique détaillée des ventes par SKU sur la période */}
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
@@ -2309,7 +2668,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                   Détail Chronologique des Ventes par SKU ({skuChronologicalLineItems.length} lignes sur la période)
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Du {formatSaleDateFr(skuStartDate)} au {formatSaleDateFr(skuEndDate)} &bull; Cliquez sur « Facture A4 » ou « Annuler facture PDV » sur n&apos;importe quelle ligne.
+                  Du {formatSaleDateFr(skuStartDate)} au {formatSaleDateFr(skuEndDate)} &bull; Cliquez sur « Facture » ou « Annuler » sur n&apos;importe quelle carte.
                 </p>
               </div>
               {selectedSkuCode !== 'ALL' && (
@@ -2324,147 +2683,90 @@ export const VentesView: React.FC<VentesViewProps> = ({
             </div>
 
             <div className="p-3 sm:p-4">
-              <DataTable<any>
+              <CardList<any>
                 data={skuChronologicalLineItems}
                 getRowKey={(line) => line.lineKey}
                 emptyMessage="Aucune vente trouvée pour ce SKU sur la période sélectionnée."
-                mobileTitle={(line) =>
-                  line.sale.invoice_number ||
-                  `FAC-${String(line.sale.number || '').replace('VTE-', '')}`
-                }
-                mobileSubtitle={(line) =>
-                  `${line.sale.number} • ${formatSaleDateFr(line.sale.date)} à ${getSaleTime(line.sale)}`
-                }
-                mobileStatusBadge={(line) =>
+                title={(line) => (
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 w-full min-w-0">
+                    <span className="font-mono font-black min-w-0 [overflow-wrap:anywhere]">
+                      {line.sale.number}
+                    </span>
+                    <span className="font-sans text-xs sm:text-sm font-bold text-slate-600 dark:text-slate-300 shrink-0 ml-auto">
+                      {formatSaleDateFr(line.sale.date)} &bull; {getSaleTime(line.sale)}
+                    </span>
+                  </div>
+                )}
+                badges={(line) =>
                   line.sale.status === 'annulee' ? (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white">
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-600 text-white">
                       Facture annulée
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
-                      Valide
-                    </span>
+                    <>
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                        {line.sale.payment_type || 'Comptant'}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                        Acquittée
+                      </span>
+                    </>
                   )
                 }
-                columns={[
-                  {
-                    key: 'date',
-                    label: 'Date & Heure',
-                    render: (line) => (
-                      <div>
-                        <div className="font-bold text-slate-900 dark:text-white">
-                          {formatSaleDateFr(line.sale.date)}
-                        </div>
-                        <div className="font-mono text-[10px] text-[#008DA9] font-bold">
-                          {getSaleTime(line.sale)}
-                        </div>
-                      </div>
-                    ),
-                    footer: <span className="uppercase text-[11px]">Total période</span>,
-                  },
-                  {
-                    key: 'invoice',
-                    label: 'Facture Client PDV',
-                    hideOnMobileCard: true,
-                    render: (line) => {
-                      const s = line.sale;
-                      const isCancelled = s.status === 'annulee';
-                      const invNo =
-                        s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`;
-                      return (
-                        <div>
-                          <div className="font-mono font-black text-slate-900 dark:text-white">
-                            {invNo}
-                          </div>
-                          <div className="font-mono text-[10px] text-slate-500">{s.number}</div>
-                          {isCancelled && (
-                            <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-600 text-white">
-                              Facture annulée
-                            </span>
-                          )}
-                        </div>
-                      );
-                    },
-                  },
+                fields={[
                   {
                     key: 'pdv',
-                    label: 'Point de Vente',
-                    render: (line) => (
-                      <div>
-                        <div className="font-bold text-slate-900 dark:text-white">
-                          {line.sale.pdv_name}
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {line.sale.pdv_neighborhood}
-                        </div>
-                      </div>
-                    ),
+                    label: 'Point de vente',
+                    value: (line) =>
+                      `${line.sale.pdv_name}${
+                        line.sale.pdv_neighborhood ? ` (${line.sale.pdv_neighborhood})` : ''
+                      }`,
                   },
                   {
                     key: 'vendor',
                     label: 'Vendeur',
-                    isSecondary: true,
-                    render: (line) => (
-                      <div>
-                        <div className="font-semibold text-slate-900 dark:text-white">
-                          {line.sale.vendor_name}
-                        </div>
-                        <div className="font-mono text-[10px] text-[#008DA9]">
-                          {line.sale.vendor_code}
-                        </div>
-                      </div>
-                    ),
+                    value: (line) => `${line.sale.vendor_name} (${line.sale.vendor_code})`,
                   },
                   {
                     key: 'sku',
-                    label: 'Référence SKU & Produit',
-                    render: (line) => (
-                      <div>
-                        <span className="font-mono text-[10px] font-black px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[#008DA9] dark:text-cyan-300 mr-1.5">
-                          {line.skuCode}
-                        </span>
-                        <span className="font-semibold text-slate-900 dark:text-white">
-                          {line.productName}
-                        </span>
+                    label: 'Détail cartons',
+                    value: (line) => (
+                      <div className="space-y-1 text-right">
+                        <div className="font-bold text-slate-900 dark:text-white">
+                          {line.qtyBoxes} {line.qtyBoxes > 1 ? 'cartons' : 'carton'}
+                        </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-300 font-medium [overflow-wrap:anywhere]">
+                          {line.qtyBoxes} &times; {line.productName} ({line.skuCode})
+                        </div>
                       </div>
                     ),
                   },
                   {
-                    key: 'qty',
-                    label: 'Quantité',
-                    align: 'center',
-                    isNumeric: true,
-                    render: (line) => (
-                      <span className="font-black text-slate-900 dark:text-white">
-                        {line.qtyBoxes} cartons
+                    key: 'invoice',
+                    label: 'N° de facture',
+                    value: (line) => (
+                      <span className="font-mono font-bold [overflow-wrap:anywhere]">
+                        {line.sale.invoice_number ||
+                          `FAC-${String(line.sale.number || '').replace('VTE-', '')}`}
                       </span>
                     ),
-                    footer: (
-                      <span>
-                        {skuChronologicalLineItems
-                          .filter((l) => l.sale.status !== 'annulee')
-                          .reduce((acc, l) => acc + Number(l.qtyBoxes || 0), 0)}{' '}
-                        cartons
+                  },
+                  {
+                    key: 'thermal',
+                    label: 'N° de ticket thermique',
+                    value: (line) => (
+                      <span className="font-mono font-bold [overflow-wrap:anywhere]">
+                        {getThermalTicketNumber(line.sale)}
                       </span>
                     ),
                   },
                   {
                     key: 'amount',
-                    label: 'Montant SKU',
-                    align: 'right',
-                    isNumeric: true,
-                    render: (line) => (
-                      <span className="font-black text-teal-700 dark:text-teal-400">
+                    label: 'Montant',
+                    isAmount: true,
+                    value: (line) => (
+                      <span className="font-black text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] whitespace-nowrap">
                         {line.lineTotal.toLocaleString('fr-FR')} FCFA
-                      </span>
-                    ),
-                    footer: (
-                      <span className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
-                        {skuChronologicalLineItems
-                          .filter((l) => l.sale.status !== 'annulee')
-                          .reduce((acc, l) => acc + Number(l.lineTotal || 0), 0)
-                          .toLocaleString('fr-FR')}{' '}
-                        FCFA
                       </span>
                     ),
                   },
@@ -2476,10 +2778,19 @@ export const VentesView: React.FC<VentesViewProps> = ({
                     <>
                       <button
                         type="button"
-                        onClick={() => onOpenDocument(buildA4ClientInvoiceDoc(s))}
-                        className="px-2.5 py-1 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[10px] cursor-pointer"
+                        onClick={() => handleOpenSaleInvoice(s)}
+                        className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm cursor-pointer"
                       >
-                        Facture A4
+                        <FileText className="w-4 h-4 shrink-0" />
+                        <span>Facture</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenSaleTicket(s)}
+                        className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm cursor-pointer"
+                      >
+                        <Receipt className="w-4 h-4 shrink-0" />
+                        <span>Ticket</span>
                       </button>
                       {canCancelSale && !isCancelled && !s.isPendingOffline && (
                         <button
@@ -2488,9 +2799,10 @@ export const VentesView: React.FC<VentesViewProps> = ({
                             setCancellingSale(s);
                             setCancelReason('Annulation de la facture client PDV');
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] cursor-pointer"
+                          className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs sm:text-sm cursor-pointer"
                         >
-                          Annuler facture PDV
+                          <XCircle className="w-4 h-4 shrink-0" />
+                          <span>Annuler</span>
                         </button>
                       )}
                     </>
@@ -2510,12 +2822,12 @@ export const VentesView: React.FC<VentesViewProps> = ({
                         {skuChronologicalLineItems
                           .filter((l) => l.sale.status !== 'annulee')
                           .reduce((acc, l) => acc + Number(l.qtyBoxes || 0), 0)}{' '}
-                        ctn
+                        cartons
                       </strong>
                     </span>
                     <span>
                       Total CA SKU :{' '}
-                      <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
+                      <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] whitespace-nowrap">
                         {skuChronologicalLineItems
                           .filter((l) => l.sale.status !== 'annulee')
                           .reduce((acc, l) => acc + Number(l.lineTotal || 0), 0)
@@ -2550,18 +2862,18 @@ export const VentesView: React.FC<VentesViewProps> = ({
             </div>
             <div className="flex items-center gap-2.5 flex-wrap text-xs">
               <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Total Ventes Équipes</span>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Total Ventes Vendeurs</span>
                 <span className="font-black text-slate-900 dark:text-white">
                   {sortedCombinedSales.length} ventes &bull;{' '}
-                  <span className="text-[#008DA9]">
+                  <span className="text-[#008DA9] whitespace-nowrap">
                     {sortedCombinedSales.reduce((acc, s) => acc + Number(s.total_amount || 0), 0).toLocaleString('fr-FR')} FCFA
                   </span>
                 </span>
               </div>
               <button
                 type="button"
-                onClick={() => handleExportSalesPdf(sortedCombinedSales, 'Rapport Global des Ventes - Toutes les Equipes')}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                onClick={() => handleExportSalesPdf(sortedCombinedSales, 'Rapport Global des Ventes - Tous les Vendeurs')}
+                className="inline-flex items-center gap-1.5 min-h-[48px] px-3.5 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition cursor-pointer"
               >
                 <Download className="w-4 h-4" />
                 <span>Exporter PDF (Toutes les ventes)</span>
@@ -2601,19 +2913,19 @@ export const VentesView: React.FC<VentesViewProps> = ({
                             Vendeur Actif
                           </span>
                         </div>
-                        <h3 className="text-lg font-black text-slate-900 dark:text-white mt-1 truncate">
+                        <h3 className="text-lg font-black text-slate-900 dark:text-white mt-1 [overflow-wrap:anywhere]">
                           {vendor.name}
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-0.5">
                           <Briefcase className="w-3.5 h-3.5 text-[#008DA9] shrink-0" />
-                          <span className="truncate">{vendor.team}</span>
+                          <span className="[overflow-wrap:anywhere]">Vendeur Dépôt-Vente</span>
                         </p>
                       </div>
                     </div>
 
                     {/* Vendor Contact Details */}
                     <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 space-y-1.5 text-xs">
-                      <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                      <div className="flex items-center justify-between gap-2 text-slate-600 dark:text-slate-300 flex-wrap">
                         <span className="flex items-center gap-1.5 text-slate-400">
                           <Phone className="w-3.5 h-3.5 text-[#008DA9]" />
                           Téléphone :
@@ -2621,12 +2933,12 @@ export const VentesView: React.FC<VentesViewProps> = ({
                         <span className="font-semibold text-slate-800 dark:text-slate-200">{vendor.phone}</span>
                       </div>
                       {vendor.email && (
-                        <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                        <div className="flex items-center justify-between gap-2 text-slate-600 dark:text-slate-300 flex-wrap">
                           <span className="flex items-center gap-1.5 text-slate-400">
                             <Mail className="w-3.5 h-3.5 text-[#008DA9]" />
                             Email :
                           </span>
-                          <span className="font-medium truncate max-w-[170px]">{vendor.email}</span>
+                          <span className="font-medium [overflow-wrap:anywhere]">{vendor.email}</span>
                         </div>
                       )}
                     </div>
@@ -2653,18 +2965,18 @@ export const VentesView: React.FC<VentesViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
                       <div>
                         <span className="text-[10px] font-bold uppercase text-slate-400 block">
                           Chiffre d&apos;affaires cumulé
                         </span>
-                        <span className="text-lg font-black text-[#008DA9]">
+                        <span className="text-lg font-black text-[#008DA9] whitespace-nowrap">
                           {vendor.totalAmount.toLocaleString('fr-FR')} <span className="text-xs">FCFA</span>
                         </span>
                       </div>
 
                       {vendor.latestSale && (
-                        <div className="text-right">
+                        <div className="text-right ml-auto">
                           <span className="text-[10px] font-bold uppercase text-slate-400 block">
                             Dernière vente
                           </span>
@@ -2684,9 +2996,9 @@ export const VentesView: React.FC<VentesViewProps> = ({
                       setSelectedAdminVendorId(vendor.id);
                       setSearchTerm('');
                     }}
-                    className="w-full py-3 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                    className="w-full min-h-[48px] py-3 px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
                   >
-                    <TrendingUp className="w-4 h-4" />
+                    <TrendingUp className="w-4 h-4 shrink-0" />
                     <span>Ventes du vendeur</span>
                     <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-black">
                       {vendor.salesCount}
@@ -2699,17 +3011,17 @@ export const VentesView: React.FC<VentesViewProps> = ({
         </div>
       )}
 
-      {/* SALES HISTORY & CONSULTATION (Shown for Vendeur in 'historique', Comptable, Sales Admin, Directeur Ops in 'globale', or when a vendor is selected) */}
+      {/* SALES HISTORY & CONSULTATION (Ventes & Factures PDV — tous rôles partageant ce composant) */}
       {((isVendeur && vendorSubTab === 'historique') ||
         (!isVendeur && !isAdmin && !isDirecteurOps) ||
         ((isAdmin || isDirecteurOps) && directorSubTab === 'globale') ||
         ((isAdmin || isDirecteurOps) && directorSubTab === 'par-vendeur' && selectedAdminVendor !== null)) && (
-        <div className="space-y-4">
+        <div className="space-y-4 w-full max-w-full min-w-0 box-border">
           {/* Selected Vendor Profile Banner + Quick Vendor Switcher */}
           {(isAdmin || isDirecteurOps) && selectedAdminVendor && (
-            <div className="rounded-2xl border border-[#008DA9]/30 bg-white dark:bg-slate-900 p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="rounded-2xl border border-[#008DA9]/30 bg-white dark:bg-slate-900 p-4 sm:p-5 shadow-xs space-y-4 w-full max-w-full min-w-0 box-border">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="flex items-start sm:items-center gap-3.5">
+                <div className="flex items-start sm:items-center gap-3.5 min-w-0">
                   <div className="w-12 h-12 rounded-2xl bg-[#008DA9] text-white font-black text-base flex items-center justify-center shrink-0 shadow-xs">
                     {selectedAdminVendor.name
                       .split(' ')
@@ -2718,18 +3030,16 @@ export const VentesView: React.FC<VentesViewProps> = ({
                       .slice(0, 2)
                       .toUpperCase()}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-xs font-black px-2.5 py-0.5 rounded-full bg-[#008DA9]/10 text-[#008DA9] dark:bg-[#008DA9]/20 dark:text-cyan-300">
                         {selectedAdminVendor.code}
                       </span>
-                      <h2 className="text-lg font-black text-slate-900 dark:text-white">
+                      <h2 className="text-lg font-black text-slate-900 dark:text-white [overflow-wrap:anywhere]">
                         Historique des ventes de {selectedAdminVendor.name}
                       </h2>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span>{selectedAdminVendor.team}</span>
-                      <span>&bull;</span>
                       <span>Tél : {selectedAdminVendor.phone}</span>
                       <span>&bull;</span>
                       <span className="text-[#008DA9] font-semibold">
@@ -2746,15 +3056,15 @@ export const VentesView: React.FC<VentesViewProps> = ({
                       setSelectedAdminVendorId(null);
                       setSearchTerm('');
                     }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition cursor-pointer"
                   >
-                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
                     <span>Retour aux profils des vendeurs</span>
                   </button>
                 </div>
               </div>
 
-              {/* Quick Switcher between Vendors — Grille de boutons en rangées et colonnes sans débordement */}
+              {/* Quick Switcher between Vendors — sans troncature */}
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
                 <span className="text-[11px] font-bold uppercase text-slate-400 block">
                   Changer de vendeur :
@@ -2767,13 +3077,15 @@ export const VentesView: React.FC<VentesViewProps> = ({
                         key={vp.id}
                         type="button"
                         onClick={() => setSelectedAdminVendorId(vp.id)}
-                        className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
+                        className={`min-h-[48px] px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
                           isCurrent
                             ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
                             : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                         }`}
                       >
-                        <span className="truncate">{vp.name} ({vp.code})</span>
+                        <span className="whitespace-normal [overflow-wrap:anywhere] min-w-0">
+                          {vp.name} ({vp.code})
+                        </span>
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
                             isCurrent
@@ -2791,300 +3103,305 @@ export const VentesView: React.FC<VentesViewProps> = ({
             </div>
           )}
 
-          {/* Summary KPI Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-              <span className="text-[10px] font-bold uppercase text-slate-400">Nombre de ventes affichées</span>
+          {/* LES 3 INDICATEURS DU HAUT : passent en colonne sur mobile (grid-cols-1 md:grid-cols-3) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-full min-w-0 box-border">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs min-w-0 box-border">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                Nombre de ventes affichées
+              </span>
               <div className="text-xl font-black text-slate-900 dark:text-white mt-1">
-                {filteredSales.length} <span className="text-xs text-slate-500 font-semibold">livraisons PDV</span>
+                {filteredSales.length}{' '}
+                <span className="text-xs text-slate-500 font-semibold">livraisons PDV</span>
               </div>
             </div>
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-              <span className="text-[10px] font-bold uppercase text-slate-400">Chiffre d&apos;affaires cumulé</span>
-              <div className="text-xl font-black text-[#008DA9] mt-1">
-                {totalFilteredAmount.toLocaleString('fr-FR')} <span className="text-xs font-bold">FCFA</span>
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs min-w-0 box-border">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                Chiffre d&apos;affaires cumulé
+              </span>
+              <div className="text-xl font-black text-[#008DA9] mt-1 whitespace-nowrap">
+                {totalFilteredAmount.toLocaleString('fr-FR')}{' '}
+                <span className="text-xs font-bold">FCFA</span>
               </div>
             </div>
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-              <span className="text-[10px] font-bold uppercase text-slate-400">Points de vente livrés</span>
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs min-w-0 box-border">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                Points de vente livrés
+              </span>
               <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {new Set(filteredSales.map((s) => s.pdv_id)).size} <span className="text-xs font-semibold">PDV actifs</span>
+                {new Set(filteredSales.map((s) => s.pdv_id)).size}{' '}
+                <span className="text-xs font-semibold">PDV actifs</span>
               </div>
             </div>
           </div>
 
-          {/* Search & Chronological Sort Indicator */}
-          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+          {/* BARRE D'OUTILS OPTIMISÉE MOBILE, TABLETTE & PC :
+              1. Recherche pleine largeur avec icône loupe bien dégagée
+              2. Grille responsive pour le tri et le filtre vendeur (pleine largeur sur mobile, côte à côte sur tablette/PC)
+              3. Boutons "Exporter" et "Exporter en PDF" alignés proprement côte à côte sur mobile (2 colonnes égales)
+          */}
+          <div className="w-full max-w-full min-w-0 box-border rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 shadow-xs space-y-3">
+            {/* Ligne 1 : Recherche pleine largeur */}
+            <div className="relative w-full max-w-full min-w-0 box-border">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10" />
               <input
-                type="text"
-                placeholder="Rechercher par N° vente, date, heure, point de vente, quartier..."
+                type="search"
+                placeholder="Rechercher N° vente, facture, ticket, PDV, vendeur..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className="w-full max-w-full min-w-0 box-border pl-11 pr-10 h-[48px] min-h-[48px] rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white focus:outline-none transition-none"
               />
-            </div>
-
-            {!isVendeur && !isAdmin && (
-              <select
-                value={filterVendorCode}
-                onChange={(e) => setFilterVendorCode(e.target.value)}
-                className="px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-200"
-              >
-                <option value="all">Tous les vendeurs ({vendorCodes.length})</option>
-                {vendorCodes.map((code) => (
-                  <option key={code} value={code}>
-                    Vendeur {code}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <div className="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 shrink-0">
-              <Clock className="w-3.5 h-3.5 text-[#008DA9]" />
-              <span>Du plus récent au plus ancien</span>
-            </div>
-
-            {!isVendeur && (
-              <>
-                <ExportViewButton
-                  currentUser={currentUser}
-                  jeu="ventes"
-                  label="Exporter"
-                  filtres={{
-                    vendor_id: selectedAdminVendor?.id || '',
-                    q: searchTerm,
-                  }}
-                />
-
+              {searchTerm.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => handleExportSalesPdf()}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
+                  onClick={() => setSearchTerm('')}
+                  aria-label="Effacer la recherche"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer z-10"
                 >
-                  <Download className="w-4 h-4" />
-                  <span>Exporter en PDF</span>
+                  <X className="w-4 h-4" />
                 </button>
-              </>
-            )}
+              )}
+            </div>
+
+            {/* Ligne 2 : Tri, filtre vendeur et boutons d'export (sans écrasement sur mobile) */}
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 w-full max-w-full min-w-0 box-border">
+              <div
+                className={`grid grid-cols-1 ${
+                  !isVendeur && !selectedAdminVendor ? 'sm:grid-cols-2' : ''
+                } gap-2.5 w-full lg:w-auto lg:flex-1 min-w-0`}
+              >
+                {/* Sélecteur de tri */}
+                <div className="flex items-center gap-2 w-full min-w-0">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300 shrink-0 whitespace-nowrap">
+                    <ArrowUpDown className="w-4 h-4 text-[#008DA9] shrink-0" />
+                    <span>Tri :</span>
+                  </span>
+                  <select
+                    value={salesSortBy}
+                    onChange={(e) =>
+                      setSalesSortBy(
+                        e.target.value as
+                          | 'date_desc'
+                          | 'date_asc'
+                          | 'amount_desc'
+                          | 'amount_asc'
+                          | 'number_asc'
+                      )
+                    }
+                    aria-label="Trier les ventes"
+                    className="w-full flex-1 min-w-0 max-w-full box-border h-[48px] min-h-[48px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] font-semibold text-slate-800 dark:text-slate-200 focus:outline-none transition-none"
+                  >
+                    <option value="date_desc">Plus récent → plus ancien</option>
+                    <option value="date_asc">Plus ancien → plus récent</option>
+                    <option value="amount_desc">Montant (décroissant)</option>
+                    <option value="amount_asc">Montant (croissant)</option>
+                    <option value="number_asc">N° de vente (A → Z)</option>
+                  </select>
+                </div>
+
+                {/* Sélecteur de vendeur */}
+                {!isVendeur && !selectedAdminVendor && (
+                  <div className="w-full min-w-0">
+                    <select
+                      value={filterVendorCode}
+                      onChange={(e) => setFilterVendorCode(e.target.value)}
+                      aria-label="Filtrer par vendeur"
+                      className="w-full min-w-0 max-w-full box-border h-[48px] min-h-[48px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] font-semibold text-slate-800 dark:text-slate-200 focus:outline-none transition-none"
+                    >
+                      <option value="all">Tous les vendeurs ({vendorCodes.length})</option>
+                      {vendorCodes.map((code) => (
+                        <option key={code} value={code}>
+                          Vendeur {code}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {!isVendeur && (
+                <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto shrink-0 [&_button]:w-full sm:[&_button]:w-auto [&_button]:justify-center [&_button]:min-h-[48px]">
+                  <ExportViewButton
+                    currentUser={currentUser}
+                    jeu="ventes"
+                    label="Exporter"
+                    filtres={{
+                      vendor_id: selectedAdminVendor?.id || '',
+                      q: searchTerm,
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportSalesPdf()}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                  >
+                    <Download className="w-4 h-4 shrink-0" />
+                    <span>Exporter en PDF</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Banner explaining automatic Mini Facture Thermique in Sales History */}
-          <div className="p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 text-xs text-amber-950 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-start sm:items-center gap-2.5">
-              <Receipt className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
-              <span>
-                <strong>Mini Facture Thermique automatique (80mm) :</strong> Chaque vente de cet historique génère automatiquement une <strong>Mini Facture Thermique (`TKT-THERM-...`)</strong> imprimable. {isVendeur ? "Seul le Comptable crée les factures officielles ; en cas d'erreur sur une facture du Comptable, vous pouvez soumettre cette mini facture thermique comme preuve dans votre demande de rectification." : "Ce ticket thermique sert également de preuve officielle lors d'une demande de rectification de facture par le vendeur."}
+          {/* BANDEAU "Mini Facture Thermique" :
+              Deux phrases courtes ("Chaque vente génère un ticket thermique 80 mm." / "Il sert de preuve lors d'une demande de rectification."),
+              pastille "Format Thermique 80 mm" sur sa propre ligne.
+          */}
+          <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 text-xs text-amber-950 dark:text-amber-100 space-y-2.5 w-full max-w-full min-w-0 box-border">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <Receipt className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 min-w-0 [overflow-wrap:anywhere]">
+                <p className="font-bold text-amber-950 dark:text-amber-100">
+                  Chaque vente génère un ticket thermique 80 mm.
+                </p>
+                <p className="text-amber-900 dark:text-amber-200">
+                  Il sert de preuve lors d&apos;une demande de rectification.
+                </p>
+              </div>
+            </div>
+            <div className="w-full min-w-0">
+              <span className="inline-flex items-center px-3 py-1 rounded-full bg-amber-500/20 text-amber-950 dark:text-amber-200 font-mono font-bold text-[11px]">
+                Format Thermique 80 mm
               </span>
             </div>
-            <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-900 dark:text-amber-200 font-mono font-bold text-[11px] shrink-0">
-              Format Thermique 80mm • Preuve de Vente
-            </span>
           </div>
 
-          {/* Sales Table — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* LISTE DE CARTES DES VENTES & FACTURES PDV — Composant partagé CardList */}
+          <CardList<any>
             data={filteredSales}
             getRowKey={(s) => s.id}
             emptyMessage="Aucune vente trouvée pour cette recherche."
-            mobileTitle={(s) => (
-              <span
-                className={`font-mono font-black ${
-                  s.status === 'annulee'
-                    ? 'line-through text-rose-600 dark:text-rose-400'
-                    : 'text-slate-900 dark:text-white'
-                }`}
-              >
-                {s.number}
-              </span>
-            )}
-            mobileSubtitle={(s) =>
-              `${formatSaleDateFr(s.date)} • ${getSaleTime(s)} • ${getThermalTicketNumber(s)}`
-            }
-            mobileStatusBadge={(s) => {
+            title={(s) => {
               const isCancelled = s.status === 'annulee';
-              if (isCancelled) {
-                return (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
-                    Vente Annulée
-                  </span>
-                );
-              }
-              if (s.cancel_request_status === 'en_attente') {
-                return (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950">
-                    Demande annulation DOV
-                  </span>
-                );
-              }
-              if (s.isPendingOffline) {
-                return (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                    Hors-ligne
-                  </span>
-                );
-              }
               return (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                  Validée
-                </span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 w-full min-w-0">
+                  <span
+                    className={`font-mono font-black min-w-0 [overflow-wrap:anywhere] ${
+                      isCancelled
+                        ? 'line-through text-rose-600 dark:text-rose-400'
+                        : 'text-slate-900 dark:text-white'
+                    }`}
+                  >
+                    {s.number}
+                  </span>
+                  <span className="font-sans text-xs sm:text-sm font-bold text-slate-600 dark:text-slate-300 shrink-0 ml-auto">
+                    {formatSaleDateFr(s.date)} &bull; {getSaleTime(s)}
+                  </span>
+                </div>
               );
             }}
-            columns={[
-              {
-                key: 'number',
-                label: 'N° Vente & Horodatage',
-                hideOnMobileCard: true,
-                render: (s) => {
-                  const saleTime = getSaleTime(s);
-                  const formattedDate = formatSaleDateFr(s.date);
-                  const isCancelled = s.status === 'annulee';
-                  return (
-                    <div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`font-mono font-bold ${
-                            isCancelled
-                              ? 'line-through text-rose-600 dark:text-rose-400'
-                              : 'text-slate-900 dark:text-white'
-                          }`}
-                        >
-                          {s.number}
-                        </span>
-                        {isCancelled && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
-                            Annulée
-                          </span>
-                        )}
-                        {!isCancelled && s.cancel_request_status === 'en_attente' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950">
-                            Demande annulation DOV
-                          </span>
-                        )}
-                        {!isCancelled && s.cancel_request_status === 'rejetee' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
-                            Annulation refusée DOV
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                        <span className="inline-flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-200 text-[11px]">
-                          <Calendar className="w-3 h-3 text-slate-400" />
-                          {formattedDate}
-                        </span>
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#008DA9]/10 text-[#008DA9] dark:bg-[#008DA9]/20 dark:text-cyan-300 font-mono font-black text-[10px]">
-                          <Clock className="w-2.5 h-2.5" />
-                          {saleTime}
-                        </span>
-                      </div>
-                      {isCancelled ? (
-                        <div className="mt-1 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                          Motif : {s.cancel_reason || 'Annulée par la Direction des ventes'}
-                        </div>
-                      ) : s.cancel_request_status === 'en_attente' ? (
-                        <div className="mt-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
-                          Motif vendeur : {s.cancel_request_reason}
-                        </div>
-                      ) : s.cancel_request_status === 'rejetee' ? (
-                        <div className="mt-1 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                          Refus DOV : {s.cancel_rejection_reason || 'Refusée'}
-                        </div>
-                      ) : s.isPendingOffline ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 mt-1">
-                          <Clock className="w-3 h-3" /> Hors-ligne (En attente)
-                        </span>
-                      ) : s.recorded_offline ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 mt-1">
-                          <CheckCircle2 className="w-3 h-3" /> Hors-ligne • Synchro
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                          En ligne
-                        </span>
-                      )}
-                    </div>
-                  );
-                },
-                footer: <span className="uppercase text-[11px]">Totaux ventes actives</span>,
-              },
+            badges={(s) => {
+              const isCancelled = s.status === 'annulee';
+              const paymentLabel = s.payment_type || 'Comptant';
+              const payLower = String(paymentLabel).toLowerCase();
+              const isAcquittee =
+                !isCancelled &&
+                !payLower.includes('crédit') &&
+                !payLower.includes('credit') &&
+                !payLower.includes('attente');
+
+              return (
+                <>
+                  {isCancelled && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
+                      Vente annulée
+                    </span>
+                  )}
+                  {!isCancelled && s.cancel_request_status === 'en_attente' && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-amber-500 text-slate-950">
+                      Demande annulation DOV
+                    </span>
+                  )}
+                  {!isCancelled && s.cancel_request_status === 'rejetee' && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
+                      Annulation refusée DOV
+                    </span>
+                  )}
+                  <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                    {paymentLabel}
+                  </span>
+                  {!isCancelled && (
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                        isAcquittee
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                      }`}
+                    >
+                      {isAcquittee ? 'Acquittée' : 'À payer'}
+                    </span>
+                  )}
+                  {s.isPendingOffline && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      Hors-ligne
+                    </span>
+                  )}
+                  {!s.isPendingOffline && Boolean(s.recorded_offline) && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
+                      Hors-ligne &bull; Synchro
+                    </span>
+                  )}
+                </>
+              );
+            }}
+            fields={[
               {
                 key: 'pdv',
-                label: 'Point de Vente',
-                render: (s) => (
-                  <div>
-                    <div className="font-bold text-slate-900 dark:text-white">{s.pdv_name}</div>
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-[#008DA9] shrink-0" />
-                      <span>{s.pdv_neighborhood}</span>
-                    </div>
-                  </div>
-                ),
+                label: 'Point de vente',
+                value: (s) =>
+                  `${s.pdv_name || 'PDV'}${s.pdv_neighborhood ? ` (${s.pdv_neighborhood})` : ''}`,
               },
               {
                 key: 'vendor',
                 label: 'Vendeur',
-                isSecondary: true,
-                render: (s) => (
-                  <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                    {s.vendor_name}{' '}
-                    <span className="font-mono text-[10px] text-[#008DA9]">({s.vendor_code})</span>
-                  </div>
-                ),
+                value: (s) => `${s.vendor_name || 'Vendeur'} (${s.vendor_code || 'BAO'})`,
               },
               {
                 key: 'items',
-                label: 'Détail Cartons',
-                render: (s) => {
+                label: 'Détail cartons',
+                value: (s) => {
                   const totalBoxes = (s.items || []).reduce(
-                    (acc: number, it: any) => acc + (it.qtyBoxes || 0),
+                    (acc: number, it: any) => acc + Number(it.qtyBoxes ?? it.qty ?? 0),
                     0
                   );
                   return (
-                    <div className="text-slate-600 dark:text-slate-300">
-                      <span className="font-bold text-slate-900 dark:text-white">
-                        {totalBoxes} ctn
-                      </span>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
-                        {(s.items || []).map((it: any) => `${it.qtyBoxes}x ${it.name}`).join(', ')}
+                    <div className="space-y-1 text-right min-w-0 max-w-full">
+                      <div className="font-bold text-slate-900 dark:text-white">
+                        {totalBoxes} {totalBoxes > 1 ? 'cartons' : 'carton'}
+                      </div>
+                      <div className="space-y-0.5 text-xs text-slate-600 dark:text-slate-300 font-medium">
+                        {(s.items || []).map((it: any, idx: number) => (
+                          <div
+                            key={`${it.code || idx}-${idx}`}
+                            className="whitespace-normal [overflow-wrap:anywhere] break-words"
+                          >
+                            {it.qtyBoxes ?? it.qty ?? 0} &times; {it.name}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );
                 },
-                footer: (
-                  <span>
-                    {filteredSales
-                      .filter((s) => s.status !== 'annulee')
-                      .reduce(
-                        (acc, s) =>
-                          acc +
-                          (s.items || []).reduce(
-                            (sum: number, it: any) => sum + Number(it.qtyBoxes || 0),
-                            0
-                          ),
-                        0
-                      )}{' '}
-                    ctn
-                  </span>
-                ),
               },
               {
                 key: 'payment',
                 label: 'Règlement',
-                isSecondary: true,
-                render: (s) => (
-                  <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                    {s.payment_type || 'Comptant'}
+                value: (s) => s.payment_type || 'Comptant',
+              },
+              {
+                key: 'invoice_no',
+                label: 'N° de facture',
+                value: (s) => (
+                  <span className="font-mono font-bold [overflow-wrap:anywhere]">
+                    {s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`}
                   </span>
                 ),
               },
               {
-                key: 'ticket',
-                label: 'Facture & Ticket',
-                isSecondary: true,
-                render: (s) => (
-                  <span className="font-mono text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                    {s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`} •{' '}
+                key: 'thermal_no',
+                label: 'N° de ticket thermique',
+                value: (s) => (
+                  <span className="font-mono font-bold [overflow-wrap:anywhere]">
                     {getThermalTicketNumber(s)}
                   </span>
                 ),
@@ -3092,54 +3409,90 @@ export const VentesView: React.FC<VentesViewProps> = ({
               {
                 key: 'amount',
                 label: 'Montant',
-                align: 'right',
-                isNumeric: true,
-                render: (s) => {
-                  const isCancelled = s.status === 'annulee';
-                  return (
-                    <span
-                      className={`font-black ${
-                        isCancelled
-                          ? 'line-through text-rose-500 dark:text-rose-400'
-                          : 'text-slate-900 dark:text-white'
-                      }`}
-                    >
-                      {s.total_amount.toLocaleString('fr-FR')} FCFA
-                    </span>
-                  );
-                },
-                footer: (
-                  <span className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
-                    {filteredSales
-                      .filter((s) => s.status !== 'annulee')
-                      .reduce((acc, s) => acc + Number(s.total_amount || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
+                isAmount: true,
+                value: (s) => (
+                  <span
+                    className={`font-black whitespace-nowrap ${
+                      s.status === 'annulee'
+                        ? 'line-through text-rose-600 dark:text-rose-400'
+                        : 'text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
+                    }`}
+                  >
+                    {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA
                   </span>
                 ),
               },
             ]}
+            renderExtraContent={(s) => {
+              const hasCancelRequest = Boolean(s.cancel_request_status || s.cancel_request_reason);
+              const isCancelled = s.status === 'annulee';
+              if (!hasCancelRequest && !isCancelled) return null;
+
+              const motifComplet =
+                s.cancel_request_reason ||
+                s.cancel_reason ||
+                'Erreur de saisie signalée sur la vente';
+              const authorLabel = resolveCancelAuthorLabel(s);
+              const dateLabel = formatCancelDateTime(s);
+
+              return (
+                <div
+                  className={`w-full max-w-full min-w-0 box-border p-3.5 rounded-xl border text-xs space-y-1.5 [overflow-wrap:anywhere] ${
+                    s.cancel_request_status === 'en_attente' && !isCancelled
+                      ? 'bg-amber-50/90 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100'
+                      : 'bg-rose-50/90 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/80 text-rose-950 dark:text-rose-100'
+                  }`}
+                >
+                  <div className="font-black flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                    <span>
+                      {isCancelled
+                        ? "Détail de l'annulation"
+                        : s.cancel_request_status === 'rejetee'
+                        ? "Demande d'annulation refusée (DOV)"
+                        : "Demande d'annulation en attente (DOV)"}
+                    </span>
+                  </div>
+                  <div className="whitespace-normal [overflow-wrap:anywhere] break-words">
+                    <strong>Motif :</strong> &laquo; {motifComplet} &raquo;
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] opacity-90 pt-1 border-t border-current/15">
+                    <span className="[overflow-wrap:anywhere]">
+                      <strong>Auteur :</strong> {authorLabel}
+                    </span>
+                    <span className="[overflow-wrap:anywhere]">
+                      <strong>Date :</strong> {dateLabel}
+                    </span>
+                  </div>
+                  {s.cancel_rejection_reason && (
+                    <div className="pt-1 text-rose-700 dark:text-rose-300 whitespace-normal [overflow-wrap:anywhere]">
+                      <strong>Motif du refus DOV :</strong> {s.cancel_rejection_reason}
+                    </div>
+                  )}
+                </div>
+              );
+            }}
             renderActions={(s) => {
               const isCancelled = s.status === 'annulee';
               return (
                 <>
                   <button
                     type="button"
-                    onClick={() => onOpenDocument(buildA4ClientInvoiceDoc(s))}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                    onClick={() => handleOpenSaleInvoice(s)}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
                     title="Ouvrir la Facture Client PDV au format A4"
                   >
-                    <FileText className="w-3.5 h-3.5 shrink-0" />
-                    <span>Facture PDV A4</span>
+                    <FileText className="w-4 h-4 shrink-0" />
+                    <span>Facture</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => onOpenDocument(buildMiniThermalReceiptDoc(s))}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] shadow-xs transition cursor-pointer"
-                    title="Ouvrir la Mini Facture Thermique automatique (utilisable comme preuve de vente)"
+                    onClick={() => handleOpenSaleTicket(s)}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                    title="Ouvrir le Ticket Thermique 80 mm (preuve de vente)"
                   >
-                    <Receipt className="w-3.5 h-3.5 shrink-0" />
-                    <span>Mini Facture</span>
+                    <Receipt className="w-4 h-4 shrink-0" />
+                    <span>Ticket</span>
                   </button>
                   {isVendeur &&
                     !isCancelled &&
@@ -3151,10 +3504,10 @@ export const VentesView: React.FC<VentesViewProps> = ({
                           setRequestingCancelSale(s);
                           setRequestCancelReason('');
                         }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                        className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
                       >
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                        <span>Demander annulation (DOV)</span>
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Demander l&apos;annulation</span>
                       </button>
                     )}
                   {(isDirecteurOps || isAdmin) &&
@@ -3165,10 +3518,10 @@ export const VentesView: React.FC<VentesViewProps> = ({
                           type="button"
                           disabled={isReviewingCancelRequest}
                           onClick={() => handleReviewCancelRequest(s, 'approve')}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                          className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer disabled:opacity-50"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                          <span>Approuver demande</span>
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>Annuler</span>
                         </button>
                         <button
                           type="button"
@@ -3177,8 +3530,9 @@ export const VentesView: React.FC<VentesViewProps> = ({
                             setRejectingCancelRequestSale(s);
                             setRejectCancelReason('');
                           }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-[11px] transition cursor-pointer"
+                          className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs sm:text-sm transition cursor-pointer disabled:opacity-50"
                         >
+                          <X className="w-4 h-4 shrink-0" />
                           <span>Refuser</span>
                         </button>
                       </>
@@ -3193,12 +3547,10 @@ export const VentesView: React.FC<VentesViewProps> = ({
                           setCancellingSale(s);
                           setCancelReason('');
                         }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                        className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
                       >
-                        <XCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>
-                          {isDirecteurOps ? 'Annuler facture PDV' : 'Annuler la vente'}
-                        </span>
+                        <XCircle className="w-4 h-4 shrink-0" />
+                        <span>Annuler</span>
                       </button>
                     )}
                 </>
@@ -3231,7 +3583,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 </span>
                 <span>
                   Total CA :{' '}
-                  <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
+                  <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] whitespace-nowrap">
                     {filteredSales
                       .filter((s) => s.status !== 'annulee')
                       .reduce((acc, s) => acc + Number(s.total_amount || 0), 0)
@@ -3312,7 +3664,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
           icon={<AlertTriangle className="w-5 h-5 text-rose-600" />}
           onClose={() => setRequestingCancelSale(null)}
           onSubmit={handleSubmitVendorCancelRequest}
-          submitLabel={isRequestingCancel ? 'Envoi en cours...' : 'Soumettre au Directeur des opérations de vente'}
+          submitLabel={isRequestingCancel ? 'Envoi en cours...' : 'Envoyer la demande'}
           submitDisabled={isRequestingCancel || !requestCancelReason.trim()}
           isDirty={Boolean(requestCancelReason.trim())}
         >

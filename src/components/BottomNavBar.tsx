@@ -43,66 +43,66 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
 
   if (role === 'Administrateur') {
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard }, // 7 chars
-      { id: 'stats', label: 'Stats', icon: BarChart3 },           // 5 chars
-      { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet }, // 8 chars
-      { id: 'pdvs', label: 'PDV', icon: Store },                  // 3 chars
-      { id: 'reglages', label: 'Réglages', icon: Settings },      // 8 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'stats', label: 'Stats', icon: BarChart3 },
+      { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet },
+      { id: 'pdvs', label: 'PDV', icon: Store },
+      { id: 'reglages', label: 'Réglages', icon: Settings },
     ];
   } else if (role === 'Directeur des opérations de vente' || /directeur|op[eé]ration|dov/i.test(role || '')) {
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },    // 7 chars
-      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },           // 6 chars
-      { id: 'historique-sku', label: 'Par SKU', icon: BarChart3 },     // 7 chars
-      { id: 'validation-pdv', label: 'Valid.', icon: Store },          // 6 chars
-      { id: 'demande-stock-vendeur', label: 'Stock', icon: Truck },    // 5 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },
+      { id: 'historique-sku', label: 'SKU', icon: BarChart3 },
+      { id: 'validation-pdv', label: 'Valid.', icon: Store },
+      { id: 'demande-stock-vendeur', label: 'Stock', icon: Truck },
     ];
   } else if (role === 'Sales Admin') {
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard }, // 7 chars
-      { id: 'receptions', label: 'Entrées', icon: ArrowDownLeft },  // 7 chars
-      { id: 'chargements', label: 'Appros', icon: Truck },          // 6 chars
-      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },        // 6 chars
-      { id: 'inventaire', label: 'Invent.', icon: ClipboardList },  // 7 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'receptions', label: 'Entrées', icon: ArrowDownLeft },
+      { id: 'chargements', label: 'Appros', icon: Truck },
+      { id: 'ventes', label: 'Ventes', icon: ShoppingCart },
+      { id: 'inventaire', label: 'Invent.', icon: ClipboardList },
     ];
   } else if (role === 'Gestionnaire grossiste' || /grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')) {
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },           // 7 chars
-      { id: 'commandes-gros', label: 'Cmd Gros', icon: ShoppingCart },        // 8 chars
-      { id: 'nouvelle-commande-gros', label: '+ Cmd', icon: PlusCircle },     // 5 chars
-      { id: 'clients-gros', label: 'Clients', icon: Store },                  // 7 chars
-      { id: 'stock-depot', label: 'Dépôt', icon: Package },                   // 5 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'commandes-gros', label: 'Gros', icon: ShoppingCart },
+      { id: 'nouvelle-commande-gros', label: 'Créer', icon: PlusCircle },
+      { id: 'clients-gros', label: 'Clients', icon: Store },
+      { id: 'stock-depot', label: 'Dépôt', icon: Package },
     ];
   } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard }, // 7 chars
-      { id: 'stock-depot', label: 'Dépôt', icon: Package },        // 5 chars
-      { id: 'receptions', label: 'Entrées', icon: ArrowDownLeft }, // 7 chars
-      { id: 'chargements', label: 'Sorties', icon: Truck },        // 7 chars
-      { id: 'retours', label: 'Retours', icon: RotateCcw },        // 7 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'stock-depot', label: 'Dépôt', icon: Package },
+      { id: 'receptions', label: 'Entrées', icon: ArrowDownLeft },
+      { id: 'chargements', label: 'Sorties', icon: Truck },
+      { id: 'retours', label: 'Retours', icon: RotateCcw },
     ];
   } else if (role === 'Comptable') {
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },   // 7 chars
-      { id: 'caisse', label: 'Caisse', icon: DollarSign },            // 6 chars
-      { id: 'soldes-vendeurs', label: 'Soldes', icon: CreditCard },   // 6 chars
-      { id: 'factures', label: 'Factures', icon: Receipt },           // 8 chars
-      { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet },   // 8 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'caisse', label: 'Caisse', icon: DollarSign },
+      { id: 'soldes-vendeurs', label: 'Soldes', icon: CreditCard },
+      { id: 'factures', label: 'Factures', icon: Receipt },
+      { id: 'rapports', label: 'Rapports', icon: FileSpreadsheet },
     ];
   } else {
     // Vendeur
     items = [
-      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },  // 7 chars
-      { id: 'nouvelle-vente', label: 'Vente', icon: PlusCircle },    // 5 chars
-      { id: 'mon-stock', label: 'Stock', icon: Boxes },              // 5 chars
-      { id: 'mes-pdvs', label: 'PDV', icon: Store },                 // 3 chars
-      { id: 'mon-solde', label: 'Solde', icon: CreditCard },         // 5 chars
+      { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
+      { id: 'nouvelle-vente', label: 'Vente', icon: PlusCircle },
+      { id: 'mon-stock', label: 'Stock', icon: Boxes },
+      { id: 'mes-pdvs', label: 'PDV', icon: Store },
+      { id: 'mon-solde', label: 'Solde', icon: CreditCard },
     ];
   }
 
   return (
-    <div className="fixed bottom-0 left-0 lg:left-72 right-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg transform-gpu">
-      <nav className="grid grid-cols-5 w-full h-16 max-w-7xl mx-auto">
+    <div className="fixed bottom-0 left-0 lg:left-60 right-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg">
+      <nav className="baobab-bottom-nav-grid grid grid-cols-[repeat(5,minmax(0,1fr))] w-full h-16 max-w-7xl mx-auto">
         {items.map((it) => {
           const Icon = it.icon;
           const isActive =
@@ -118,7 +118,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
             <button
               key={it.id}
               onClick={() => setActiveTab(it.id)}
-              className={`flex flex-col items-center justify-center w-full h-full transition relative text-center px-1 cursor-pointer ${
+              className={`flex flex-col items-center justify-center w-full min-w-0 h-full transition relative text-center px-0.5 cursor-pointer ${
                 isActive
                   ? 'bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-extrabold'
                   : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-semibold'
@@ -134,7 +134,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
                     : 'text-slate-500 dark:text-slate-400'
                 }`}
               />
-              <span className="text-[11px] truncate w-full text-center tracking-tight leading-none">
+              <span className="baobab-bottom-nav-label w-full text-center">
                 {it.label}
               </span>
             </button>

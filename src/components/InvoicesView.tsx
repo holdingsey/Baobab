@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { FileText, Printer, Search, Download, Filter, CheckCircle2, Eye } from 'lucide-react';
+import { Printer, Search } from 'lucide-react';
 import { InvoiceData } from './PrintableDocument';
+import { CardList } from './CardList';
 
 interface InvoicesViewProps {
   invoices: InvoiceData[];
@@ -44,7 +45,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
               Factures Commerciales &amp; Reçus de Caisse
             </h1>
@@ -71,143 +72,146 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
           />
         </div>
 
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <button
+            type="button"
             onClick={() => setFilterType('all')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+            className={`px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
               filterType === 'all'
                 ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
-            Tous ({invoices.length})
+            Tous ({visibleInvoices.length})
           </button>
           <button
+            type="button"
             onClick={() => setFilterType('facture')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+            className={`px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
               filterType === 'facture'
                 ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
-            Factures A4 ({invoices.filter((i) => i.type === 'facture').length})
+            Factures A4 ({visibleInvoices.filter((i) => i.type === 'facture').length})
           </button>
           <button
+            type="button"
             onClick={() => setFilterType('recu')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+            className={`px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
               filterType === 'recu'
                 ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
-            Reçus de Caisse ({invoices.filter((i) => i.type === 'recu').length})
+            Reçus de Caisse ({visibleInvoices.filter((i) => i.type === 'recu').length})
           </button>
         </div>
       </div>
 
-      {/* List */}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-        {/* Mobile Stacked Cards (< 640px) */}
-        <div className="sm:hidden p-3 space-y-3">
-          {filtered.map((inv) => (
-            <div
-              key={inv.id}
-              className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 space-y-2 text-xs"
+      {/* Liste de cartes */}
+      <CardList<InvoiceData>
+        data={filtered}
+        rowKey={(inv) => inv.id}
+        pageSize={20}
+        emptyMessage="Aucun document comptable trouvé."
+        title={(inv) => (
+          <div className="flex items-start justify-between gap-3 w-full min-w-0">
+            <span className="font-mono font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere] min-w-0">
+              {inv.number}
+            </span>
+            <span className="font-sans text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
+              {inv.date}
+            </span>
+          </div>
+        )}
+        badges={(inv) => {
+          const isTicket =
+            inv.type === 'mini_thermique' ||
+            inv.type === 'ticket' ||
+            inv.type === 'ticket_thermique' ||
+            String(inv.number || '').toUpperCase().startsWith('TKT-');
+          const isFacture = inv.type === 'facture' && !isTicket;
+          return (
+            <>
+              <span
+                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
+                  isTicket
+                    ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300'
+                    : isFacture
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                }`}
+              >
+                {isTicket ? 'Ticket 80 mm' : isFacture ? 'Facture A4' : 'Reçu de Caisse'}
+              </span>
+              {inv.status && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {inv.status}
+                </span>
+              )}
+            </>
+          );
+        }}
+        fields={[
+          {
+            key: 'client',
+            label: 'Client',
+            value: (inv) => inv.clientName || inv.client?.name || '—',
+          },
+          {
+            key: 'cashier',
+            label: 'Émetteur / Agent',
+            value: (inv) => inv.cashierName || inv.vendorName || '—',
+          },
+          {
+            key: 'paymentMethod',
+            label: 'Mode de règlement',
+            value: (inv) => inv.paymentMethod || 'Espèces',
+          },
+          {
+            key: 'total',
+            label: 'Montant total',
+            isAmount: true,
+            value: (inv) => (
+              <span className="font-mono font-black text-sm text-slate-900 dark:text-white whitespace-nowrap">
+                {Number(inv.total || 0).toLocaleString('fr-FR')} FCFA
+              </span>
+            ),
+          },
+        ]}
+        renderActions={(inv) => {
+          const isTicket =
+            inv.type === 'mini_thermique' ||
+            inv.type === 'ticket' ||
+            inv.type === 'ticket_thermique' ||
+            String(inv.number || '').toUpperCase().startsWith('TKT-');
+          const isFacture = inv.type === 'facture' && !isTicket;
+          return (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenDocument({
+                  ...inv,
+                  type: isTicket ? 'mini_thermique' : isFacture ? 'facture' : 'recu_caisse',
+                  docTypeTitle: isTicket
+                    ? 'TICKET DE VENTE'
+                    : isFacture
+                    ? 'FACTURE DE VENTE PDV'
+                    : 'REÇU DE CAISSE',
+                })
+              }
+              className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="font-mono font-bold text-slate-900 dark:text-white break-words">
-                  {inv.number}
-                </div>
-                <span
-                  className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
-                    inv.type === 'facture'
-                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
-                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                  }`}
-                >
-                  {inv.type === 'facture' ? 'Facture A4' : 'Reçu Ticket'}
-                </span>
-              </div>
-              <div className="font-semibold text-slate-800 dark:text-slate-200 break-words">
-                {inv.clientName}
-              </div>
-              <div className="text-[11px] text-slate-500">
-                {inv.date} &bull; {inv.paymentMethod} &bull; {inv.cashierName}
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-slate-200/70 dark:border-slate-700/70">
-                <span className="font-black text-slate-900 dark:text-white">
-                  {inv.total.toLocaleString('fr-FR')} FCFA
-                </span>
-                <button
-                  onClick={() => onOpenDocument(inv)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-300 font-semibold text-xs transition"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Imprimer
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Tablet & Desktop Table (>= 640px) */}
-        <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase font-bold text-[10px]">
-                <th className="py-3 px-4">Numéro</th>
-                <th className="py-3 px-4">Format</th>
-                <th className="py-3 px-4">Date</th>
-                <th className="py-3 px-4">Client</th>
-                <th className="py-3 px-4">Émetteur / Agent</th>
-                <th className="py-3 px-4">Mode de Règlement</th>
-                <th className="py-3 px-4 text-right">Montant Total</th>
-                <th className="py-3 px-4 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filtered.map((inv) => (
-                <tr key={inv.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                  <td className="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-white">
-                    {inv.number}
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                        inv.type === 'facture'
-                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
-                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                      }`}
-                    >
-                      {inv.type === 'facture' ? 'Facture A4' : 'Reçu Ticket'}
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4 text-slate-500">{inv.date}</td>
-                  <td className="py-3.5 px-4 font-semibold text-slate-800 dark:text-slate-200">
-                    {inv.clientName}
-                  </td>
-                  <td className="py-3.5 px-4 text-slate-500">{inv.cashierName}</td>
-                  <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400 font-medium">
-                    {inv.paymentMethod}
-                  </td>
-                  <td className="py-3.5 px-4 text-right font-black text-slate-900 dark:text-white">
-                    {inv.total.toLocaleString('fr-FR')} FCFA
-                  </td>
-                  <td className="py-3.5 px-4 text-center">
-                    <button
-                      onClick={() => onOpenDocument(inv)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 dark:bg-teal-950/50 dark:text-teal-300 dark:hover:bg-teal-900 font-semibold text-xs transition"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      Imprimer
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              <Printer className="w-4 h-4 shrink-0" />
+              <span>
+                {isTicket ? 'Ticket' : isFacture ? 'Facture' : 'Imprimer le reçu'}
+              </span>
+            </button>
+          );
+        }}
+      />
     </div>
   );
 };
+

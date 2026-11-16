@@ -2,31 +2,31 @@ import React, { useState } from 'react';
 import { Banknote, Smartphone, Landmark, AlertCircle, Trash2 } from 'lucide-react';
 
 export const FORM_FIELD_CLASS =
-  'w-full max-w-[calc(100vw-32px)] md:max-w-full h-[48px] min-h-[48px] px-3.5 rounded-[12px] bg-white dark:bg-[#1E293B] opacity-100 border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] text-[16px] leading-normal placeholder:text-[#475569] dark:placeholder:text-[#CBD5E1] focus:outline-none focus:border-[var(--marque-fonce)] dark:focus:border-[var(--marque-eclaircie)] focus:ring-2 focus:ring-[var(--marque-fonce)] dark:focus:ring-[var(--marque-eclaircie)] transition';
+  'w-full max-w-full min-w-0 h-[48px] min-h-[48px] px-3.5 rounded-[12px] bg-white dark:bg-[#1E293B] opacity-100 border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] text-[16px] leading-normal placeholder:text-[#475569] dark:placeholder:text-[#CBD5E1] focus:outline-none focus:ring-0 focus:border-[var(--marque-fonce)] dark:focus:border-[var(--marque-eclaircie)] transition-none';
 
 export const FORM_SELECT_CLASS =
-  'w-full max-w-[calc(100vw-32px)] md:max-w-full h-[48px] min-h-[48px] px-3.5 rounded-[12px] bg-white dark:bg-[#1E293B] opacity-100 border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] text-[16px] leading-normal focus:outline-none focus:border-[var(--marque-fonce)] dark:focus:border-[var(--marque-eclaircie)] focus:ring-2 focus:ring-[var(--marque-fonce)] dark:focus:ring-[var(--marque-eclaircie)] transition';
+  'w-full max-w-full min-w-0 min-h-[48px] h-auto py-2.5 px-3.5 rounded-[12px] bg-white dark:bg-[#1E293B] opacity-100 border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] text-[16px] leading-normal whitespace-normal [overflow-wrap:anywhere] focus:outline-none focus:ring-0 focus:border-[var(--marque-fonce)] dark:focus:border-[var(--marque-eclaircie)] transition-none';
 
 export const FORM_TEXTAREA_CLASS =
-  'w-full max-w-[calc(100vw-32px)] md:max-w-full min-h-[96px] px-3.5 py-3 rounded-[12px] bg-white dark:bg-[#1E293B] opacity-100 border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] text-[16px] leading-normal placeholder:text-[#475569] dark:placeholder:text-[#CBD5E1] focus:outline-none focus:border-[var(--marque-fonce)] dark:focus:border-[var(--marque-eclaircie)] focus:ring-2 focus:ring-[var(--marque-fonce)] dark:focus:ring-[var(--marque-eclaircie)] transition';
+  'w-full max-w-full min-w-0 min-h-[96px] px-3.5 py-3 rounded-[12px] bg-white dark:bg-[#1E293B] opacity-100 border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] text-[16px] leading-normal placeholder:text-[#475569] dark:placeholder:text-[#CBD5E1] focus:outline-none focus:ring-0 focus:border-[var(--marque-fonce)] dark:focus:border-[var(--marque-eclaircie)] transition-none';
 
 export const FORM_LABEL_CLASS =
   'block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-2';
 
-export const FORM_GROUP_CLASS = 'space-y-5';
+export const FORM_GROUP_CLASS = 'space-y-5 min-w-0';
 
-export const FORM_ROW_CLASS = 'grid grid-cols-1 md:grid-cols-2 gap-5';
+export const FORM_ROW_CLASS = 'grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0 [&>*]:min-w-0';
 
-export const FORM_ACTIONS_CLASS = 'flex flex-wrap items-center gap-3 w-full max-w-full';
+export const FORM_ACTIONS_CLASS = 'flex flex-wrap items-center gap-3 w-full max-w-full min-w-0';
 
 export const BTN_PRIMARY_CLASS =
-  'h-[48px] min-h-[48px] px-5 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] text-[var(--marque-texte-sur-plein)] font-bold text-[15px] shadow-xs transition flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] disabled:opacity-50 disabled:cursor-not-allowed';
+  'min-h-[48px] h-auto py-3 px-5 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] text-[var(--marque-texte-sur-plein)] font-bold text-[15px] leading-snug whitespace-normal [overflow-wrap:anywhere] shadow-xs transition flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed min-w-0';
 
 export const BTN_SECONDARY_CLASS =
-  'h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#F1F5F9] hover:bg-[#E2E8F0] dark:bg-[#1E293B] dark:hover:bg-[#334155] text-[#0F172A] dark:text-[#F8FAFC] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] font-semibold text-[14px] transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:text-[var(--marque-fonce)] dark:[&_svg]:text-[var(--marque-eclaircie)]';
+  'min-h-[48px] h-auto py-3 px-4 rounded-[12px] bg-[#F1F5F9] hover:bg-[#E2E8F0] dark:bg-[#1E293B] dark:hover:bg-[#334155] text-[#0F172A] dark:text-[#F8FAFC] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] font-semibold text-[14px] leading-snug whitespace-normal [overflow-wrap:anywhere] transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:text-[var(--marque-fonce)] dark:[&_svg]:text-[var(--marque-eclaircie)] min-w-0';
 
 export const BTN_DESTRUCTIVE_CLASS =
-  'h-[40px] min-h-[40px] px-3.5 rounded-[12px] bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-[13px] transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B91C1C] disabled:opacity-50 disabled:cursor-not-allowed';
+  'min-h-[48px] h-auto py-3 px-3.5 rounded-[12px] bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-[13px] leading-snug whitespace-normal [overflow-wrap:anywhere] transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed min-w-0';
 
 export interface PhoneFieldProps {
   value: string;
@@ -142,7 +142,7 @@ export const PaymentMethodSelector: React.FC<PaymentMethodSelectorProps> = ({
   ];
 
   return (
-    <div className="grid grid-cols-3 gap-2.5" role="radiogroup" aria-label="Mode de paiement">
+    <div className="grid grid-cols-3 gap-2 min-w-0" role="radiogroup" aria-label="Mode de paiement">
       {options.map(({ key, label, targetValue, active, Icon }) => (
         <button
           key={key}
@@ -150,7 +150,7 @@ export const PaymentMethodSelector: React.FC<PaymentMethodSelectorProps> = ({
           role="radio"
           aria-checked={active}
           onClick={() => onChange(targetValue)}
-          className={`h-[88px] min-h-[88px] px-2 rounded-[12px] flex flex-col items-center justify-center gap-1.5 text-center transition cursor-pointer select-none opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] ${
+          className={`w-full min-h-[80px] h-auto py-3 px-2 rounded-[12px] flex flex-col items-center justify-center gap-1.5 text-center transition cursor-pointer select-none opacity-100 min-w-0 focus-visible:outline-none ${
             active
               ? 'bg-[var(--marque-clair)] border-2 border-[var(--marque-fonce)] dark:border-[var(--marque-eclaircie)] text-[#0F172A] dark:text-[#F8FAFC] shadow-xs ring-2 ring-[#006B82]/30 dark:ring-[#38CAE6]/30'
               : 'bg-white dark:bg-[#1E293B] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] text-[#0F172A] dark:text-[#F8FAFC] hover:border-[var(--marque-fonce)] dark:hover:border-[var(--marque-eclaircie)]'
@@ -163,7 +163,7 @@ export const PaymentMethodSelector: React.FC<PaymentMethodSelectorProps> = ({
                 : 'text-[#334155] dark:text-[#CBD5E1]'
             }`}
           />
-          <span className="text-[14px] font-bold leading-tight">{label}</span>
+          <span className="text-[12px] sm:text-[13px] font-bold leading-tight whitespace-normal [overflow-wrap:anywhere] max-w-full">{label}</span>
         </button>
       ))}
     </div>

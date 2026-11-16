@@ -31,7 +31,7 @@ import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
 import { exportTableToCsv } from '../utils/csvExport';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
-import { DataTable } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 import {
   PaymentMethodSelector,
@@ -87,7 +87,11 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   onRefreshData,
 }) => {
   const isAdmin = currentRole === 'Administrateur';
-  const isComptable = currentRole === 'Comptable' || isAdmin;
+  const isComptable =
+    currentRole === 'Comptable' ||
+    currentRole === 'Directeur des opérations de vente' ||
+    currentRole === 'Sales Admin' ||
+    isAdmin;
   const isVendeur = currentRole === 'Vendeur';
 
   const [activeTab, setActiveTab] = useState<'soldes' | 'versements' | 'factures' | 'bons-cadeaux'>(() => {
@@ -282,7 +286,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       clientPhone: sale.pdv_phone || '+223 76 00 00 00',
       vendorName: sale.vendor_name || 'Vendeur Baobab',
       vendorCode: sale.vendor_code || 'BAO-VND',
-      vendorTeam: sale.vendor_team || 'Zone Commerciale Bamako',
+      vendorTeam: sale.vendor_team || '',
       vendorPhone: sale.vendor_phone || '+223 75 44 22 11',
       pdvName: sale.pdv_name || 'PDV Client',
       pdvCode: sale.pdv_code || '',
@@ -336,21 +340,72 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   const [rectificationModalSale, setRectificationModalSale] = useState<any | null>(null);
   const [selectedProofSaleId, setSelectedProofSaleId] = useState<string>('');
   const [rectificationReason, setRectificationReason] = useState<string>('');
+  const [rectificationItems, setRectificationItems] = useState<
+    Array<{ productId?: string; code: string; name: string; qtyBoxes: number; unitPrice: number; total: number }>
+  >([]);
+  const [rectificationWithTva, setRectificationWithTva] = useState<boolean>(false);
   const [isSubmittingRectification, setIsSubmittingRectification] = useState(false);
   const [resolvingRectificationId, setResolvingRectificationId] = useState<string | null>(null);
   const [comptaFeedbackBanner, setComptaFeedbackBanner] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
   const [invoicingModalView, setInvoicingModalView] = useState<'cards' | 'table'>('cards');
 
-  // Comptable: Create Invoice for Vendor modal state
+  // Comptable: Create / Modify Invoice for Vendor modal state
   const [showCreateInvoiceModal, setShowCreateInvoiceModal] = useState(false);
   const [createInvoiceMode, setCreateInvoiceMode] = useState<'existing_sale' | 'new_invoice'>('existing_sale');
   const [selectedSaleIdForNewInvoice, setSelectedSaleIdForNewInvoice] = useState<string>('');
+  const [editSalePdvId, setEditSalePdvId] = useState<string>('');
+  const [editSalePaymentType, setEditSalePaymentType] = useState<string>('Comptant');
+  const [editSaleItems, setEditSaleItems] = useState<
+    Array<{ productId?: string; code: string; name: string; qtyBoxes: number; unitPrice: number; total: number }>
+  >([]);
   const [newInvoiceVendorId, setNewInvoiceVendorId] = useState<string>(balances[0]?.vendorId || '');
   const [newInvoicePdvId, setNewInvoicePdvId] = useState<string>(pdvs[0]?.id || '');
   const [newInvoiceProductId, setNewInvoiceProductId] = useState<string>(products[0]?.id || '');
   const [newInvoiceQtyBoxes, setNewInvoiceQtyBoxes] = useState<number>(10);
   const [newInvoiceWithTva, setNewInvoiceWithTva] = useState<boolean>(false);
   const [isCreatingInvoiceForVendor, setIsCreatingInvoiceForVendor] = useState<boolean>(false);
+
+  const normalizeSaleItemsForEdit = useCallback(
+    (saleObj: any) => {
+      let raw: any[] = [];
+      if (typeof saleObj?.items === 'string') {
+        try {
+          raw = JSON.parse(saleObj.items);
+        } catch {
+          raw = [];
+        }
+      } else if (Array.isArray(saleObj?.items)) {
+        raw = saleObj.items;
+      }
+      if (raw.length > 0) {
+        return raw.map((it: any) => {
+          const qtyBoxes = Math.max(1, Number(it.qtyBoxes ?? it.qty ?? it.quantity ?? 1));
+          const unitPrice = Number(it.unitPrice ?? it.price ?? 18000);
+          return {
+            productId: it.productId || it.product_id,
+            code: it.code || 'BEN-01',
+            name: it.name || 'Produit Baobab',
+            qtyBoxes,
+            unitPrice,
+            total: qtyBoxes * unitPrice,
+          };
+        });
+      }
+      const fallbackProd = products[0];
+      const fallbackPrice = Number(saleObj?.total_amount || fallbackProd?.price_box || 18000);
+      return [
+        {
+          productId: fallbackProd?.id || 'p1',
+          code: fallbackProd?.code || 'BEN-01',
+          name: fallbackProd?.name || 'Produit Baobab',
+          qtyBoxes: 1,
+          unitPrice: fallbackPrice,
+          total: fallbackPrice,
+        },
+      ];
+    },
+    [products]
+  );
 
   const fetchRectifications = useCallback(async () => {
     try {
@@ -375,25 +430,35 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
     fetchRectifications();
   }, [fetchRectifications, sales]);
 
-  // If externalRectificationSaleId is passed (e.g. from PrintableDocument "Demander une rectification" button)
+  const openVendorRectificationModal = useCallback(
+    (saleObj: any) => {
+      if (!saleObj) return;
+      setRectificationModalSale(saleObj);
+      setSelectedProofSaleId(saleObj.id);
+      setRectificationItems(normalizeSaleItemsForEdit(saleObj));
+      setRectificationWithTva(Boolean(saleObj.with_tva));
+      setRectificationReason('');
+    },
+    [normalizeSaleItemsForEdit]
+  );
+
+  // If externalRectificationSaleId is passed (e.g. from PrintableDocument "Rectification" button)
   useEffect(() => {
     if (externalRectificationSaleId) {
-      const foundSale = sales.find((s) => s.id === externalRectificationSaleId);
+      const cleanId = String(externalRectificationSaleId).replace(/^doc-sale-/, '');
+      const foundSale = sales.find(
+        (s) =>
+          s.id === cleanId ||
+          s.number === cleanId ||
+          s.invoice_number === cleanId
+      );
       if (foundSale) {
         setActiveTab('factures');
-        setRectificationModalSale(foundSale);
-        setSelectedProofSaleId(foundSale.id);
-        setRectificationReason('');
+        openVendorRectificationModal(foundSale);
       }
       onClearExternalRectification?.();
     }
-  }, [externalRectificationSaleId, sales, onClearExternalRectification]);
-
-  const openVendorRectificationModal = (saleObj: any) => {
-    setRectificationModalSale(saleObj);
-    setSelectedProofSaleId(saleObj.id);
-    setRectificationReason('');
-  };
+  }, [externalRectificationSaleId, sales, onClearExternalRectification, openVendorRectificationModal]);
 
   const selectedProofSaleObj = useMemo(() => {
     if (!selectedProofSaleId) return rectificationModalSale;
@@ -402,12 +467,48 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
 
   const handleSubmitVendorRectification = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isVendeur || !rectificationModalSale || !rectificationReason.trim()) return;
+    if (!rectificationModalSale || !rectificationReason.trim()) return;
 
     setIsSubmittingRectification(true);
     try {
       const proofSale = selectedProofSaleObj || rectificationModalSale;
-      const thermalDoc = buildMiniThermalReceiptDoc(proofSale);
+      const cleanedItems =
+        rectificationItems.length > 0
+          ? rectificationItems.map((it) => ({
+              productId: it.productId,
+              code: it.code,
+              name: it.name,
+              qtyBoxes: Math.max(1, Number(it.qtyBoxes || 1)),
+              unitPrice: Number(it.unitPrice || 0),
+              total: Math.max(1, Number(it.qtyBoxes || 1)) * Number(it.unitPrice || 0),
+            }))
+          : normalizeSaleItemsForEdit(proofSale);
+      const editedSubtotalHt = cleanedItems.reduce((sum, it) => sum + Number(it.total || 0), 0);
+      const baseThermalDoc = buildMiniThermalReceiptDoc({
+        ...proofSale,
+        items: cleanedItems,
+        total_amount: editedSubtotalHt,
+        with_tva: rectificationWithTva,
+      });
+      const thermalDoc = {
+        ...baseThermalDoc,
+        withTva: rectificationWithTva,
+        subtotalHt: editedSubtotalHt,
+        tvaAmount: rectificationWithTva ? Math.round(editedSubtotalHt * 0.18) : 0,
+        totalTtc:
+          editedSubtotalHt + (rectificationWithTva ? Math.round(editedSubtotalHt * 0.18) : 0),
+        total:
+          editedSubtotalHt + (rectificationWithTva ? Math.round(editedSubtotalHt * 0.18) : 0),
+        items: cleanedItems.map((it) => ({
+          code: it.code,
+          name: it.name,
+          qty: it.qtyBoxes,
+          qtyBoxes: it.qtyBoxes,
+          price: it.unitPrice,
+          unitPrice: it.unitPrice,
+          total: it.total,
+        })),
+      };
 
       const res = await fetch('/api/invoice-rectifications', {
         method: 'POST',
@@ -418,11 +519,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         },
         body: JSON.stringify({
           sale_id: rectificationModalSale.id,
+          proof_sale_id: selectedProofSaleId || rectificationModalSale.id,
           invoice_number:
             rectificationModalSale.invoice_number ||
             String(rectificationModalSale.number || '').replace(/^VTE-/, 'FAC-'),
-          vendor_id: currentUser?.id || rectificationModalSale.vendor_id,
+          vendor_id: rectificationModalSale.vendor_id || currentUser?.id,
           reason: rectificationReason.trim(),
+          requested_items: cleanedItems,
+          requested_with_tva: rectificationWithTva,
           thermal_receipt: thermalDoc,
         }),
       });
@@ -431,7 +535,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       if (res.ok && data.success) {
         setComptaFeedbackBanner({
           type: 'success',
-          text: `Demande de rectification envoyée au Comptable avec votre Mini Facture Thermique (${thermalDoc.thermalTicketNumber}) en pièce jointe comme preuve officielle.`,
+          text: `Demande de rectification enregistrée avec la Mini Facture Thermique (${thermalDoc.thermalTicketNumber}) en preuve officielle.`,
         });
         setRectificationModalSale(null);
         setRectificationReason('');
@@ -473,20 +577,28 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             }))
           : undefined;
 
+      const resolvedWithTva =
+        withTvaOverride !== undefined
+          ? withTvaOverride
+          : proofReceipt.withTva !== undefined
+          ? Boolean(proofReceipt.withTva)
+          : false;
+
       const res = await fetch(`/api/invoice-rectifications/${rect.id}/resolve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-user-role': currentRole,
+          'x-user-id': currentUser?.id || '',
         },
         body: JSON.stringify({
           decision,
-          with_tva: withTvaOverride !== undefined ? withTvaOverride : false,
+          with_tva: resolvedWithTva,
           updated_items: updatedItems,
           comptable_note:
             decision === 'rectifiee'
               ? `Facture rectifiée conformément à la Mini Facture Thermique ${rect.thermal_ticket_number} soumise en preuve.`
-              : 'Demande examinée et clôturée par le Comptable.',
+              : 'Demande examinée et rejetée.',
         }),
       });
 
@@ -496,21 +608,42 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           type: 'success',
           text:
             decision === 'rectifiee'
-              ? `La facture ${rect.invoice_number} de ${rect.vendor_name} a été rectifiée et une notification a été transmise au vendeur.`
-              : `La demande de rectification sur ${rect.invoice_number} a été rejetée et le vendeur a été notifié.`,
+              ? `La facture ${rect.invoice_number} de ${rect.vendor_name} a été rectifiée (${resolvedWithTva ? 'TVA 18 %' : 'Sans TVA'}) et mise à jour.`
+              : `La demande de rectification sur ${rect.invoice_number} a été rejetée.`,
         });
         await fetchRectifications();
         onRefreshData();
+      } else {
+        setComptaFeedbackBanner({
+          type: 'error',
+          text: data.error || 'Erreur lors du traitement de la demande de rectification.',
+        });
       }
+    } catch {
+      setComptaFeedbackBanner({
+        type: 'error',
+        text: 'Erreur réseau lors du traitement de la rectification.',
+      });
     } finally {
       setResolvingRectificationId(null);
     }
   };
 
-  const openInvoiceGenerationModalForSale = (saleObj: any, currentWithTva: boolean) => {
+  const openInvoiceGenerationModalForSale = (
+    saleObj: any,
+    currentWithTva: boolean,
+    overrideItems?: Array<{ productId?: string; code: string; name: string; qtyBoxes: number; unitPrice: number; total: number }>
+  ) => {
     if (!saleObj) return;
     setCreateInvoiceMode('existing_sale');
     setSelectedSaleIdForNewInvoice(saleObj.id);
+    setEditSalePdvId(saleObj.pdv_id || pdvs[0]?.id || '');
+    setEditSalePaymentType(saleObj.payment_type || 'Comptant');
+    setEditSaleItems(
+      overrideItems && overrideItems.length > 0
+        ? overrideItems
+        : normalizeSaleItemsForEdit(saleObj)
+    );
     setNewInvoiceWithTva(Boolean(currentWithTva));
     setShowCreateInvoiceModal(true);
   };
@@ -524,11 +657,67 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         const saleObj = sales.find((s) => s.id === selectedSaleIdForNewInvoice);
         if (!saleObj) return;
         toggleSaleTva(saleObj.id, newInvoiceWithTva);
-        await handleGenerateAndOpenSaleInvoice(saleObj, newInvoiceWithTva);
+
+        const cleanedItems =
+          editSaleItems.length > 0
+            ? editSaleItems.map((it) => ({
+                productId: it.productId,
+                code: it.code,
+                name: it.name,
+                qtyBoxes: Math.max(1, Number(it.qtyBoxes || 1)),
+                unitPrice: Number(it.unitPrice || 0),
+                total: Math.max(1, Number(it.qtyBoxes || 1)) * Number(it.unitPrice || 0),
+              }))
+            : normalizeSaleItemsForEdit(saleObj);
+        const newSubtotalHt = cleanedItems.reduce((sum, it) => sum + Number(it.total || 0), 0);
+        const targetPdv = pdvs.find((p) => p.id === editSalePdvId);
+
+        const res = await fetch(`/api/sales/${saleObj.id}/generate-invoice`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-role': currentRole,
+            'x-user-id': currentUser?.id || '',
+          },
+          body: JSON.stringify({
+            with_tva: newInvoiceWithTva,
+            pdv_id: editSalePdvId || saleObj.pdv_id,
+            payment_type: editSalePaymentType || saleObj.payment_type || 'Comptant',
+            updated_items: cleanedItems,
+            versement_id: saleObj.versement_id || null,
+          }),
+        });
+
+        const updatedSaleForPreview = {
+          ...saleObj,
+          pdv_id: editSalePdvId || saleObj.pdv_id,
+          pdv_name: targetPdv?.name || saleObj.pdv_name,
+          pdv_neighborhood: targetPdv?.neighborhood || saleObj.pdv_neighborhood,
+          pdv_manager: targetPdv?.manager_name || saleObj.pdv_manager,
+          pdv_phone: targetPdv?.phone || saleObj.pdv_phone,
+          payment_type: editSalePaymentType || saleObj.payment_type || 'Comptant',
+          items: cleanedItems,
+          total_amount: newSubtotalHt,
+          with_tva: newInvoiceWithTva ? 1 : 0,
+          invoice_generated: 1,
+        };
+
+        if (res.ok) {
+          await fetchRectifications();
+          onRefreshData();
+        }
+
         setShowCreateInvoiceModal(false);
+        onOpenDocument(
+          buildSaleInvoicePayload(
+            updatedSaleForPreview,
+            newInvoiceWithTva,
+            saleObj.versement_reference
+          )
+        );
         setComptaFeedbackBanner({
           type: 'success',
-          text: `Facture générée/mise à jour avec succès pour le vendeur ${saleObj.vendor_name} (${saleObj.pdv_name}). Le vendeur peut désormais la consulter et l'imprimer dans son compte.`,
+          text: `Facture générée / rectifiée avec succès pour ${saleObj.vendor_name} (${updatedSaleForPreview.pdv_name}).`,
         });
       } else {
         const prod = products.find((p) => p.id === newInvoiceProductId) || products[0];
@@ -539,6 +728,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           headers: {
             'Content-Type': 'application/json',
             'x-user-role': currentRole,
+            'x-user-id': currentUser?.id || '',
           },
           body: JSON.stringify({
             vendor_id: newInvoiceVendorId,
@@ -563,7 +753,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           onRefreshData();
           setComptaFeedbackBanner({
             type: 'success',
-            text: `Facture ${data.invoice_number} créée pour le vendeur ! Elle est immédiatement visible et imprimable (en lecture seule) dans le compte du vendeur.`,
+            text: `Facture ${data.invoice_number} créée pour le vendeur ! Elle est immédiatement visible et imprimable dans le compte du vendeur.`,
           });
         }
       }
@@ -647,10 +837,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       invoicePayload: {
         id: v.id,
         number: v.reference,
-        type: 'recu' as const,
+        type: 'recu_versement' as const,
+        docTypeTitle: 'REÇU DE VERSEMENT',
         date: v.date,
-        clientName: `${v.vendor_name} (${v.vendor_code}) — ${v.vendor_team || 'Équipe Commerciale'}`,
+        clientName: `${v.vendor_name} (${v.vendor_code})`,
         clientPhone: currentUser?.phone || '+223 75 44 22 11',
+        vendorName: v.vendor_name,
+        vendorCode: v.vendor_code,
+        vendorTeam: '',
         items: [
           {
             code: v.reference,
@@ -663,6 +857,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         total: Number(v.amount || 0),
         paymentMethod: v.payment_mode || 'Espèces',
         cashierName: 'Service Comptabilité & Caisse Baobab',
+        isAcquittee: true,
         status: 'Validé en Caisse',
       } as InvoiceData,
     }));
@@ -766,7 +961,6 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         columns: [
           'Code Vendeur',
           'Nom & Contact',
-          'Equipe',
           'Ventes Realisees',
           'Versements Valides',
           'Solde Restant Du',
@@ -775,7 +969,6 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         rows: visibleBalances.map((b) => [
           b.code,
           `${b.name} (${b.phone})`,
-          b.team || 'Equipe Standard',
           formatFcfaPdf(b.totalSales),
           formatFcfaPdf(b.totalVersements),
           formatFcfaPdf(b.balanceDue),
@@ -796,11 +989,11 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           { label: 'Nombre de versements', value: `${visibleVersements.length}` },
           { label: 'Total encaisse', value: formatFcfaPdf(sumVers) },
         ],
-        columns: ['Ref. Versement', 'Date', 'Vendeur & Equipe', 'Mode de Reglement', 'Notes / Motif', 'Montant (FCFA)'],
+        columns: ['Ref. Versement', 'Date', 'Vendeur', 'Mode de Reglement', 'Notes / Motif', 'Montant (FCFA)'],
         rows: visibleVersements.map((v) => [
           v.reference || v.id,
           v.date || '',
-          `${v.vendor_name || ''} (${v.vendor_code || ''}) - ${v.vendor_team || ''}`,
+          `${v.vendor_name || ''} (${v.vendor_code || ''})`,
           v.payment_mode || 'Especes',
           v.notes || 'Versement de caisse des ventes PDV',
           formatFcfaPdf(v.amount),
@@ -860,7 +1053,6 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           'Code Vendeur',
           'Nom Vendeur',
           'Telephone',
-          'Equipe',
           'Ventes Realisees (FCFA)',
           'Versements Valides (FCFA)',
           'Solde Restant Du (FCFA)',
@@ -870,7 +1062,6 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           b.code,
           b.name,
           b.phone || '',
-          b.team || 'Equipe Standard',
           Number(b.totalSales || 0),
           Number(b.totalVersements || 0),
           Number(b.balanceDue || 0),
@@ -888,7 +1079,6 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           'Date',
           'Nom Vendeur',
           'Code Vendeur',
-          'Equipe',
           'Mode de Reglement',
           'Motif / Notes',
           'Statut Validation',
@@ -899,7 +1089,6 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           v.date || '',
           v.vendor_name || '',
           v.vendor_code || '',
-          v.vendor_team || 'Equipe Commerciale',
           v.payment_mode || 'Especes',
           v.notes || 'Versement de caisse des ventes PDV',
           v.status === 'en_attente' ? 'En attente' : 'Valide en Caisse',
@@ -1257,136 +1446,122 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             )}
           </div>
 
-          {/* Soldes Vendeurs — Composant partagé DataTable (7 colonnes => 1re colonne collante) */}
-          <DataTable<VendorBalance>
+          {/* Soldes Vendeurs — Composant partagé Liste de cartes */}
+          <CardList<VendorBalance>
             data={visibleBalances}
-            getRowKey={(b) => b.vendorId}
+            rowKey={(b) => b.vendorId}
+            pageSize={20}
+            searchable={true}
+            searchPlaceholder="Rechercher un vendeur par nom, code, équipe, téléphone…"
+            sortOptions={[
+              { key: 'balanceDue', label: 'Solde restant dû', getValue: (b) => Number(b.balanceDue || 0) },
+              { key: 'totalSales', label: 'Ventes réalisées', getValue: (b) => Number(b.totalSales || 0) },
+              { key: 'totalVersements', label: 'Versements validés', getValue: (b) => Number(b.totalVersements || 0) },
+              { key: 'name', label: 'Nom du vendeur', getValue: (b) => b.name || '' },
+              { key: 'code', label: 'Code vendeur', getValue: (b) => b.code || '' },
+            ]}
+            defaultSortKey="balanceDue"
+            defaultSortDirection="desc"
             emptyMessage="Aucun vendeur trouvé."
-            mobileTitle={(b) => `${b.name} (${b.code})`}
-            mobileSubtitle={(b) => `${b.team || 'Équipe Standard'} • ${b.phone}`}
-            mobileStatusBadge={(b) => (
-              <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                  b.balanceDue > 0
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                }`}
-              >
-                {b.balanceDue > 0 ? 'Solde dû' : 'À jour'}
-              </span>
+            title={(b) => (
+              <div className="flex items-start justify-between gap-3 w-full min-w-0">
+                <span className="font-mono font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere] min-w-0">
+                  {b.name} ({b.code})
+                </span>
+                <span className="font-mono text-xs font-bold text-[#008DA9] dark:text-teal-400 whitespace-nowrap shrink-0">
+                  {b.code}
+                </span>
+              </div>
             )}
-            columns={[
+            badges={(b) => (
+              <>
+                <span
+                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-black ${
+                    b.balanceDue > 0
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                  }`}
+                >
+                  {b.balanceDue > 0 ? 'Solde dû' : 'À jour'}
+                </span>
+              </>
+            )}
+            fields={[
               {
                 key: 'code',
-                label: 'Code Vendeur',
-                hideOnMobileCard: true,
-                render: (b) => (
+                label: 'Code vendeur',
+                value: (b) => (
                   <span className="font-mono font-bold text-teal-600 dark:text-teal-400">
                     {b.code}
                   </span>
                 ),
-                footer: <span className="uppercase text-[11px]">Totaux</span>,
               },
               {
                 key: 'name',
-                label: 'Nom & Contact',
-                hideOnMobileCard: true,
-                render: (b) => (
-                  <div>
-                    <div className="font-semibold text-slate-900 dark:text-white">{b.name}</div>
-                    <div className="text-[10px] text-slate-400">{b.phone}</div>
-                  </div>
-                ),
+                label: 'Nom du vendeur',
+                value: (b) => b.name,
               },
               {
-                key: 'team',
-                label: 'Équipe',
-                isSecondary: true,
-                hideOnMobileCard: true,
-                render: (b) => (
-                  <span className="text-slate-600 dark:text-slate-300 font-medium">
-                    {b.team || 'Équipe Standard'}
-                  </span>
-                ),
+                key: 'phone',
+                label: 'Téléphone',
+                value: (b) => b.phone || '—',
               },
               {
                 key: 'sales',
-                label: 'Ventes Réalisées',
-                align: 'right',
-                isNumeric: true,
-                render: (b) => (
-                  <span className="font-extrabold text-slate-800 dark:text-slate-200">
+                label: 'Ventes réalisées',
+                isAmount: true,
+                value: (b) => (
+                  <span className="font-mono font-extrabold text-slate-800 dark:text-slate-200 whitespace-nowrap">
                     {b.totalSales.toLocaleString('fr-FR')} FCFA
-                  </span>
-                ),
-                footer: (
-                  <span>
-                    {visibleBalances
-                      .reduce((acc, b) => acc + Number(b.totalSales || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
                   </span>
                 ),
               },
               {
                 key: 'versements',
-                label: 'Versements Validés',
-                align: 'right',
-                isNumeric: true,
-                render: (b) => (
-                  <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                label: 'Versements validés',
+                isAmount: true,
+                value: (b) => (
+                  <span className="font-mono font-extrabold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                     {b.totalVersements.toLocaleString('fr-FR')} FCFA
-                  </span>
-                ),
-                footer: (
-                  <span className="text-emerald-600 dark:text-emerald-400">
-                    {visibleBalances
-                      .reduce((acc, b) => acc + Number(b.totalVersements || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
                   </span>
                 ),
               },
               {
                 key: 'balanceDue',
-                label: 'Solde Restant Dû',
-                align: 'right',
-                isNumeric: true,
-                render: (b) => (
-                  <span className="font-black text-amber-600 dark:text-amber-400 text-sm">
+                label: 'Solde restant dû',
+                isAmount: true,
+                value: (b) => (
+                  <span className="font-mono font-black text-amber-600 dark:text-amber-400 text-sm whitespace-nowrap">
                     {b.balanceDue.toLocaleString('fr-FR')} FCFA
-                  </span>
-                ),
-                footer: (
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {visibleBalances
-                      .reduce((acc, b) => acc + Number(b.balanceDue || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
                   </span>
                 ),
               },
               {
                 key: 'stockVan',
-                label: 'Stock Camionnette (3-7j)',
-                align: 'right',
-                isNumeric: true,
-                isSecondary: true,
-                render: (b) => (
-                  <span className="text-slate-500 font-medium">
+                label: 'Stock camionnette (3-7j)',
+                isAmount: true,
+                value: (b) => (
+                  <span className="font-mono text-slate-600 dark:text-slate-400 font-medium whitespace-nowrap">
                     {b.stockVanValue.toLocaleString('fr-FR')} FCFA
-                  </span>
-                ),
-                footer: (
-                  <span>
-                    {visibleBalances
-                      .reduce((acc, b) => acc + Number(b.stockVanValue || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
                   </span>
                 ),
               },
             ]}
+            renderActions={(b) =>
+              isComptable ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedVendorId(b.vendorId);
+                    setShowVersementModal(true);
+                  }}
+                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                >
+                  <PlusCircle className="w-4 h-4 shrink-0" />
+                  <span>Encaisser un versement</span>
+                </button>
+              ) : null
+            }
             totalsFooter={
               <>
                 <span>
@@ -1397,7 +1572,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 </span>
                 <span>
                   Total Ventes :{' '}
-                  <strong className="text-slate-900 dark:text-white">
+                  <strong className="font-mono text-slate-900 dark:text-white baobab-amount">
                     {visibleBalances
                       .reduce((acc, b) => acc + Number(b.totalSales || 0), 0)
                       .toLocaleString('fr-FR')}{' '}
@@ -1406,7 +1581,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 </span>
                 <span>
                   Total Versements :{' '}
-                  <strong className="text-emerald-600 dark:text-emerald-400">
+                  <strong className="font-mono text-emerald-600 dark:text-emerald-400 baobab-amount">
                     {visibleBalances
                       .reduce((acc, b) => acc + Number(b.totalVersements || 0), 0)
                       .toLocaleString('fr-FR')}{' '}
@@ -1415,7 +1590,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 </span>
                 <span>
                   Total Solde Dû :{' '}
-                  <strong className="text-amber-600 dark:text-amber-400">
+                  <strong className="font-mono text-amber-600 dark:text-amber-400 baobab-amount">
                     {visibleBalances
                       .reduce((acc, b) => acc + Number(b.balanceDue || 0), 0)
                       .toLocaleString('fr-FR')}{' '}
@@ -1476,97 +1651,71 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
           )}
 
-          {/* Journal des Versements — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Journal des Versements — Composant partagé Liste de cartes */}
+          <CardList<any>
             data={visibleVersements}
-            getRowKey={(v) => v.id}
+            rowKey={(v) => v.id}
+            pageSize={20}
+            searchable={true}
+            searchPlaceholder="Rechercher par référence, vendeur, code, mode de règlement, motif…"
+            sortOptions={[
+              { key: 'date', label: 'Date de versement', getValue: (v) => v.date || '' },
+              { key: 'amount', label: 'Montant encaissé', getValue: (v) => Number(v.amount || 0) },
+              { key: 'reference', label: 'Référence', getValue: (v) => v.reference || '' },
+              { key: 'vendor_name', label: 'Vendeur', getValue: (v) => v.vendor_name || '' },
+            ]}
+            defaultSortKey="date"
+            defaultSortDirection="desc"
             emptyMessage="Aucun versement de caisse enregistré pour ce compte."
-            mobileTitle={(v) => v.reference}
-            mobileSubtitle={(v) => `${v.date} • ${v.vendor_name} (${v.vendor_code})`}
-            mobileStatusBadge={() => (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                <CheckCircle2 className="w-2.5 h-2.5" /> Validé
-              </span>
+            title={(v) => (
+              <div className="flex items-start justify-between gap-3 w-full min-w-0">
+                <span className="font-mono font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere] min-w-0">
+                  {v.reference}
+                </span>
+                <span className="font-sans text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
+                  {v.date}
+                </span>
+              </div>
             )}
-            columns={[
-              {
-                key: 'ref',
-                label: 'Réf. & Date',
-                hideOnMobileCard: true,
-                render: (v) => (
-                  <div>
-                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                      {v.reference}
-                    </div>
-                    <div className="text-[11px] text-slate-400">{v.date}</div>
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Total encaissé</span>,
-              },
+            badges={(v) => (
+              <>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span>Validé en Caisse</span>
+                </span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {v.payment_mode || 'Espèces'}
+                </span>
+              </>
+            )}
+            fields={[
               {
                 key: 'vendor',
-                label: 'Vendeur & Équipe',
-                render: (v) => (
-                  <div>
-                    <div className="font-semibold text-slate-800 dark:text-slate-200 leading-snug">
-                      {v.vendor_name}{' '}
-                      <span className="font-mono text-[11px] text-slate-500">
-                        ({v.vendor_code})
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-teal-600 dark:text-teal-400">
-                      {v.vendor_team}
-                    </div>
-                  </div>
+                label: 'Vendeur',
+                value: (v) => (
+                  <span>
+                    {v.vendor_name}{' '}
+                    <span className="font-mono text-xs text-slate-500">({v.vendor_code})</span>
+                  </span>
                 ),
               },
               {
                 key: 'payment_mode',
-                label: 'Mode de Règlement',
-                render: (v) => (
-                  <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-semibold text-[11px] text-slate-700 dark:text-slate-300">
-                    {v.payment_mode}
-                  </span>
-                ),
+                label: 'Mode de règlement',
+                value: (v) => v.payment_mode || 'Espèces',
               },
               {
                 key: 'notes',
                 label: 'Motif / Quittance',
-                isSecondary: true,
-                render: (v) => (
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {v.notes || 'Versement de caisse'}
-                  </span>
-                ),
+                value: (v) => v.notes || 'Versement de caisse',
               },
               {
                 key: 'amount',
-                label: 'Montant Encaissé',
-                align: 'right',
-                isNumeric: true,
-                render: (v) => (
-                  <span className="font-black text-emerald-600 dark:text-emerald-400">
+                label: 'Montant encaissé',
+                isAmount: true,
+                value: (v) => (
+                  <span className="font-mono font-black text-emerald-600 dark:text-emerald-400 text-sm whitespace-nowrap">
                     {Number(v.amount || 0).toLocaleString('fr-FR')} FCFA
-                  </span>
-                ),
-                footer: (
-                  <span className="text-emerald-600 dark:text-emerald-400">
-                    {visibleVersements
-                      .reduce((acc, v) => acc + Number(v.amount || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
-                  </span>
-                ),
-              },
-              {
-                key: 'status',
-                label: 'Validation',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: () => (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                    <CheckCircle2 className="w-3 h-3 shrink-0" />
-                    <span>Validé en Caisse</span>
                   </span>
                 ),
               },
@@ -1580,9 +1729,9 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setSelectedVersementForInvoicing(v)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-[11px] shadow-xs transition cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition cursor-pointer"
                   >
-                    <FileText className="w-3.5 h-3.5 shrink-0" />
+                    <FileText className="w-4 h-4 shrink-0" />
                     <span>
                       {isComptable
                         ? `Factures PDV (${vendorSalesForVersement.length})`
@@ -1595,10 +1744,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       onOpenDocument({
                         id: v.id,
                         number: v.reference,
-                        type: 'recu',
+                        type: 'recu_versement',
+                        docTypeTitle: 'REÇU DE VERSEMENT',
                         date: v.date,
-                        clientName: `${v.vendor_name} (${v.vendor_code}) — ${v.vendor_team || 'Équipe Commerciale'}`,
+                        clientName: `${v.vendor_name} (${v.vendor_code})`,
                         clientPhone: currentUser?.phone || '+223 75 44 22 11',
+                        vendorName: v.vendor_name,
+                        vendorCode: v.vendor_code,
+                        vendorTeam: '',
                         items: [
                           {
                             code: v.reference,
@@ -1613,13 +1766,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                         total: Number(v.amount || 0),
                         paymentMethod: v.payment_mode || 'Espèces',
                         cashierName: 'Service Comptabilité & Caisse Baobab',
+                        isAcquittee: true,
                         status: 'Validé en Caisse',
                       })
                     }
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-xs cursor-pointer"
                   >
-                    <Printer className="w-3.5 h-3.5 shrink-0" />
-                    <span>Reçu</span>
+                    <Printer className="w-4 h-4 shrink-0" />
+                    <span>Imprimer le reçu</span>
                   </button>
                 </>
               );
@@ -1634,7 +1788,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 </span>
                 <span>
                   Total encaissé :{' '}
-                  <strong className="text-emerald-600 dark:text-emerald-400">
+                  <strong className="font-mono text-emerald-600 dark:text-emerald-400 baobab-amount">
                     {visibleVersements
                       .reduce((acc, v) => acc + Number(v.amount || 0), 0)
                       .toLocaleString('fr-FR')}{' '}
@@ -1681,20 +1835,22 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 type="button"
                 onClick={() => {
                   const uninvoiced = sales.find((s) => !s.invoice_generated) || sales[0];
-                  setCreateInvoiceMode('existing_sale');
-                  setSelectedSaleIdForNewInvoice(uninvoiced?.id || '');
-                  setNewInvoiceWithTva(uninvoiced ? isTvaEnabledForSale(uninvoiced) : false);
-                  setShowCreateInvoiceModal(true);
+                  if (uninvoiced) {
+                    openInvoiceGenerationModalForSale(uninvoiced, isTvaEnabledForSale(uninvoiced));
+                  } else {
+                    setCreateInvoiceMode('new_invoice');
+                    setShowCreateInvoiceModal(true);
+                  }
                 }}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-5 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm shadow-xs shrink-0 whitespace-nowrap cursor-pointer transition"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[48px] h-auto py-3 px-5 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm shadow-xs shrink-0 cursor-pointer transition"
               >
                 <PlusCircle className="w-4 h-4 shrink-0" />
-                <span className="whitespace-nowrap">Générer la facture</span>
+                <span>Générer la facture</span>
               </button>
             ) : (
               <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/30 font-bold text-[11px] shrink-0 flex items-center gap-1.5">
                 <Lock className="w-3.5 h-3.5 shrink-0" />
-                <span className="whitespace-nowrap">Lecture seule • Non modifiable</span>
+                <span>Lecture seule • Non modifiable</span>
               </span>
             )}
           </div>
@@ -1786,31 +1942,70 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                               }
                             }
                           }}
-                          className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                          className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs transition cursor-pointer"
                         >
                           <Receipt className="w-4 h-4 shrink-0" />
-                          <span className="whitespace-nowrap">Voir Mini Facture Thermique (Preuve)</span>
+                          <span>Voir Mini Facture Thermique (Preuve)</span>
                         </button>
 
                         {isComptable && isPending && (
                           <>
                             <button
                               type="button"
+                              onClick={() => {
+                                const saleForRect = sales.find((s) => s.id === rect.sale_id);
+                                if (saleForRect) {
+                                  const proofItems = Array.isArray(rect.thermal_receipt?.items)
+                                    ? rect.thermal_receipt.items.map((it: any) => ({
+                                        code: it.code || 'BEN-01',
+                                        name: it.name || 'Produit Baobab',
+                                        qtyBoxes: Math.max(1, Number(it.qty ?? it.qtyBoxes ?? 1)),
+                                        unitPrice: Number(it.price ?? it.unitPrice ?? 18000),
+                                        total:
+                                          Math.max(1, Number(it.qty ?? it.qtyBoxes ?? 1)) *
+                                          Number(it.price ?? it.unitPrice ?? 18000),
+                                      }))
+                                    : undefined;
+                                  openInvoiceGenerationModalForSale(
+                                    saleForRect,
+                                    rect.thermal_receipt?.withTva !== undefined
+                                      ? Boolean(rect.thermal_receipt.withTva)
+                                      : Boolean(saleForRect.with_tva),
+                                    proofItems
+                                  );
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                            >
+                              <Pencil className="w-4 h-4 shrink-0 text-[var(--marque-fonce)]" />
+                              <span>Modifier &amp; Rectifier</span>
+                            </button>
+                            <button
+                              type="button"
                               disabled={resolvingRectificationId === rect.id}
                               onClick={() => handleComptableResolveRectification(rect, 'rectifiee', false)}
-                              className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                              className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-4 h-4 shrink-0" />
-                              <span className="whitespace-nowrap">Rectifier Facture (HT)</span>
+                              <span>Rectifier (Sans TVA)</span>
                             </button>
                             <button
                               type="button"
                               disabled={resolvingRectificationId === rect.id}
                               onClick={() => handleComptableResolveRectification(rect, 'rectifiee', true)}
-                              className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                              className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-3.5 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
                             >
                               <Percent className="w-4 h-4 shrink-0" />
-                              <span className="whitespace-nowrap">Rectifier (+ TVA 18 %)</span>
+                              <span>Rectifier (+ TVA 18 %)</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={resolvingRectificationId === rect.id}
+                              onClick={() => handleComptableResolveRectification(rect, 'rejetee')}
+                              className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
+                            >
+                              <X className="w-4 h-4 shrink-0" />
+                              <span>Rejeter</span>
                             </button>
                           </>
                         )}
@@ -1822,7 +2017,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
           )}
 
-          {/* Description + Onglets sur une seule ligne défilable horizontalement (compteurs en nombre seul) */}
+          {/* Description + Onglets (compteurs en nombre seul) */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             {isVendeur && currentUser ? (
               <div className="text-xs text-slate-600 dark:text-slate-300">
@@ -1837,20 +2032,20 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             <div
               role="tablist"
               aria-label="Filtres Factures et Reçus"
-              className="flex items-center gap-2 flex-nowrap overflow-x-auto max-w-full pb-1"
+              className="flex items-center gap-2 flex-wrap max-w-full pb-1"
             >
               <button
                 type="button"
                 role="tab"
                 aria-selected={docTypeFilter === 'all'}
                 onClick={() => setDocTypeFilter('all')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                className={`min-h-[48px] h-auto px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   docTypeFilter === 'all'
                     ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <span className="whitespace-nowrap">Tous ({printableDocuments.length})</span>
+                <span>Tous ({printableDocuments.length})</span>
               </button>
 
               <button
@@ -1858,14 +2053,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 role="tab"
                 aria-selected={docTypeFilter === 'facture'}
                 onClick={() => setDocTypeFilter('facture')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                className={`min-h-[48px] h-auto px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   docTypeFilter === 'facture'
                     ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
                 }`}
               >
                 <FileText className="w-3.5 h-3.5 shrink-0" />
-                <span className="whitespace-nowrap">
+                <span>
                   Factures par Vente PDV ({invoicedOrEditableSales.length})
                 </span>
               </button>
@@ -1875,569 +2070,320 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 role="tab"
                 aria-selected={docTypeFilter === 'recu'}
                 onClick={() => setDocTypeFilter('recu')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                className={`min-h-[48px] h-auto px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   docTypeFilter === 'recu'
                     ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
                 }`}
               >
                 <Receipt className="w-3.5 h-3.5 shrink-0" />
-                <span className="whitespace-nowrap">
+                <span>
                   Reçus Versements ({visibleVersements.length})
                 </span>
               </button>
             </div>
           </div>
 
-          {filteredPrintableDocs.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center text-sm text-slate-500 dark:text-slate-400">
-              Aucune facture ni reçu à afficher pour ce filtre.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* 1. TABLETTE PORTRAIT ET MOBILE (< 1024 px) : Cartes empilées pleine largeur */}
-              <div className="lg:hidden space-y-3.5">
-                {paginatedPrintableDocs.map((doc) => {
-                  const isFacture = doc.docKind === 'facture';
-                  const isPaid =
-                    !isFacture ||
-                    doc.invoiceGenerated ||
-                    String(doc.paymentMode || '').toLowerCase().includes('comptant');
-
-                  return (
-                    <article
-                      key={doc.id}
-                      className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-xs space-y-3"
-                    >
-                      {/* Ligne 1 : numéro de facture (sur UNE ligne, police des codes, taille réduite si besoin, jamais coupé) à gauche, date à droite */}
-                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
-                        <span className="font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap text-[clamp(11px,3.2vw,14px)] leading-tight">
-                          {doc.number}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
-                          {doc.date}
-                          {doc.saleTime ? ` • ${doc.saleTime}` : ''}
-                        </span>
-                      </div>
-
-                      {/* Ligne 2 : vendeur (nom et code) puis PDV acheteur et gérant */}
-                      <div className="space-y-1 text-xs">
-                        <div className="font-bold text-slate-900 dark:text-white">
-                          Vendeur : {doc.vendorLabel}
-                        </div>
-                        <div className="text-slate-700 dark:text-slate-300">
-                          <span className="font-semibold">
-                            {isFacture ? 'PDV acheteur :' : 'Contrepartie :'} {doc.counterparty}
-                          </span>
-                          {doc.pdvManager ? ` • Gérant : ${doc.pdvManager}` : ''}
-                        </div>
-                        {doc.saleNumber && (
-                          <div className="font-mono text-[11px] text-[#008DA9]">
-                            Vente : {doc.saleNumber}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Ligne 3 : badge de régime TVA ("Sans TVA" gris, "TVA 18 %" marron texte blanc) et montants : "HT", "TVA", "Total" chacun sur sa ligne, montant à droite en nowrap, Total en gras */}
-                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                            Régime TVA
-                          </span>
-                          {isFacture ? (
-                            doc.withTva ? (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white whitespace-nowrap">
-                                TVA 18 %
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200 whitespace-nowrap">
-                                Sans TVA
-                              </span>
-                            )
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200 whitespace-nowrap">
-                              Sans TVA
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="space-y-1 pt-1 border-t border-slate-200/70 dark:border-slate-700/70 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-slate-600 dark:text-slate-400">HT</span>
-                            <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                              {Number(doc.subtotalHt || 0).toLocaleString('fr-FR')} FCFA
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-slate-600 dark:text-slate-400">TVA</span>
-                            <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                              {Number(doc.tvaAmount || 0).toLocaleString('fr-FR')} FCFA
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-700/70 text-sm">
-                            <span className="font-bold text-slate-900 dark:text-white">Total</span>
-                            <span className="font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
-                              {Number(doc.amount || 0).toLocaleString('fr-FR')} FCFA
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Ligne 4 : statut (Créée, Payée…) en badge */}
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                          Statut
-                        </span>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {isFacture ? (
-                            <>
-                              <span
-                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${
-                                  doc.invoiceGenerated
-                                    ? 'bg-[#15803D] text-white'
-                                    : 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
-                                }`}
-                              >
-                                {doc.invoiceGenerated ? 'Créée' : 'À générer'}
-                              </span>
-                              {isPaid && (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 whitespace-nowrap">
-                                  Payée
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#15803D] text-white whitespace-nowrap">
-                              Payée • Reçu Caisse
-                            </span>
-                          )}
-
-                          {doc.rectificationStatus === 'en_attente' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white whitespace-nowrap">
-                              <AlertTriangle className="w-3 h-3 shrink-0" />
-                              <span>Rectification demandée</span>
-                            </span>
-                          )}
-                          {doc.rectificationStatus === 'rectifiee' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#15803D] text-white whitespace-nowrap">
-                              <CheckCircle2 className="w-3 h-3 shrink-0" />
-                              <span>Rectifiée</span>
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Dernière ligne : boutons d'action côte à côte, libellé complet sur une seule ligne et icône, 48 px de haut, flex-wrap */}
-                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                        {isFacture && doc.rawSale ? (
-                          isComptable ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openInvoiceGenerationModalForSale(doc.rawSale, doc.withTva)
-                                }
-                                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs transition cursor-pointer whitespace-nowrap"
-                              >
-                                <Pencil className="w-4 h-4 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-                                <span className="whitespace-nowrap">Modifier</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={generatingSaleId === doc.rawSale.id}
-                                onClick={() =>
-                                  handleGenerateAndOpenSaleInvoice(doc.rawSale, doc.withTva)
-                                }
-                                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                              >
-                                <Printer className="w-4 h-4 shrink-0" />
-                                <span className="whitespace-nowrap">Imprimer</span>
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              {isVendeur && (
-                                <button
-                                  type="button"
-                                  onClick={() => openVendorRectificationModal(doc.rawSale)}
-                                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                                >
-                                  <Pencil className="w-4 h-4 shrink-0" />
-                                  <span className="whitespace-nowrap">Modifier</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => onOpenDocument(doc.invoicePayload)}
-                                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                              >
-                                <Printer className="w-4 h-4 shrink-0" />
-                                <span className="whitespace-nowrap">Imprimer</span>
-                              </button>
-                            </>
-                          )
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => onOpenDocument(doc.invoicePayload)}
-                            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                          >
-                            <Printer className="w-4 h-4 shrink-0" />
-                            <span className="whitespace-nowrap">Imprimer le reçu</span>
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
+          {/* Factures & Reçus Imprimables — Composant partagé Liste de cartes */}
+          <CardList<any>
+            data={filteredPrintableDocs}
+            rowKey={(doc) => doc.id}
+            pageSize={20}
+            searchable={true}
+            searchPlaceholder="Rechercher par N° facture/reçu, N° vente, vendeur, PDV acheteur, gérant…"
+            sortOptions={[
+              {
+                key: 'date',
+                label: 'Date du document',
+                getValue: (doc) => `${doc.date || ''} ${doc.saleTime || ''}`,
+              },
+              {
+                key: 'amount',
+                label: 'Montant Total',
+                getValue: (doc) => Number(doc.amount || 0),
+              },
+              {
+                key: 'number',
+                label: 'N° de document',
+                getValue: (doc) => doc.number || '',
+              },
+            ]}
+            defaultSortKey="date"
+            defaultSortDirection="desc"
+            emptyMessage="Aucune facture ni reçu à afficher pour ce filtre."
+            title={(doc) => (
+              <div className="flex items-start justify-between gap-3 w-full min-w-0">
+                <span className="font-mono font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere] min-w-0">
+                  {doc.number}
+                </span>
+                <span className="font-sans text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
+                  {doc.date}
+                  {doc.saleTime ? ` • ${doc.saleTime}` : ''}
+                </span>
               </div>
-
-              {/* 2. TABLETTE EN PAYSAGE ET PC (>= 1024 px) : Tableau normal dans un conteneur à overflow-x auto */}
-              <div className="hidden lg:block w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
-                <div className="w-full max-w-full overflow-x-auto max-h-[70vh] overflow-y-auto">
-                  <table className="w-full min-w-[900px] border-collapse text-left text-xs">
-                    <thead className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
-                      <tr>
-                        <th className="py-3.5 px-4 font-bold whitespace-nowrap min-w-[185px]">
-                          N° Facture &amp; Date
-                        </th>
-                        <th className="py-3.5 px-4 font-bold whitespace-nowrap min-w-[240px]">
-                          Vendeur &amp; PDV Acheteur
-                        </th>
-                        <th
-                          className="py-3.5 px-4 font-bold text-center whitespace-nowrap min-w-[140px]"
-                          style={{ minWidth: '140px' }}
-                        >
-                          Régime TVA
-                        </th>
-                        <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap min-w-[195px]">
-                          Montants (HT / TVA / Total)
-                        </th>
-                        <th
-                          className="py-3.5 px-4 font-bold text-right whitespace-nowrap min-w-[220px]"
-                          style={{ minWidth: '220px' }}
-                        >
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {paginatedPrintableDocs.map((doc) => {
-                        const isFacture = doc.docKind === 'facture';
-                        const isPaid =
-                          !isFacture ||
-                          doc.invoiceGenerated ||
-                          String(doc.paymentMode || '').toLowerCase().includes('comptant');
-
-                        return (
-                          <tr
-                            key={doc.id}
-                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                          >
-                            {/* Col 1 : N° Facture nowrap + Date + Statut */}
-                            <td className="py-3.5 px-4 align-middle min-w-[185px]">
-                              <div className="font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
-                                {doc.number}
-                              </div>
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap mt-0.5">
-                                {doc.date}
-                                {doc.saleTime ? ` à ${doc.saleTime}` : ''}
-                              </div>
-                              {doc.saleNumber && (
-                                <div className="font-mono text-[10px] text-[#008DA9] whitespace-nowrap">
-                                  Vente : {doc.saleNumber}
-                                </div>
-                              )}
-                              <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                                {isFacture ? (
-                                  <>
-                                    <span
-                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${
-                                        doc.invoiceGenerated
-                                          ? 'bg-[#15803D] text-white'
-                                          : 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
-                                      }`}
-                                    >
-                                      {doc.invoiceGenerated ? 'Créée' : 'À générer'}
-                                    </span>
-                                    {isPaid && (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 whitespace-nowrap">
-                                        Payée
-                                      </span>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#15803D] text-white whitespace-nowrap">
-                                    Payée • Reçu Caisse
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-
-                            {/* Col 2 : Vendeur & PDV Acheteur */}
-                            <td className="py-3.5 px-4 align-middle min-w-[240px]">
-                              <div className="font-bold text-slate-900 dark:text-white">
-                                {doc.vendorLabel}
-                              </div>
-                              <div className="font-semibold text-xs text-slate-700 dark:text-slate-300 mt-0.5">
-                                {doc.counterparty}
-                              </div>
-                              {doc.pdvManager && (
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                                  {doc.pdvCode ? `${doc.pdvCode} • ` : ''}Gérant : {doc.pdvManager}
-                                </div>
-                              )}
-                            </td>
-
-                            {/* Col 3 : Régime TVA (140 px minimum) */}
-                            <td
-                              className="py-3.5 px-4 align-middle text-center min-w-[140px]"
-                              style={{ minWidth: '140px' }}
-                            >
-                              {isFacture && doc.withTva ? (
-                                <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold bg-[#92400E] text-white whitespace-nowrap">
-                                  TVA 18 %
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200 whitespace-nowrap">
-                                  Sans TVA
-                                </span>
-                              )}
-                            </td>
-
-                            {/* Col 4 : Montants HT / TVA / Total (chacun sur sa ligne, montant à droite en nowrap, Total en gras) */}
-                            <td className="py-3.5 px-4 align-middle min-w-[195px]">
-                              <div className="space-y-1 max-w-[210px] ml-auto">
-                                <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-400">
-                                  <span className="whitespace-nowrap">HT</span>
-                                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                                    {Number(doc.subtotalHt || 0).toLocaleString('fr-FR')} FCFA
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-400">
-                                  <span className="whitespace-nowrap">TVA</span>
-                                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                                    {Number(doc.tvaAmount || 0).toLocaleString('fr-FR')} FCFA
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 text-xs font-bold text-slate-900 dark:text-white pt-0.5 border-t border-slate-100 dark:border-slate-800">
-                                  <span className="whitespace-nowrap">Total</span>
-                                  <span className="font-mono font-bold whitespace-nowrap">
-                                    {Number(doc.amount || 0).toLocaleString('fr-FR')} FCFA
-                                  </span>
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Col 5 : Actions (min-w 220px, boutons sur une ligne) */}
-                            <td
-                              className="py-3.5 px-4 align-middle text-right min-w-[220px]"
-                              style={{ minWidth: '220px' }}
-                            >
-                              <div className="flex items-center justify-end gap-2 flex-nowrap whitespace-nowrap">
-                                {isFacture && doc.rawSale ? (
-                                  isComptable ? (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          openInvoiceGenerationModalForSale(
-                                            doc.rawSale,
-                                            doc.withTva
-                                          )
-                                        }
-                                        className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs transition cursor-pointer whitespace-nowrap shrink-0"
-                                      >
-                                        <Pencil className="w-3.5 h-3.5 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-                                        <span className="whitespace-nowrap">Modifier</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={generatingSaleId === doc.rawSale.id}
-                                        onClick={() =>
-                                          handleGenerateAndOpenSaleInvoice(
-                                            doc.rawSale,
-                                            doc.withTva
-                                          )
-                                        }
-                                        className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
-                                      >
-                                        <Printer className="w-3.5 h-3.5 shrink-0" />
-                                        <span className="whitespace-nowrap">Imprimer</span>
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      {isVendeur && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            openVendorRectificationModal(doc.rawSale)
-                                          }
-                                          className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
-                                        >
-                                          <Pencil className="w-3.5 h-3.5 shrink-0" />
-                                          <span className="whitespace-nowrap">Modifier</span>
-                                        </button>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => onOpenDocument(doc.invoicePayload)}
-                                        className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
-                                      >
-                                        <Printer className="w-3.5 h-3.5 shrink-0" />
-                                        <span className="whitespace-nowrap">Imprimer</span>
-                                      </button>
-                                    </>
-                                  )
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => onOpenDocument(doc.invoicePayload)}
-                                    className="inline-flex items-center gap-1.5 h-[40px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap shrink-0"
-                                  >
-                                    <Printer className="w-3.5 h-3.5 shrink-0" />
-                                    <span className="whitespace-nowrap">Imprimer le reçu</span>
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot className="bg-slate-50 dark:bg-slate-800/90 border-t-2 border-slate-200 dark:border-slate-700 font-bold text-slate-900 dark:text-white">
-                      <tr>
-                        <td colSpan={3} className="py-3 px-4 whitespace-nowrap">
-                          Total ({filteredPrintableDocs.length} documents)
-                        </td>
-                        <td className="py-3 px-4 text-right whitespace-nowrap">
-                          <div className="space-y-0.5 max-w-[210px] ml-auto">
-                            <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-300">
-                              <span>HT</span>
-                              <span className="font-mono whitespace-nowrap">
-                                {filteredPrintableDocs
-                                  .reduce((acc, d) => acc + Number(d.subtotalHt || 0), 0)
-                                  .toLocaleString('fr-FR')}{' '}
-                                FCFA
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 text-[11px] text-slate-600 dark:text-slate-300">
-                              <span>TVA</span>
-                              <span className="font-mono whitespace-nowrap">
-                                {filteredPrintableDocs
-                                  .reduce((acc, d) => acc + Number(d.tvaAmount || 0), 0)
-                                  .toLocaleString('fr-FR')}{' '}
-                                FCFA
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 text-xs font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
-                              <span>Total</span>
-                              <span className="font-mono whitespace-nowrap">
-                                {filteredPrintableDocs
-                                  .reduce((acc, d) => acc + Number(d.amount || 0), 0)
-                                  .toLocaleString('fr-FR')}{' '}
-                                FCFA
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-3 px-4" />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-
-              {/* Pied de totaux visible + Pagination par 20 */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-xs space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-700 dark:text-slate-200 border-b border-slate-100 dark:border-slate-800 pb-3">
-                  <span className="whitespace-nowrap">
-                    Documents :{' '}
-                    <strong className="text-slate-900 dark:text-white">
-                      {filteredPrintableDocs.length}
-                    </strong>
-                  </span>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <span className="whitespace-nowrap">
-                      Total HT :{' '}
-                      <strong className="font-mono text-slate-900 dark:text-white">
-                        {filteredPrintableDocs
-                          .reduce((acc, d) => acc + Number(d.subtotalHt || 0), 0)
-                          .toLocaleString('fr-FR')}{' '}
-                        FCFA
-                      </strong>
-                    </span>
-                    <span className="whitespace-nowrap">
-                      Total TVA :{' '}
-                      <strong className="font-mono text-slate-900 dark:text-white">
-                        {filteredPrintableDocs
-                          .reduce((acc, d) => acc + Number(d.tvaAmount || 0), 0)
-                          .toLocaleString('fr-FR')}{' '}
-                        FCFA
-                      </strong>
-                    </span>
-                    <span className="whitespace-nowrap">
-                      Total TTC :{' '}
-                      <strong className="font-mono text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
-                        {filteredPrintableDocs
-                          .reduce((acc, d) => acc + Number(d.amount || 0), 0)
-                          .toLocaleString('fr-FR')}{' '}
-                        FCFA
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Affichage de{' '}
-                    <strong className="text-slate-800 dark:text-slate-200">
-                      {(safeFacturesPage - 1) * FACTURES_PAGE_SIZE + 1}
-                    </strong>{' '}
-                    à{' '}
-                    <strong className="text-slate-800 dark:text-slate-200">
-                      {Math.min(
-                        safeFacturesPage * FACTURES_PAGE_SIZE,
-                        filteredPrintableDocs.length
+            )}
+            badges={(doc) => {
+              const isFacture = doc.docKind === 'facture';
+              const isPaid =
+                !isFacture ||
+                doc.invoiceGenerated ||
+                String(doc.paymentMode || '').toLowerCase().includes('comptant');
+              return (
+                <>
+                  {isFacture ? (
+                    <>
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                          doc.invoiceGenerated
+                            ? 'bg-[#15803D] text-white'
+                            : 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
+                        }`}
+                      >
+                        {doc.invoiceGenerated ? 'Créée' : 'À générer'}
+                      </span>
+                      {isPaid && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                          Payée
+                        </span>
                       )}
-                    </strong>{' '}
-                    sur{' '}
-                    <strong className="text-slate-800 dark:text-slate-200">
-                      {filteredPrintableDocs.length}
-                    </strong>{' '}
-                    (Pagination par 20)
-                  </span>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={safeFacturesPage <= 1}
-                      onClick={() => setFacturesPage((p) => Math.max(1, p - 1))}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200 disabled:opacity-40 cursor-pointer whitespace-nowrap"
-                    >
-                      <ChevronLeft className="w-4 h-4 shrink-0" />
-                      <span>Précédent</span>
-                    </button>
-                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap px-2">
-                      Page {safeFacturesPage} / {totalFacturesPages}
+                    </>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#15803D] text-white">
+                      Payée • Reçu Caisse
                     </span>
+                  )}
+
+                  {isFacture && doc.withTva ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white">
+                      TVA 18 %
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                      Sans TVA
+                    </span>
+                  )}
+
+                  {doc.rectificationStatus === 'en_attente' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      <span>Rectification demandée</span>
+                    </span>
+                  )}
+                  {doc.rectificationStatus === 'rectifiee' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#15803D] text-white">
+                      <CheckCircle2 className="w-3 h-3 shrink-0" />
+                      <span>Rectifiée</span>
+                    </span>
+                  )}
+                </>
+              );
+            }}
+            fields={[
+              {
+                key: 'vendor',
+                label: 'Vendeur',
+                value: (doc) => doc.vendorLabel,
+              },
+              {
+                key: 'counterparty',
+                label: 'PDV acheteur / Contrepartie',
+                value: (doc) => doc.counterparty,
+              },
+              {
+                key: 'pdvManager',
+                label: 'Gérant PDV',
+                hidden: (doc) => !doc.pdvManager,
+                value: (doc) => (
+                  <span>
+                    {doc.pdvCode ? `${doc.pdvCode} • ` : ''}
+                    {doc.pdvManager}
+                  </span>
+                ),
+              },
+              {
+                key: 'saleNumber',
+                label: 'N° de vente',
+                hidden: (doc) => !doc.saleNumber,
+                value: (doc) => (
+                  <span className="font-mono text-[#008DA9] dark:text-teal-400">
+                    {doc.saleNumber}
+                  </span>
+                ),
+              },
+              {
+                key: 'paymentMode',
+                label: 'Règlement',
+                value: (doc) => doc.paymentMode || 'Comptant',
+              },
+              {
+                key: 'tvaRegime',
+                label: 'Régime TVA',
+                value: (doc) =>
+                  doc.docKind === 'facture' && doc.withTva ? 'TVA 18 %' : 'Sans TVA',
+              },
+              {
+                key: 'subtotalHt',
+                label: 'HT',
+                isAmount: true,
+                value: (doc) => (
+                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                    {Number(doc.subtotalHt || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'tvaAmount',
+                label: 'TVA',
+                isAmount: true,
+                value: (doc) => (
+                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                    {Number(doc.tvaAmount || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+              },
+              {
+                key: 'amount',
+                label: 'Total',
+                isAmount: true,
+                value: (doc) => (
+                  <span className="font-mono font-black text-sm text-slate-900 dark:text-white whitespace-nowrap">
+                    {Number(doc.amount || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
+              },
+            ]}
+            renderActions={(doc) => {
+              const isFacture = doc.docKind === 'facture';
+              return isFacture && doc.rawSale ? (
+                isComptable ? (
+                  <>
                     <button
                       type="button"
-                      disabled={safeFacturesPage >= totalFacturesPages}
-                      onClick={() =>
-                        setFacturesPage((p) => Math.min(totalFacturesPages, p + 1))
-                      }
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                      onClick={() => openInvoiceGenerationModalForSale(doc.rawSale, doc.withTva)}
+                      className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs transition cursor-pointer"
                     >
-                      <span>Suivant</span>
-                      <ChevronRight className="w-4 h-4 shrink-0" />
+                      <Pencil className="w-4 h-4 shrink-0 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+                      <span>Modifier</span>
                     </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+                    <button
+                      type="button"
+                      onClick={() => openVendorRectificationModal(doc.rawSale)}
+                      className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>Rectifier</span>
+                    </button>
+                  <button
+                    type="button"
+                    disabled={generatingSaleId === doc.rawSale.id}
+                    onClick={() => handleGenerateAndOpenSaleInvoice(doc.rawSale, doc.withTva)}
+                    className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                  >
+                    <FileText className="w-4 h-4 shrink-0" />
+                    <span>Facture</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenDocument(
+                        buildMiniThermalReceiptDoc({
+                          ...doc.rawSale,
+                          with_tva: doc.withTva ? 1 : 0,
+                          subtotal_ht: doc.subtotalHt,
+                          tva_rate: doc.withTva ? 18 : 0,
+                          tva_amount: doc.tvaAmount,
+                          total_ttc: doc.amount,
+                        })
+                      )
+                    }
+                    className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs transition cursor-pointer"
+                  >
+                    <Receipt className="w-4 h-4 shrink-0" />
+                    <span>Ticket</span>
+                  </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openVendorRectificationModal(doc.rawSale)}
+                      className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <Pencil className="w-4 h-4 shrink-0" />
+                      <span>Modifier</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenDocument(doc.invoicePayload)}
+                      className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span>Facture</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenDocument(
+                          buildMiniThermalReceiptDoc({
+                            ...doc.rawSale,
+                            with_tva: doc.withTva ? 1 : 0,
+                            subtotal_ht: doc.subtotalHt,
+                            tva_rate: doc.withTva ? 18 : 0,
+                            tva_amount: doc.tvaAmount,
+                            total_ttc: doc.amount,
+                          })
+                        )
+                      }
+                      className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <Receipt className="w-4 h-4 shrink-0" />
+                      <span>Ticket</span>
+                    </button>
+                  </>
+                )
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onOpenDocument(doc.invoicePayload)}
+                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 shrink-0" />
+                  <span>Imprimer le reçu</span>
+                </button>
+              );
+            }}
+            totalsFooter={
+              <>
+                <span>
+                  Total HT :{' '}
+                  <strong className="font-mono text-slate-900 dark:text-white baobab-amount">
+                    {filteredPrintableDocs
+                      .reduce((acc, d) => acc + Number(d.subtotalHt || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+                <span>
+                  Total TVA :{' '}
+                  <strong className="font-mono text-slate-900 dark:text-white baobab-amount">
+                    {filteredPrintableDocs
+                      .reduce((acc, d) => acc + Number(d.tvaAmount || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+                <span>
+                  Total TTC :{' '}
+                  <strong className="font-mono text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] baobab-amount">
+                    {filteredPrintableDocs
+                      .reduce((acc, d) => acc + Number(d.amount || 0), 0)
+                      .toLocaleString('fr-FR')}{' '}
+                    FCFA
+                  </strong>
+                </span>
+              </>
+            }
+          />
         </div>
       )}
 
@@ -2496,133 +2442,131 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
           </div>
 
-          {/* Bons cadeaux — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Bons cadeaux — Composant partagé Liste de cartes */}
+          <CardList<any>
             data={bonsCadeaux}
-            getRowKey={(b) => b.id}
-            emptyMessage="Aucun bon cadeau enregistré pour ce semestre."
-            mobileTitle={(b) => `${b.id.toUpperCase()} (${b.semester})`}
-            mobileSubtitle={(b) => `${b.vendor_name} (${b.vendor_code})`}
-            mobileStatusBadge={(b) => (
-              <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  b.status === 'Remis' || b.status === 'Reçu'
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                    : b.status === 'À préparer'
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                }`}
-              >
-                {b.status}
-              </span>
-            )}
-            columns={[
+            rowKey={(b) => b.id}
+            pageSize={20}
+            searchable={true}
+            searchPlaceholder="Rechercher par référence, semestre, vendeur, statut..."
+            searchPredicate={(b, q) =>
+              [b.id, b.semester, b.vendor_name, b.vendor_code, b.status]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase()
+                .includes(q)
+            }
+            sortOptions={[
               {
-                key: 'ref',
-                label: 'Réf. & Semestre',
-                hideOnMobileCard: true,
-                render: (b) => (
-                  <div>
-                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                      {b.id.toUpperCase()}
-                    </div>
-                    <div className="text-[11px] font-bold text-teal-700 dark:text-teal-400">
-                      {b.semester}
-                    </div>
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux</span>,
+                key: 'delivered_desc',
+                label: 'Valeur remise (décroissant)',
+                compare: (a, b) => Number(b.delivered_total || 0) - Number(a.delivered_total || 0),
               },
               {
+                key: 'note_desc',
+                label: 'Note /20 (décroissant)',
+                compare: (a, b) => Number(b.note_total || 0) - Number(a.note_total || 0),
+              },
+              {
+                key: 'vendor_asc',
+                label: 'Vendeur (A → Z)',
+                compare: (a, b) => String(a.vendor_name || '').localeCompare(String(b.vendor_name || ''), 'fr'),
+              },
+            ]}
+            defaultSortKey="delivered_desc"
+            emptyMessage="Aucun bon cadeau enregistré pour ce semestre."
+            title={(b) => (
+              <div className="flex flex-wrap items-baseline justify-between gap-2 w-full min-w-0">
+                <span className="font-mono font-extrabold text-sm sm:text-base text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+                  {String(b.id || '').toUpperCase()}
+                </span>
+                <span className="text-xs font-bold text-teal-700 dark:text-teal-400 whitespace-nowrap">
+                  Semestre {b.semester}
+                </span>
+              </div>
+            )}
+            subtitle={(b) => (
+              <span className="font-bold text-slate-800 dark:text-slate-200 [overflow-wrap:anywhere]">
+                {b.vendor_name} ({b.vendor_code})
+              </span>
+            )}
+            badges={(b) => (
+              <>
+                <span
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${
+                    b.status === 'Remis' || b.status === 'Reçu'
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : b.status === 'À préparer'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  {b.status}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-50 text-[#008DA9] dark:bg-teal-950/60 dark:text-teal-300">
+                  Note : {b.note_total} / 20
+                </span>
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                  Rien en espèces (100 % FEFO)
+                </span>
+              </>
+            )}
+            fields={[
+              {
                 key: 'vendor',
-                label: 'Vendeur',
-                hideOnMobileCard: true,
+                label: 'Vendeur bénéficiaire',
                 render: (b) => (
-                  <div className="font-semibold text-slate-900 dark:text-white">
-                    <div>{b.vendor_name}</div>
-                    <div className="text-[10px] font-mono text-slate-400">{b.vendor_code}</div>
-                  </div>
+                  <span className="[overflow-wrap:anywhere]">
+                    <strong className="text-slate-900 dark:text-white">{b.vendor_name}</strong>{' '}
+                    <span className="font-mono text-xs text-slate-500">({b.vendor_code})</span>
+                  </span>
                 ),
+              },
+              {
+                key: 'semester',
+                label: 'Semestre',
+                render: (b) => b.semester,
               },
               {
                 key: 'note',
-                label: 'Note /20',
-                align: 'center',
-                isNumeric: true,
+                label: 'Note semestrielle',
+                isAmount: true,
                 render: (b) => (
-                  <span className="font-black text-slate-800 dark:text-slate-200">
-                    {b.note_total}/20
+                  <span className="font-black text-slate-900 dark:text-white whitespace-nowrap">
+                    {b.note_total} / 20
                   </span>
                 ),
               },
               {
                 key: 'plafond',
-                label: 'Plafond / Panier',
-                align: 'right',
-                isNumeric: true,
+                label: 'Plafond du bon',
+                isAmount: true,
                 render: (b) => (
-                  <div>
-                    <div className="font-bold text-slate-700 dark:text-slate-300">
-                      Plafond :{' '}
-                      {b.amount !== undefined
-                        ? `${Number(b.amount).toLocaleString('fr-FR')} FCFA`
-                        : 'Non révélé'}
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      Panier : {Number(b.basket_total || 0).toLocaleString('fr-FR')} FCFA
-                    </div>
-                  </div>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                    {b.amount !== undefined
+                      ? `${Number(b.amount).toLocaleString('fr-FR')} FCFA`
+                      : 'Non révélé'}
+                  </span>
                 ),
-                footer: (
-                  <span>
-                    {bonsCadeaux
-                      .reduce((acc, b) => acc + Number(b.basket_total || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
+              },
+              {
+                key: 'panier',
+                label: 'Montant du panier',
+                isAmount: true,
+                render: (b) => (
+                  <span className="font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                    {Number(b.basket_total || 0).toLocaleString('fr-FR')} FCFA
                   </span>
                 ),
               },
               {
                 key: 'delivered',
-                label: 'Valeur Remise',
-                align: 'right',
-                isNumeric: true,
+                label: 'Valeur remise en marchandises',
+                isAmount: true,
                 render: (b) => (
-                  <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                  <span className="font-black text-base text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                     {Number(b.delivered_total || 0).toLocaleString('fr-FR')} FCFA
                   </span>
-                ),
-                footer: (
-                  <span className="text-emerald-600 dark:text-emerald-400">
-                    {bonsCadeaux
-                      .reduce((acc, b) => acc + Number(b.delivered_total || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
-                  </span>
-                ),
-              },
-              {
-                key: 'status',
-                label: 'Statut',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: (b) => (
-                  <div>
-                    <span
-                      className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        b.status === 'Remis' || b.status === 'Reçu'
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                          : b.status === 'À préparer'
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                      }`}
-                    >
-                      {b.status}
-                    </span>
-                    <div className="text-[10px] font-semibold text-slate-400 mt-0.5">
-                      Rien en espèces
-                    </div>
-                  </div>
                 ),
               },
             ]}
@@ -2684,10 +2628,10 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       sigRightLabel: 'Direction & Comptabilité',
                     })
                   }
-                  className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-xs cursor-pointer whitespace-nowrap"
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-xs cursor-pointer"
                 >
                   <Printer className="w-4 h-4 shrink-0" />
-                  <span className="whitespace-nowrap">Imprimer le bon</span>
+                  <span>Imprimer le bon</span>
                 </button>
               );
             }}
@@ -2853,196 +2797,145 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       </div>
                     ) : (
                       <>
-                        {/* Sélecteur de vue : Cartes vs Tableau (Tablette/PC uniquement) */}
-                        <div className="flex items-center justify-between gap-2 pb-1 flex-wrap">
-                          <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                            Ventes PDV à facturer ({vendorSalesList.length}) :
-                          </div>
-                          <div className="hidden sm:inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-300 dark:border-slate-700">
-                            <button
-                              type="button"
-                              onClick={() => setInvoicingModalView('cards')}
-                              className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
-                                invoicingModalView === 'cards'
-                                  ? 'bg-[#008DA9] text-white shadow-xs'
-                                  : 'text-slate-600 dark:text-slate-300'
-                              }`}
-                            >
-                              Vue Cartes
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setInvoicingModalView('table')}
-                              className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
-                                invoicingModalView === 'table'
-                                  ? 'bg-[#008DA9] text-white shadow-xs'
-                                  : 'text-slate-600 dark:text-slate-300'
-                              }`}
-                            >
-                              Vue Tableau
-                            </button>
-                          </div>
+                        <div className="text-xs font-bold text-slate-800 dark:text-slate-200 pb-1">
+                          Ventes PDV à facturer ({vendorSalesList.length}) :
                         </div>
 
-                        {/* Ventes PDV rattachées au versement — Composant partagé DataTable */}
-                        <DataTable<any>
+                        {/* Ventes PDV rattachées au versement — Composant partagé Liste de cartes */}
+                        <CardList<any>
                           data={vendorSalesList}
-                          getRowKey={(s) => s.id}
+                          rowKey={(s) => s.id}
+                          pageSize={20}
                           emptyMessage="Aucune vente PDV rattachée à ce vendeur."
-                          mobileTitle={(s) =>
-                            s.invoice_number ||
-                            String(s.number || '').replace(/^VTE-/, 'FAC-')
-                          }
-                          mobileSubtitle={(s) =>
-                            `Vente : ${s.number} • ${s.date} à ${s.sale_time || '10:30'}`
-                          }
-                          mobileStatusBadge={() => (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#008DA9]/15 text-[#008DA9] border border-[#008DA9]/30">
-                              Facture A4
-                            </span>
+                          title={(s) => (
+                            <div className="flex items-start justify-between gap-3 w-full min-w-0">
+                              <span className="font-mono font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere] min-w-0">
+                                {s.invoice_number ||
+                                  String(s.number || '').replace(/^VTE-/, 'FAC-')}
+                              </span>
+                              <span className="font-sans text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
+                                {s.date} • {s.sale_time || '10:30'}
+                              </span>
+                            </div>
                           )}
-                          columns={[
+                          badges={(s) => {
+                            const withTva = isTvaEnabledForSale(s);
+                            return (
+                              <>
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#008DA9]/15 text-[#008DA9] border border-[#008DA9]/30">
+                                  Facture A4
+                                </span>
+                                {withTva ? (
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#92400E] text-white">
+                                    TVA 18 %
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                                    Sans TVA
+                                  </span>
+                                )}
+                              </>
+                            );
+                          }}
+                          fields={[
                             {
-                              key: 'invoice',
-                              label: 'Facture / Vente',
-                              hideOnMobileCard: true,
-                              render: (s) => {
-                                const invNumber =
-                                  s.invoice_number ||
-                                  String(s.number || '').replace(/^VTE-/, 'FAC-');
-                                return (
-                                  <div>
-                                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                                      {invNumber}
-                                    </div>
-                                    <div className="font-mono text-[10px] text-[#008DA9]">
-                                      Vente : {s.number}
-                                    </div>
-                                  </div>
-                                );
-                              },
-                              footer: <span className="uppercase text-[11px]">Totaux</span>,
-                            },
-                            {
-                              key: 'date',
-                              label: 'Date & Heure',
-                              isSecondary: true,
-                              hideOnMobileCard: true,
-                              render: (s) => (
-                                <div className="text-slate-600 dark:text-slate-300">
-                                  <div className="font-semibold">{s.date}</div>
-                                  <div className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                                    <Clock className="w-3 h-3 text-[#008DA9]" />
-                                    <span>{s.sale_time || '10:30'}</span>
-                                  </div>
-                                </div>
+                              key: 'saleNumber',
+                              label: 'N° de vente',
+                              value: (s) => (
+                                <span className="font-mono text-[#008DA9] dark:text-teal-400">
+                                  {s.number}
+                                </span>
                               ),
                             },
                             {
                               key: 'vendor',
                               label: 'Au nom du Vendeur',
-                              isSecondary: true,
-                              render: (s) => (
-                                <div>
-                                  <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                                    <User className="w-3 h-3 text-[#008DA9]" />
-                                    <span>{s.vendor_name}</span>
-                                  </div>
-                                  <div className="font-mono text-[10px] text-teal-600">
-                                    {s.vendor_code}
-                                  </div>
-                                </div>
-                              ),
+                              value: (s) => `${s.vendor_name} (${s.vendor_code})`,
                             },
                             {
                               key: 'pdv',
                               label: 'PDV Acheteur',
-                              render: (s) => (
-                                <div>
-                                  <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                                    <Store className="w-3 h-3 text-emerald-600" />
-                                    <span>{s.pdv_name}</span>
+                              value: (s) =>
+                                `${s.pdv_name}${s.pdv_neighborhood ? ` (${s.pdv_neighborhood})` : ''}${
+                                  s.pdv_manager ? ` • Gérant : ${s.pdv_manager}` : ''
+                                }`,
+                            },
+                            {
+                              key: 'tvaSelector',
+                              label: 'Sélecteur TVA',
+                              hidden: () => !isComptable,
+                              value: (s) => {
+                                const withTva = isTvaEnabledForSale(s);
+                                return (
+                                  <div
+                                    role="switch"
+                                    aria-checked={withTva}
+                                    className="inline-grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSaleTva(s.id, false)}
+                                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                                        !withTva
+                                          ? 'bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-white shadow-xs'
+                                          : 'text-slate-600 dark:text-slate-300'
+                                      }`}
+                                    >
+                                      Sans TVA
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSaleTva(s.id, true)}
+                                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                                        withTva
+                                          ? 'bg-[#92400E] text-white shadow-xs'
+                                          : 'text-slate-600 dark:text-slate-300'
+                                      }`}
+                                    >
+                                      + TVA 18 %
+                                    </button>
                                   </div>
-                                  <div className="text-[10px] text-slate-500">
-                                    {s.pdv_code ? `${s.pdv_code} • ` : ''}
-                                    {s.pdv_neighborhood}
-                                    {s.pdv_manager ? ` • Gérant: ${s.pdv_manager}` : ''}
-                                  </div>
-                                </div>
+                                );
+                              },
+                            },
+                            {
+                              key: 'subtotalHt',
+                              label: 'HT',
+                              isAmount: true,
+                              value: (s) => (
+                                <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                  {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                                </span>
                               ),
                             },
                             {
-                              key: 'tva',
-                              label: 'Sélecteur TVA & Aperçu HT / TVA / TTC',
-                              align: 'center',
-                              render: (s) => {
+                              key: 'tvaAmount',
+                              label: 'TVA',
+                              isAmount: true,
+                              value: (s) => {
+                                const withTva = isTvaEnabledForSale(s);
+                                const subtotalHt = Number(s.total_amount || 0);
+                                const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
+                                return (
+                                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                    {tvaAmount.toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                );
+                              },
+                            },
+                            {
+                              key: 'totalTtc',
+                              label: 'TTC',
+                              isAmount: true,
+                              value: (s) => {
                                 const withTva = isTvaEnabledForSale(s);
                                 const subtotalHt = Number(s.total_amount || 0);
                                 const tvaAmount = withTva ? Math.round(subtotalHt * 0.18) : 0;
                                 const totalTtc = subtotalHt + tvaAmount;
                                 return (
-                                  <div className="space-y-2 text-left min-w-[200px]">
-                                    {isComptable ? (
-                                      <div
-                                        role="switch"
-                                        aria-checked={withTva}
-                                        className="w-full grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                                      >
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleSaleTva(s.id, false)}
-                                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer whitespace-nowrap ${
-                                            !withTva
-                                              ? 'bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-white shadow-xs'
-                                              : 'text-slate-600 dark:text-slate-300'
-                                          }`}
-                                        >
-                                          Sans TVA
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleSaleTva(s.id, true)}
-                                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer whitespace-nowrap ${
-                                            withTva
-                                              ? 'bg-[#92400E] text-white shadow-xs'
-                                              : 'text-slate-600 dark:text-slate-300'
-                                          }`}
-                                        >
-                                          + TVA 18 %
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <span
-                                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${
-                                          withTva
-                                            ? 'bg-[#92400E] text-white'
-                                            : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
-                                        }`}
-                                      >
-                                        {withTva ? 'TVA 18 %' : 'Sans TVA'}
-                                      </span>
-                                    )}
-                                    <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/70 space-y-0.5 text-[11px]">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-slate-500">HT</span>
-                                        <span className="font-mono font-semibold whitespace-nowrap">
-                                          {subtotalHt.toLocaleString('fr-FR')} FCFA
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-slate-500">TVA</span>
-                                        <span className="font-mono font-semibold whitespace-nowrap">
-                                          {tvaAmount.toLocaleString('fr-FR')} FCFA
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center justify-between gap-2 pt-0.5 border-t border-slate-200/70 dark:border-slate-700/70 font-bold text-slate-900 dark:text-white">
-                                        <span>TTC</span>
-                                        <span className="font-mono font-bold whitespace-nowrap">
-                                          {totalTtc.toLocaleString('fr-FR')} FCFA
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
+                                  <span className="font-mono font-black text-sm text-slate-900 dark:text-white whitespace-nowrap">
+                                    {totalTtc.toLocaleString('fr-FR')} FCFA
+                                  </span>
                                 );
                               },
                             },
@@ -3060,10 +2953,10 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                                     selectedVersementForInvoicing
                                   )
                                 }
-                                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs shadow-xs transition cursor-pointer"
                               >
                                 <Printer className="w-4 h-4 shrink-0" />
-                                <span className="whitespace-nowrap">Générer la facture</span>
+                                <span>Générer la facture</span>
                               </button>
                             ) : s.invoice_generated ? (
                               <>
@@ -3078,10 +2971,10 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                                       )
                                     )
                                   }
-                                  className="inline-flex items-center gap-1.5 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer whitespace-nowrap"
+                                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
                                 >
                                   <Printer className="w-4 h-4 shrink-0" />
-                                  <span className="whitespace-nowrap">Imprimer</span>
+                                  <span>Imprimer</span>
                                 </button>
                                 <button
                                   type="button"
@@ -3089,14 +2982,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                                     setSelectedVersementForInvoicing(null);
                                     openVendorRectificationModal(s);
                                   }}
-                                  className="inline-flex items-center gap-1.5 h-[48px] min-h-[48px] px-4 rounded-[12px] bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs cursor-pointer whitespace-nowrap"
+                                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs cursor-pointer"
                                 >
                                   <Pencil className="w-4 h-4 shrink-0" />
-                                  <span className="whitespace-nowrap">Modifier</span>
+                                  <span>Modifier</span>
                                 </button>
                               </>
                             ) : (
-                              <span className="text-xs font-semibold text-slate-400 whitespace-nowrap">
+                              <span className="text-xs font-semibold text-slate-400">
                                 En attente du Comptable
                               </span>
                             );
@@ -3111,7 +3004,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                               </span>
                               <span>
                                 Total HT :{' '}
-                                <strong className="text-slate-900 dark:text-white">
+                                <strong className="font-mono text-slate-900 dark:text-white baobab-amount">
                                   {vendorSalesList
                                     .reduce((acc, s) => acc + Number(s.total_amount || 0), 0)
                                     .toLocaleString('fr-FR')}{' '}
@@ -3130,10 +3023,10 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         </FormModal>
       )}
 
-      {/* MODAL VENDEUR: Demander une rectification avec Mini Facture Thermique automatique en preuve */}
-      {isVendeur && rectificationModalSale && (
+      {/* MODAL DE RECTIFICATION DE FACTURE (Accessible à tous les rôles avec ajustement des cartons et de la TVA + preuve thermique 80mm) */}
+      {rectificationModalSale && (
         <FormModal
-          title="Demande de Rectification de Facture • Preuve par Mini Facture Thermique (80mm)"
+          title="Rectification de Facture • Preuve par Mini Facture Thermique (80mm)"
           subtitle={
             <>
               Facture concernée :{' '}
@@ -3141,7 +3034,11 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 {rectificationModalSale.invoice_number ||
                   String(rectificationModalSale.number || '').replace(/^VTE-/, 'FAC-')}
               </strong>{' '}
-              • Vendeur : <strong>{currentUser?.name} ({currentUser?.code})</strong>
+              • Vendeur :{' '}
+              <strong>
+                {rectificationModalSale.vendor_name || currentUser?.name} (
+                {rectificationModalSale.vendor_code || currentUser?.code})
+              </strong>
             </>
           }
           icon={<AlertTriangle className="w-5 h-5 text-amber-500" />}
@@ -3149,11 +3046,11 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           onSubmit={handleSubmitVendorRectification}
           submitLabel={
             <>
-              <Send className="w-4 h-4" />
+              <Send className="w-4 h-4 shrink-0" />
               <span>
                 {isSubmittingRectification
                   ? 'Envoi en cours...'
-                  : 'Envoyer la Demande avec Mini Facture Thermique en Preuve'}
+                  : 'Envoyer la Demande de Rectification'}
               </span>
             </>
           }
@@ -3162,12 +3059,12 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         >
           <div className="space-y-4 text-xs">
             <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-950 dark:text-amber-200 leading-snug">
-              <strong>Règle de preuve par Mini Facture Thermique :</strong> Le vendeur ne pouvant pas modifier lui-même une facture créée par le Comptable, votre demande de rectification joint automatiquement la <strong>Mini Facture Thermique (`TKT-THERM-...`)</strong> générée dans votre historique de ventes comme <strong>preuve officielle</strong> dans la notification envoyée au Comptable.
+              <strong>Procédure officielle de rectification :</strong> Indiquez les quantités exactes de cartons livrés, le régime TVA souhaité et le motif de rectification. La <strong>Mini Facture Thermique (`TKT-THERM-...`)</strong> ci-dessous est jointe automatiquement comme preuve officielle.
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1">
               <div className="text-[10px] font-bold uppercase text-slate-400">
-                Facture du Comptable à rectifier
+                Facture actuelle à rectifier
               </div>
               <div className="font-black text-sm text-slate-900 dark:text-white">
                 {rectificationModalSale.invoice_number ||
@@ -3175,21 +3072,29 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 — {rectificationModalSale.pdv_name} ({rectificationModalSale.pdv_neighborhood})
               </div>
               <div className="text-slate-500">
-                Montant facturé :{' '}
+                Montant initial :{' '}
                 <strong className="text-[#008DA9]">
-                  {Number(rectificationModalSale.total_amount || 0).toLocaleString('fr-FR')} FCFA
+                  {Number(rectificationModalSale.total_amount || 0).toLocaleString('fr-FR')} FCFA HT
                 </strong>{' '}
-                ({rectificationModalSale.with_tva ? 'Avec TVA 18%' : 'Sans TVA'})
+                ({rectificationModalSale.with_tva ? 'Avec TVA 18 %' : 'Sans TVA'})
               </div>
             </div>
 
             <div>
               <label className={FORM_LABEL_CLASS}>
-                Sélectionnez la Mini Facture Thermique de votre historique de ventes à joindre comme preuve *
+                Sélectionnez la vente / Mini Facture Thermique de référence *
               </label>
               <select
                 value={selectedProofSaleId}
-                onChange={(e) => setSelectedProofSaleId(e.target.value)}
+                onChange={(e) => {
+                  const nextSaleId = e.target.value;
+                  setSelectedProofSaleId(nextSaleId);
+                  const found = visibleSales.find((s) => s.id === nextSaleId);
+                  if (found) {
+                    setRectificationItems(normalizeSaleItemsForEdit(found));
+                    setRectificationWithTva(Boolean(found.with_tva));
+                  }
+                }}
                 className={`${FORM_SELECT_CLASS} font-mono font-bold text-xs`}
               >
                 {visibleSales.map((s) => (
@@ -3200,12 +3105,196 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
               </select>
             </div>
 
+            {/* Éditeur des quantités corrigées (Cartons) et du régime TVA */}
+            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="font-bold text-slate-900 dark:text-white">
+                  Quantités rectifiées (Cartons) sur le ticket de preuve
+                </span>
+                {products.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defaultProd = products[0];
+                      const unitPrice = Number(defaultProd?.price_box || 18000);
+                      setRectificationItems((prev) => [
+                        ...prev,
+                        {
+                          productId: defaultProd?.id,
+                          code: defaultProd?.code || 'BEN-01',
+                          name: defaultProd?.name || 'Produit Baobab',
+                          qtyBoxes: 1,
+                          unitPrice,
+                          total: unitPrice,
+                        },
+                      ]);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5 text-[#008DA9]" />
+                    <span>Ajouter une ligne</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2.5">
+                {rectificationItems.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col gap-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700"
+                  >
+                    <div className="w-full min-w-0">
+                      {products.length > 0 ? (
+                        <select
+                          value={item.code}
+                          onChange={(e) => {
+                            const prod = products.find((p) => p.code === e.target.value);
+                            if (!prod) return;
+                            const unitPrice = Number(prod.price_box || 18000);
+                            setRectificationItems((prev) =>
+                              prev.map((it, i) =>
+                                i === idx
+                                  ? {
+                                      ...it,
+                                      productId: prod.id,
+                                      code: prod.code,
+                                      name: prod.name,
+                                      unitPrice,
+                                      total: it.qtyBoxes * unitPrice,
+                                    }
+                                  : it
+                              )
+                            );
+                          }}
+                          className="w-full px-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs font-bold"
+                        >
+                          {products.map((p) => (
+                            <option key={p.id} value={p.code}>
+                              {p.code} — {p.name} ({Number(p.price_box || 0).toLocaleString('fr-FR')} F)
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="font-bold text-slate-900 dark:text-white leading-snug">
+                          {item.code} — {item.name}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRectificationItems((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const nextQty = Math.max(1, it.qtyBoxes - 1);
+                                return { ...it, qtyBoxes: nextQty, total: nextQty * it.unitPrice };
+                              })
+                            )
+                          }
+                          className="h-[44px] w-[44px] rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 font-black text-base cursor-pointer shrink-0 flex items-center justify-center"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          value={item.qtyBoxes}
+                          onChange={(e) => {
+                            const nextQty = Math.max(1, Number(e.target.value || 1));
+                            setRectificationItems((prev) =>
+                              prev.map((it, i) =>
+                                i === idx
+                                  ? { ...it, qtyBoxes: nextQty, total: nextQty * it.unitPrice }
+                                  : it
+                              )
+                            );
+                          }}
+                          className="w-24 min-w-[76px] h-[44px] px-2 text-center font-mono font-extrabold rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-base"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRectificationItems((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const nextQty = it.qtyBoxes + 1;
+                                return { ...it, qtyBoxes: nextQty, total: nextQty * it.unitPrice };
+                              })
+                            )
+                          }
+                          className="h-[44px] w-[44px] rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 font-black text-base cursor-pointer shrink-0 flex items-center justify-center"
+                        >
+                          +
+                        </button>
+                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 ml-1">
+                          ctn
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 ml-auto">
+                        <span className="font-mono font-extrabold text-sm text-slate-900 dark:text-white whitespace-nowrap">
+                          {Number(item.total || 0).toLocaleString('fr-FR')} F
+                        </span>
+                        {rectificationItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRectificationItems((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                            title="Retirer la ligne"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sélecteur TVA souhaité pour la rectification */}
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                <div className="font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                  Régime TVA demandé après rectification
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setRectificationWithTva(false)}
+                    className={`h-[38px] rounded-lg font-bold text-xs transition cursor-pointer ${
+                      !rectificationWithTva
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    Sans TVA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRectificationWithTva(true)}
+                    className={`h-[38px] rounded-lg font-bold text-xs transition cursor-pointer ${
+                      rectificationWithTva
+                        ? 'bg-[#92400E] text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    + TVA 18 %
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className={FORM_LABEL_CLASS}>
                 Expliquez l&apos;erreur constatée sur la facture (Motif de la rectification) *
               </label>
               <textarea
-                rows={4}
+                rows={3}
                 required
                 value={rectificationReason}
                 onChange={(e) => setRectificationReason(e.target.value)}
@@ -3215,7 +3304,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
             </div>
 
             {/* Live Preview of the Auto-Generated Mini Facture Thermique (80mm) attached as Proof */}
-            <div className="flex flex-col items-center pt-2">
+            <div className="flex flex-col items-center pt-1">
               <div className="w-full max-w-[320px] rounded-xl bg-white p-4 border-2 border-dashed border-slate-300 font-mono text-[11px] text-slate-950 space-y-2.5 shadow-md">
                 <div className="text-center border-b border-dashed border-slate-300 pb-2">
                   <div className="text-xs font-black uppercase text-slate-950">BAOBAB DISTRIBUTION</div>
@@ -3246,20 +3335,20 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                         <span className="text-slate-600">Vendeur :</span>
                         <span className="font-bold text-slate-950">{selectedProofSaleObj.vendor_name}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">PDV Client :</span>
-                        <span className="font-bold text-slate-950 truncate max-w-[160px]">{selectedProofSaleObj.pdv_name}</span>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-slate-600 shrink-0">PDV Client :</span>
+                        <span className="font-bold text-slate-950 text-right">{selectedProofSaleObj.pdv_name}</span>
                       </div>
                     </div>
 
                     <div className="space-y-1 border-b border-dashed border-slate-300 pb-2">
                       <div className="text-[9px] font-black uppercase text-slate-500">
-                        Articles livrés (Preuve de vente)
+                        Articles rectifiés (Preuve de vente)
                       </div>
-                      {(selectedProofSaleObj.items || []).map((it: any, idx: number) => (
+                      {rectificationItems.map((it: any, idx: number) => (
                         <div key={idx} className="flex justify-between text-[10px]">
                           <span>
-                            {it.qtyBoxes ?? it.qty}x {it.name}
+                            {it.qtyBoxes}x {it.name}
                           </span>
                           <span className="font-bold">
                             {Number(it.total || 0).toLocaleString('fr-FR')} F
@@ -3268,12 +3357,34 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       ))}
                     </div>
 
-                    <div className="flex justify-between items-center text-xs font-black pt-1">
-                      <span>TOTAL VENTE CERTIFIÉ :</span>
-                      <span className="text-[#008DA9]">
-                        {Number(selectedProofSaleObj.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                      </span>
-                    </div>
+                    {(() => {
+                      const proofHt = rectificationItems.reduce(
+                        (s, it) => s + Number(it.total || 0),
+                        0
+                      );
+                      const proofTva = rectificationWithTva ? Math.round(proofHt * 0.18) : 0;
+                      const proofTtc = proofHt + proofTva;
+                      return (
+                        <div className="space-y-0.5 pt-1">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span>TOTAL HT :</span>
+                            <span className="font-bold">{proofHt.toLocaleString('fr-FR')} FCFA</span>
+                          </div>
+                          {rectificationWithTva && (
+                            <div className="flex justify-between items-center text-[10px]">
+                              <span>TVA (18 %) :</span>
+                              <span className="font-bold">{proofTva.toLocaleString('fr-FR')} FCFA</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center text-xs font-black pt-0.5">
+                            <span>TOTAL CERTIFIÉ :</span>
+                            <span className="text-[#008DA9]">
+                              {proofTtc.toLocaleString('fr-FR')} FCFA
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
               </div>
@@ -3282,28 +3393,25 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         </FormModal>
       )}
 
-      {/* MODAL COMPTABLE: Générer / Modifier une Facture pour un Vendeur */}
+      {/* MODAL COMPTABLE / DIRECTION: Générer / Modifier / Rectifier une Facture pour un Vendeur */}
       {isComptable && showCreateInvoiceModal && (
         <FormModal
           title="Génération / Modification de Facture Vendeur"
-          subtitle="Seul le Comptable est autorisé à créer ou modifier les factures • Visible & imprimable par le vendeur"
+          subtitle="Modifiez les quantités (cartons), le PDV acheteur ou le régime TVA • Mise à jour immédiate de la facture"
           icon={<FileText className="w-5 h-5 text-[#008DA9]" />}
           onClose={() => setShowCreateInvoiceModal(false)}
           onSubmit={handleComptableCreateInvoiceSubmit}
-          hideFooter={true}
+          submitLabel={isCreatingInvoiceForVendor ? 'Enregistrement...' : 'Générer la facture'}
+          submitDisabled={isCreatingInvoiceForVendor}
         >
           {(() => {
-            const selectedSaleForPreview =
-              createInvoiceMode === 'existing_sale'
-                ? sales.find((s) => s.id === selectedSaleIdForNewInvoice) || sales[0]
-                : null;
             const selectedProdForPreview =
               createInvoiceMode === 'new_invoice'
                 ? products.find((p) => p.id === newInvoiceProductId) || products[0]
                 : null;
             const previewHt =
               createInvoiceMode === 'existing_sale'
-                ? Number(selectedSaleForPreview?.total_amount || 0)
+                ? editSaleItems.reduce((sum, it) => sum + Number(it.total || 0), 0)
                 : Math.max(1, Number(newInvoiceQtyBoxes || 1)) *
                   Number(selectedProdForPreview?.price_box || 18000);
             const previewTva = newInvoiceWithTva ? Math.round(previewHt * 0.18) : 0;
@@ -3315,18 +3423,18 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setCreateInvoiceMode('existing_sale')}
-                    className={`py-2.5 px-3 rounded-lg font-bold transition cursor-pointer whitespace-nowrap ${
+                    className={`min-h-[48px] h-auto py-3 px-3 rounded-lg font-bold transition cursor-pointer min-w-0 ${
                       createInvoiceMode === 'existing_sale'
                         ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-300'
                     }`}
                   >
-                    À partir d&apos;une vente du vendeur
+                    Modifier / Facturer une vente existante
                   </button>
                   <button
                     type="button"
                     onClick={() => setCreateInvoiceMode('new_invoice')}
-                    className={`py-2.5 px-3 rounded-lg font-bold transition cursor-pointer whitespace-nowrap ${
+                    className={`min-h-[48px] h-auto py-3 px-3 rounded-lg font-bold transition cursor-pointer min-w-0 ${
                       createInvoiceMode === 'new_invoice'
                         ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-300'
@@ -3337,31 +3445,231 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 </div>
 
                 {createInvoiceMode === 'existing_sale' ? (
-                  <div>
-                    <label className={FORM_LABEL_CLASS}>
-                      Sélectionner la vente réalisée par le vendeur *
-                    </label>
-                    <select
-                      required
-                      value={selectedSaleIdForNewInvoice}
-                      onChange={(e) => {
-                        const nextId = e.target.value;
-                        setSelectedSaleIdForNewInvoice(nextId);
-                        const nextSale = sales.find((s) => s.id === nextId);
-                        if (nextSale) {
-                          setNewInvoiceWithTva(isTvaEnabledForSale(nextSale));
-                        }
-                      }}
-                      className={FORM_SELECT_CLASS}
-                    >
-                      {sales.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.invoice_generated ? '[Facturée] ' : '[À facturer] '}
-                          {s.number} • {s.vendor_name} ({s.vendor_code}) → {s.pdv_name} (
-                          {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA)
-                        </option>
-                      ))}
-                    </select>
+                  <div className="space-y-4">
+                    <div>
+                      <label className={FORM_LABEL_CLASS}>
+                        Sélectionner la vente / facture du vendeur *
+                      </label>
+                      <select
+                        required
+                        value={selectedSaleIdForNewInvoice}
+                        onChange={(e) => {
+                          const nextId = e.target.value;
+                          setSelectedSaleIdForNewInvoice(nextId);
+                          const nextSale = sales.find((s) => s.id === nextId);
+                          if (nextSale) {
+                            setNewInvoiceWithTva(isTvaEnabledForSale(nextSale));
+                            setEditSalePdvId(nextSale.pdv_id || pdvs[0]?.id || '');
+                            setEditSalePaymentType(nextSale.payment_type || 'Comptant');
+                            setEditSaleItems(normalizeSaleItemsForEdit(nextSale));
+                          }
+                        }}
+                        className={FORM_SELECT_CLASS}
+                      >
+                        {sales.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.invoice_generated ? '[Facturée] ' : '[À facturer] '}
+                            {s.number} • {s.vendor_name} ({s.vendor_code}) → {s.pdv_name} (
+                            {Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={FORM_ROW_CLASS}>
+                      <div>
+                        <label className={FORM_LABEL_CLASS}>PDV Acheteur *</label>
+                        <select
+                          value={editSalePdvId}
+                          onChange={(e) => setEditSalePdvId(e.target.value)}
+                          className={FORM_SELECT_CLASS}
+                        >
+                          {pdvs.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.neighborhood}) — Gérant : {p.manager_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={FORM_LABEL_CLASS}>Mode de règlement *</label>
+                        <select
+                          value={editSalePaymentType}
+                          onChange={(e) => setEditSalePaymentType(e.target.value)}
+                          className={FORM_SELECT_CLASS}
+                        >
+                          <option value="Comptant">Comptant (Espèces)</option>
+                          <option value="Mobile Money">Mobile Money</option>
+                          <option value="Virement">Virement / Chèque</option>
+                          <option value="Crédit PDV">Crédit PDV (À payer)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Éditeur des lignes d'articles de la facture */}
+                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          Articles &amp; Quantités (Cartons) facturés
+                        </span>
+                        {products.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const defaultProd = products[0];
+                              const unitPrice = Number(defaultProd?.price_box || 18000);
+                              setEditSaleItems((prev) => [
+                                ...prev,
+                                {
+                                  productId: defaultProd?.id,
+                                  code: defaultProd?.code || 'BEN-01',
+                                  name: defaultProd?.name || 'Produit Baobab',
+                                  qtyBoxes: 1,
+                                  unitPrice,
+                                  total: unitPrice,
+                                },
+                              ]);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 text-slate-800 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5 text-[#008DA9]" />
+                            <span>Ajouter un produit</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {editSaleItems.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="flex flex-col gap-2.5 p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
+                          >
+                            <div className="w-full min-w-0">
+                              {products.length > 0 ? (
+                                <select
+                                  value={item.code}
+                                  onChange={(e) => {
+                                    const prod = products.find((p) => p.code === e.target.value);
+                                    if (!prod) return;
+                                    const unitPrice = Number(prod.price_box || 18000);
+                                    setEditSaleItems((prev) =>
+                                      prev.map((it, i) =>
+                                        i === idx
+                                          ? {
+                                              ...it,
+                                              productId: prod.id,
+                                              code: prod.code,
+                                              name: prod.name,
+                                              unitPrice,
+                                              total: it.qtyBoxes * unitPrice,
+                                            }
+                                          : it
+                                      )
+                                    );
+                                  }}
+                                  className="w-full px-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-xs font-bold"
+                                >
+                                  {products.map((p) => (
+                                    <option key={p.id} value={p.code}>
+                                      {p.code} — {p.name} ({Number(p.price_box || 0).toLocaleString('fr-FR')} F)
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <div className="font-bold text-slate-900 dark:text-white leading-snug">
+                                  {item.code} — {item.name}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setEditSaleItems((prev) =>
+                                      prev.map((it, i) => {
+                                        if (i !== idx) return it;
+                                        const nextQty = Math.max(1, it.qtyBoxes - 1);
+                                        return {
+                                          ...it,
+                                          qtyBoxes: nextQty,
+                                          total: nextQty * it.unitPrice,
+                                        };
+                                      })
+                                    )
+                                  }
+                                  className="h-[44px] w-[44px] rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 font-black text-base cursor-pointer shrink-0 flex items-center justify-center"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={1}
+                                  value={item.qtyBoxes}
+                                  onChange={(e) => {
+                                    const nextQty = Math.max(1, Number(e.target.value || 1));
+                                    setEditSaleItems((prev) =>
+                                      prev.map((it, i) =>
+                                        i === idx
+                                          ? {
+                                              ...it,
+                                              qtyBoxes: nextQty,
+                                              total: nextQty * it.unitPrice,
+                                            }
+                                          : it
+                                      )
+                                    );
+                                  }}
+                                  className="w-24 min-w-[76px] h-[44px] px-2 text-center font-mono font-extrabold rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-base"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setEditSaleItems((prev) =>
+                                      prev.map((it, i) => {
+                                        if (i !== idx) return it;
+                                        const nextQty = it.qtyBoxes + 1;
+                                        return {
+                                          ...it,
+                                          qtyBoxes: nextQty,
+                                          total: nextQty * it.unitPrice,
+                                        };
+                                      })
+                                    )
+                                  }
+                                  className="h-[44px] w-[44px] rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 font-black text-base cursor-pointer shrink-0 flex items-center justify-center"
+                                >
+                                  +
+                                </button>
+                                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 ml-1">
+                                  ctn
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2 ml-auto">
+                                <span className="font-mono font-extrabold text-sm text-slate-900 dark:text-white whitespace-nowrap">
+                                  {Number(item.total || 0).toLocaleString('fr-FR')} F
+                                </span>
+                                {editSaleItems.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setEditSaleItems((prev) => prev.filter((_, i) => i !== idx))
+                                    }
+                                    className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                                    title="Supprimer la ligne"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -3376,7 +3684,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       >
                         {balances.map((b) => (
                           <option key={b.vendorId} value={b.vendorId}>
-                            {b.code} — {b.name} ({b.team})
+                            {b.code} — {b.name}
                           </option>
                         ))}
                       </select>
@@ -3450,25 +3758,25 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setNewInvoiceWithTva(false)}
-                      className={`h-[44px] px-3 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                      className={`min-h-[48px] h-auto px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
                         !newInvoiceWithTva
                           ? 'bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-white shadow-xs'
                           : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
-                      <span className="whitespace-nowrap">Sans TVA</span>
+                      <span>Sans TVA</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setNewInvoiceWithTva(true)}
-                      className={`h-[44px] px-3 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                      className={`min-h-[48px] h-auto px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
                         newInvoiceWithTva
                           ? 'bg-[#92400E] text-white shadow-xs'
                           : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       <Percent className="w-3.5 h-3.5 shrink-0" />
-                      <span className="whitespace-nowrap">+ TVA 18 %</span>
+                      <span>+ TVA 18 %</span>
                     </button>
                   </div>
 
@@ -3476,7 +3784,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                   <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-1.5">
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="text-slate-600 dark:text-slate-400">HT</span>
-                      <span className="font-mono font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                      <span className="font-mono font-semibold text-slate-900 dark:text-white baobab-amount">
                         {previewHt.toLocaleString('fr-FR')} FCFA
                       </span>
                     </div>
@@ -3484,38 +3792,17 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                       <span className="text-slate-600 dark:text-slate-400">
                         TVA {newInvoiceWithTva ? '(18 %)' : '(0 %)'}
                       </span>
-                      <span className="font-mono font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                      <span className="font-mono font-semibold text-slate-900 dark:text-white baobab-amount">
                         {previewTva.toLocaleString('fr-FR')} FCFA
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-800 text-sm">
                       <span className="font-bold text-slate-900 dark:text-white">TTC (Total)</span>
-                      <span className="font-mono font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] whitespace-nowrap">
+                      <span className="font-mono font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] baobab-amount">
                         {previewTtc.toLocaleString('fr-FR')} FCFA
                       </span>
                     </div>
                   </div>
-                </div>
-
-                {/* Pied du modal : bouton principal "Générer la facture" vert, 48 px, pleine largeur sur mobile */}
-                <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateInvoiceModal(false)}
-                    className="h-[48px] min-h-[48px] px-4 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer whitespace-nowrap"
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isCreatingInvoiceForVendor}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-[48px] min-h-[48px] px-5 rounded-[12px] bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm shadow-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                  >
-                    <Printer className="w-4 h-4 shrink-0" />
-                    <span className="whitespace-nowrap">
-                      {isCreatingInvoiceForVendor ? 'Génération...' : 'Générer la facture'}
-                    </span>
-                  </button>
                 </div>
               </div>
             );

@@ -33,7 +33,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
   });
 
   const [emailInput, setEmailInput] = useState(selectedUser.email);
-  const [passwordInput, setPasswordInput] = useState('••••••••');
+  const [passwordInput, setPasswordInput] = useState('1234');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -67,17 +67,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
 
   const handlePasswordChangeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPassword.length < 6) {
-      setErrorMsg('Le nouveau mot de passe doit comporter au moins 6 caractères.');
+    if (!/^\d{4}$/.test(newPassword)) {
+      setErrorMsg('Le code PIN doit comporter exactement 4 chiffres.');
       return;
     }
     if (newPassword !== confirmPassword) {
-      setErrorMsg('Les mots de passe ne correspondent pas.');
+      setErrorMsg('Les codes PIN ne correspondent pas.');
       return;
     }
 
     try {
-      await fetch(`/api/users/${selectedUser.id}/change-password`, { method: 'PATCH' });
+      await fetch(`/api/users/${selectedUser.id}/change-password`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword }),
+      });
       const updated = { ...selectedUser, must_change_password: 0 };
       onLogin(updated);
     } catch {
@@ -110,8 +114,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
               <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
                 <KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Mot de passe provisoire détecté.</strong>
-                  <p className="mt-0.5">Par mesure de sécurité, veuillez définir votre mot de passe personnel pour continuer.</p>
+                  <strong>Code PIN provisoire détecté.</strong>
+                  <p className="mt-0.5">Par mesure de sécurité, veuillez définir votre code PIN personnel à 4 chiffres pour continuer.</p>
                 </div>
               </div>
 
@@ -119,13 +123,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
 
               <div>
                 <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
-                  Nouveau mot de passe
+                  Nouveau code PIN (4 chiffres)
                 </label>
                 <input
                   type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  pattern="\d{4}"
                   value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Minimum 6 caractères"
+                  onChange={(e) => setNewPassword(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="•••• (4 chiffres)"
                   required
                   className={FORM_FIELD_CLASS}
                 />
@@ -133,13 +140,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
 
               <div>
                 <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
-                  Confirmer le mot de passe
+                  Confirmer le code PIN (4 chiffres)
                 </label>
                 <input
                   type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  pattern="\d{4}"
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirmer à l'identique"
+                  onChange={(e) => setConfirmPassword(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="•••• (4 chiffres)"
                   required
                   className={FORM_FIELD_CLASS}
                 />
@@ -172,12 +182,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
 
                 <div>
                   <label className="block text-[14px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-[8px]">
-                    Mot de Passe
+                    Code PIN (4 chiffres)
                   </label>
                   <input
                     type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    pattern="\d{4}"
                     value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
+                    onChange={(e) => setPasswordInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="••••"
                     required
                     className={FORM_FIELD_CLASS}
                   />
@@ -220,7 +234,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                             : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
-                        <div className="flex items-center gap-2.5 overflow-hidden">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div
                             className={`p-1.5 rounded-lg shrink-0 ${
                               isSelected
@@ -230,14 +244,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                           >
                             <Icon className="w-3.5 h-3.5" />
                           </div>
-                          <div className="overflow-hidden min-w-0">
-                            <div className="text-xs font-bold truncate flex items-center gap-1.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold flex flex-wrap items-center gap-1.5">
                               <span>{user.name}</span>
                               <span className="font-mono text-[10px] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] bg-[var(--marque-clair)] px-1 rounded">
                                 {user.code}
                               </span>
                             </div>
-                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
                               {user.role === 'Sales Admin'
                                 ? 'Sales Admin (Contrôleur)'
                                 : /directeur|op[eé]ration|dov/i.test(user.role || '')
@@ -246,7 +260,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                                 ? 'Gestionnaire grossiste'
                                 : user.role === 'Magasinier'
                                 ? 'Gestionnaire de stock'
-                                : user.role} {user.team ? `• ${user.team}` : ''}
+                                : user.role} {user.role !== 'Vendeur' && user.team ? `• ${user.team}` : ''}
                             </div>
                           </div>
                         </div>

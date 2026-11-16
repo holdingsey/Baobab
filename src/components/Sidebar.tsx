@@ -28,7 +28,8 @@ import {
   ShoppingBag,
   LogOut,
   ChevronRight,
-  Shield
+  X,
+  ShieldAlert
 } from 'lucide-react';
 import { BaobabLogo } from './BaobabLogo';
 import { UserSession } from './LoginScreen';
@@ -45,6 +46,7 @@ interface SidebarProps {
   unrevealedBonsCount?: number;
   pendingPurchaseRequestsCount?: number;
   pendingReceptionsCount?: number;
+  newAnomaliesCount?: number;
 }
 
 interface MenuItem {
@@ -67,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   unrevealedBonsCount = 0,
   pendingPurchaseRequestsCount = 0,
   pendingReceptionsCount = 0,
+  newAnomaliesCount = 0,
 }) => {
   const role = currentUser.role;
 
@@ -76,6 +79,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   if (role === 'Administrateur') {
     menuItems = [
       { id: 'dashboard', label: 'Vue globale', icon: LayoutDashboard },
+      {
+        id: 'alertes',
+        label: 'Alertes',
+        icon: ShieldAlert,
+        badge: newAnomaliesCount > 0 ? String(newAnomaliesCount) : undefined,
+        badgeColor: '#DC2626',
+      },
       { id: 'ventes', label: 'Ventes & Factures PDV', icon: ShoppingCart },
       { id: 'demandes-annulation-vente', label: 'Demandes annulation vente', icon: RotateCcw },
       { id: 'historique-sku', label: 'Analyse produits', icon: BarChart3 },
@@ -128,6 +138,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } else if (role === 'Directeur des opérations de vente' || /directeur|op[eé]ration|dov/i.test(role || '')) {
     menuItems = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      {
+        id: 'alertes',
+        label: 'Alertes',
+        icon: ShieldAlert,
+        badge: newAnomaliesCount > 0 ? String(newAnomaliesCount) : undefined,
+        badgeColor: '#DC2626',
+      },
       { id: 'ventes', label: 'Ventes & Factures PDV', icon: ShoppingCart },
       { id: 'demandes-annulation-vente', label: 'Demandes annulation vente', icon: RotateCcw },
       { id: 'historique-sku', label: 'Analyse produits', icon: BarChart3 },
@@ -148,6 +165,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     menuItems = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
       {
+        id: 'alertes',
+        label: 'Alertes',
+        icon: ShieldAlert,
+        badge: newAnomaliesCount > 0 ? String(newAnomaliesCount) : undefined,
+        badgeColor: '#DC2626',
+      },
+      {
         id: 'receptions',
         label: 'Validation Réceptions',
         icon: ArrowDownLeft,
@@ -160,6 +184,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
       { id: 'lots', label: 'Lots & FEFO', icon: Boxes },
       { id: 'retours', label: 'Retours vendeurs', icon: RotateCcw },
+      {
+        id: 'demandes-achat',
+        label: "Demandes d'achat",
+        icon: ShoppingBag,
+        badge: pendingPurchaseRequestsCount > 0 ? String(pendingPurchaseRequestsCount) : undefined,
+        badgeColor: '#DC2626',
+      },
       { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
     ];
   } else if (role === 'Gestionnaire grossiste' || /grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')) {
@@ -175,6 +206,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
     menuItems = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      {
+        id: 'alertes',
+        label: 'Alertes',
+        icon: ShieldAlert,
+        badge: newAnomaliesCount > 0 ? String(newAnomaliesCount) : undefined,
+        badgeColor: '#DC2626',
+      },
       {
         id: 'receptions',
         label: 'Réceptions',
@@ -194,6 +232,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } else if (role === 'Comptable') {
     menuItems = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+      {
+        id: 'alertes',
+        label: 'Alertes',
+        icon: ShieldAlert,
+        badge: newAnomaliesCount > 0 ? String(newAnomaliesCount) : undefined,
+        badgeColor: '#DC2626',
+      },
       { id: 'versements', label: 'Versements', icon: DollarSign },
       { id: 'soldes-vendeurs', label: 'Soldes vendeurs', icon: CreditCard },
       { id: 'factures', label: 'Factures', icon: Receipt },
@@ -228,6 +273,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ];
   }
 
+  const [isPageScrolled, setIsPageScrolled] = React.useState(false);
+  const [isNavScrolled, setIsNavScrolled] = React.useState(false);
+
+  React.useEffect(() => {
+    const handleWindowScroll = () => {
+      setIsPageScrolled(window.scrollY > 8);
+    };
+    handleWindowScroll();
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, []);
+
+  const shortRoleLabel = /directeur|op[eé]ration|dov/i.test(role || '')
+    ? 'DOV'
+    : role === 'Sales Admin'
+    ? 'Contrôleur'
+    : /grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')
+    ? 'Grossiste'
+    : role === 'Magasinier' || role === 'Gestionnaire de stock' || currentUser.code === 'BAO-MAG'
+    ? 'Magasinier'
+    : role;
+
   return (
     <>
       {/* Mobile Backdrop */}
@@ -238,28 +305,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
       )}
 
-      {/* Sidebar Container */}
+      {/* Sidebar Container - Sticky on desktop scroll & fixed sticky drawer on mobile/tablet */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 w-72 h-dvh max-h-screen overflow-hidden bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out lg:translate-x-0 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed top-0 bottom-0 left-0 lg:sticky lg:top-0 lg:self-start lg:shrink-0 z-50 w-56 max-w-[70vw] sm:w-60 lg:w-60 lg:max-w-none h-dvh max-h-dvh overflow-hidden bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-r border-slate-200 dark:border-slate-800 flex flex-col transition-all duration-300 ease-in-out lg:translate-x-0 lg:pointer-events-auto ${
+          isPageScrolled ? 'shadow-lg lg:shadow-md' : ''
+        } ${
+          isOpen ? 'translate-x-0 pointer-events-auto shadow-2xl' : '-translate-x-full pointer-events-none'
         }`}
       >
-        {/* Header with Baobab Logo */}
-        <div className="shrink-0 px-4 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-11 w-11 shrink-0 flex items-center justify-center">
-              <BaobabLogo logoUrl={logoUrl} size={42} variant="sidebar" />
+        {/* Sticky Header with Baobab Logo */}
+        <div
+          className={`sticky top-0 z-20 shrink-0 px-3 py-2.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 transition-shadow ${
+            isNavScrolled || isPageScrolled ? 'shadow-xs' : ''
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="h-8 w-8 shrink-0 flex items-center justify-center">
+              <BaobabLogo logoUrl={logoUrl} size={30} variant="sidebar" />
             </div>
-            <div className="text-lg font-extrabold text-slate-900 dark:text-white leading-tight tracking-tight">
+            <div className="text-[14px] font-extrabold text-slate-900 dark:text-white leading-tight tracking-tight min-w-0">
               Baobab Distribution
             </div>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fermer le menu"
+            className="lg:hidden w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 shrink-0 transition cursor-pointer"
+          >
+            <X className="w-4 h-4 shrink-0" />
+          </button>
         </div>
 
         {/* Exact Menu Items List (Hors rôle supprimées) */}
-        <nav className="flex-1 min-h-0 px-3 py-2 space-y-1 overflow-y-auto">
-          <div className="px-3.5 pb-2 text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-            Menu {/directeur|op[eé]ration|dov/i.test(role || '') ? 'Directeur des opérations de vente (DOV)' : role === 'Sales Admin' ? 'Sales Admin (Contrôleur)' : (/grossiste/i.test(role || '') || currentUser.code?.startsWith('BAO-GRS')) ? 'Gestionnaire grossiste' : (role === 'Magasinier' || role === 'Gestionnaire de stock' || currentUser.code === 'BAO-MAG') ? 'Gestionnaire de stock' : role} ({menuItems.length})
+        <nav
+          onScroll={(e) => setIsNavScrolled(e.currentTarget.scrollTop > 4)}
+          className="flex-1 min-h-0 px-2 pb-2 space-y-0.5 overflow-y-auto overscroll-contain"
+        >
+          <div
+            className={`sticky top-0 z-10 px-2.5 py-1.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs text-[10.5px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 transition-shadow ${
+              isNavScrolled ? 'border-b border-slate-100 dark:border-slate-800/80 shadow-2xs' : ''
+            }`}
+          >
+            Menu {shortRoleLabel} ({menuItems.length})
           </div>
 
           {menuItems.map((item) => {
@@ -272,26 +360,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setActiveTab(item.id);
                   onClose();
                 }}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[15px] transition cursor-pointer ${
+                className={`w-full min-h-[38px] h-auto flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] transition cursor-pointer ${
                   isActive
                     ? 'bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-bold'
                     : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold'
                 }`}
               >
-                <div className="flex items-center gap-3 truncate">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1 text-left">
                   <Icon
-                    className={`w-[18px] h-[18px] shrink-0 ${
+                    className={`w-4 h-4 shrink-0 ${
                       isActive
                         ? 'text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]'
                         : 'text-slate-500 dark:text-slate-400'
                     }`}
                   />
-                  <span className="truncate">{item.label}</span>
+                  <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere] leading-snug">{item.label}</span>
                 </div>
 
                 {item.badge && (
                   <span
-                    className="text-xs px-2 py-0.5 rounded-full font-bold text-white shrink-0 ml-1.5"
+                    className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold text-white shrink-0 ml-1"
                     style={{ backgroundColor: item.badgeColor || '#DC2626' }}
                   >
                     {item.badge}
@@ -302,17 +390,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
 
-        {/* Footer - Déconnexion */}
-        <div className="shrink-0 p-3.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+        {/* Sticky Footer - Déconnexion */}
+        <div className="sticky bottom-0 z-20 shrink-0 p-2.5 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md">
           <button
             onClick={onLogout}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-bold text-rose-600 bg-rose-50/80 hover:bg-rose-100 dark:text-rose-400 dark:bg-rose-950/40 dark:hover:bg-rose-950/70 border border-rose-200/60 dark:border-rose-900/50 transition"
+            className="w-full min-h-[38px] flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-bold text-rose-600 bg-rose-50/80 hover:bg-rose-100 dark:text-rose-400 dark:bg-rose-950/40 dark:hover:bg-rose-950/70 border border-rose-200/60 dark:border-rose-900/50 transition cursor-pointer"
           >
-            <div className="flex items-center gap-2.5">
-              <LogOut className="w-[18px] h-[18px] shrink-0" />
+            <div className="flex items-center gap-2">
+              <LogOut className="w-4 h-4 shrink-0" />
               <span>Déconnexion</span>
             </div>
-            <ChevronRight className="w-4 h-4 shrink-0" />
+            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
           </button>
         </div>
       </aside>

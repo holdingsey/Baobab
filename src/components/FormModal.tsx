@@ -188,37 +188,6 @@ export const FormModal: React.FC<FormModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleRequestClose, showConfirmClose]);
 
-  // Keep active field visible when mobile keyboard opens / resizes viewport
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const handleViewportResize = () => {
-      const activeEl = document.activeElement;
-      if (
-        activeEl &&
-        bodyRef.current &&
-        bodyRef.current.contains(activeEl) &&
-        (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT')
-      ) {
-        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    };
-    vv.addEventListener('resize', handleViewportResize);
-    return () => vv.removeEventListener('resize', handleViewportResize);
-  }, []);
-
-  const handleFocusCapture = (e: React.FocusEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement;
-    if (
-      target &&
-      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
-    ) {
-      setTimeout(() => {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 150);
-    }
-  };
-
   const handleBlurCapture = (e: React.FocusEvent<HTMLDivElement>) => {
     const target = e.target;
     if (
@@ -229,7 +198,7 @@ export const FormModal: React.FC<FormModalProps> = ({
       if (target.type === 'hidden' || target.type === 'file') return;
       if (!target.checkValidity()) {
         showFieldErrorDom(target, getFrenchValidationMessage(target));
-      } else {
+      } else if (target.getAttribute('aria-invalid') === 'true') {
         clearFieldErrorDom(target);
       }
     }
@@ -239,9 +208,10 @@ export const FormModal: React.FC<FormModalProps> = ({
     hasUserEditedRef.current = true;
     const target = e.target;
     if (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      target instanceof HTMLSelectElement
+      (target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement) &&
+      target.getAttribute('aria-invalid') === 'true'
     ) {
       if (target.checkValidity()) {
         clearFieldErrorDom(target);
@@ -270,7 +240,6 @@ export const FormModal: React.FC<FormModalProps> = ({
       if (firstInvalid) {
         e.preventDefault();
         (firstInvalid as HTMLElement).focus();
-        (firstInvalid as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
     }
@@ -285,7 +254,7 @@ export const FormModal: React.FC<FormModalProps> = ({
   return (
     <div
       onClick={handleRequestClose}
-      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center md:items-center md:p-4"
+      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
     >
@@ -293,39 +262,38 @@ export const FormModal: React.FC<FormModalProps> = ({
         noValidate
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleFormSubmit}
-        className="relative flex flex-col w-full h-[100dvh] max-h-[100dvh] md:h-auto md:max-h-[90dvh] md:max-w-[640px] bg-white dark:bg-[#0F172A] opacity-100 rounded-none md:rounded-2xl shadow-2xl md:border md:border-[#64748B] dark:md:border-[#94A3B8] overflow-hidden"
+        className="relative flex flex-col w-full h-[100dvh] max-h-[100dvh] sm:h-auto sm:max-h-[90dvh] sm:max-w-[600px] md:max-w-[640px] lg:max-w-[680px] bg-white dark:bg-[#0F172A] opacity-100 rounded-none sm:rounded-2xl shadow-2xl sm:border sm:border-[#64748B] dark:sm:border-[#94A3B8] overflow-hidden"
       >
-        {/* En-tête fixe */}
-        <div className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F172A]">
-          <div className="flex items-start md:items-center gap-2.5 min-w-0 flex-1">
-            {icon && <div className="shrink-0 mt-0.5 md:mt-0">{icon}</div>}
-            <div className="min-w-0 flex-1">
-              <h2 className="text-base font-bold text-[#0F172A] dark:text-[#F8FAFC] break-words leading-snug">
+        {/* En-tête fixe : Titre à gauche (flex-1 min-w-0), bouton Annuler/Fermer à droite (flex-none), sous-titre sur sa propre ligne en dessous */}
+        <div className="shrink-0 flex flex-col gap-1.5 px-4 md:px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F172A]">
+          <div className="flex items-center justify-between gap-3 w-full min-w-0">
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+              {icon && <div className="shrink-0">{icon}</div>}
+              <h2 className="flex-1 min-w-0 text-base font-bold text-[#0F172A] dark:text-[#F8FAFC] whitespace-normal [overflow-wrap:anywhere] break-words leading-snug">
                 {title}
               </h2>
-              {subtitle && (
-                <div className="text-xs text-[#475569] dark:text-[#CBD5E1] break-words leading-snug mt-0.5">
-                  {subtitle}
-                </div>
-              )}
             </div>
+
+            <button
+              type="button"
+              onClick={handleRequestClose}
+              className="flex-none shrink-0 w-auto min-h-[44px] h-auto py-2 px-4 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] font-semibold text-sm transition-colors cursor-pointer focus-visible:outline-none"
+            >
+              {cancelLabel}
+            </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleRequestClose}
-            className="shrink-0 h-[40px] px-4 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] font-semibold text-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)]"
-          >
-            {cancelLabel}
-          </button>
+          {subtitle && (
+            <div className="w-full min-w-0 text-xs text-[#475569] dark:text-[#CBD5E1] whitespace-normal [overflow-wrap:anywhere] break-words leading-snug">
+              {subtitle}
+            </div>
+          )}
         </div>
 
         {/* Corps défilant */}
         <div
           ref={bodyRef}
-          onFocusCapture={handleFocusCapture}
           onBlurCapture={handleBlurCapture}
-          onChangeCapture={handleInputCapture}
           onInputCapture={handleInputCapture}
           className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 md:px-6 py-5 space-y-5 text-sm bg-white dark:bg-[#0F172A] text-[#0F172A] dark:text-[#F8FAFC]"
         >
@@ -341,7 +309,7 @@ export const FormModal: React.FC<FormModalProps> = ({
               <button
                 type="submit"
                 disabled={submitDisabled}
-                className="w-full h-[48px] min-h-[48px] py-2.5 px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] text-[var(--marque-texte-sur-plein)] font-bold text-sm leading-tight text-center break-words shadow-sm transition flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full min-w-0 min-h-[48px] h-auto py-3 px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] text-[var(--marque-texte-sur-plein)] font-bold text-sm leading-snug text-center whitespace-normal [overflow-wrap:anywhere] break-words shadow-sm transition flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitLabel}
               </button>
@@ -362,11 +330,11 @@ export const FormModal: React.FC<FormModalProps> = ({
               <p className="text-sm text-[#334155] dark:text-[#E2E8F0]">
                 Des champs ont été remplis dans ce formulaire. Voulez-vous vraiment fermer et perdre votre saisie ?
               </p>
-              <div className="flex items-center justify-end gap-2 pt-1">
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowConfirmClose(false)}
-                  className="h-[44px] px-4 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] font-semibold text-sm hover:bg-[#E2E8F0] dark:hover:bg-[#334155] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)]"
+                  className="min-h-[48px] h-auto py-3 px-4 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] font-semibold text-sm hover:bg-[#E2E8F0] dark:hover:bg-[#334155] cursor-pointer focus-visible:outline-none"
                 >
                   Continuer la saisie
                 </button>
@@ -376,7 +344,7 @@ export const FormModal: React.FC<FormModalProps> = ({
                     setShowConfirmClose(false);
                     onClose();
                   }}
-                  className="h-[44px] px-4 rounded-[12px] bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B91C1C]"
+                  className="min-h-[48px] h-auto py-3 px-4 rounded-[12px] bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-sm cursor-pointer focus-visible:outline-none"
                 >
                   Abandonner
                 </button>

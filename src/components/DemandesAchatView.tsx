@@ -20,7 +20,7 @@ import { UserSession } from './LoginScreen';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
 import { ConfirmDestructiveButton } from './FormControls';
-import { DataTable } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 import { InvoiceData } from './PrintableDocument';
 
@@ -68,9 +68,12 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
   onOpenDocument,
 }) => {
   const isAdmin = currentUser.role === 'Administrateur';
+  const isSalesAdmin = currentUser.role === 'Sales Admin';
+  const canReviewRequest = isAdmin || isSalesAdmin;
   const isMagasinier = currentUser.role === 'Gestionnaire de stock' || currentUser.role === 'Magasinier';
   const isComptable = currentUser.role === 'Comptable';
-  const canCreateRequest = isMagasinier || isComptable || isAdmin;
+  // Seuls le Magasinier et le Comptable créent des demandes d'achat ; l'Admin et le Sales Admin les valident ou les refusent
+  const canCreateRequest = isMagasinier || isComptable;
 
   const [requests, setRequests] = useState<PurchaseRequestRecord[]>(externalRequests || []);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -267,7 +270,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
 
   const handleConfirmAdminDecision = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin || !decisionTarget) return;
+    if (!canReviewRequest || !decisionTarget) return;
 
     setIsSubmittingDecision(true);
     try {
@@ -280,14 +283,14 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         },
         body: JSON.stringify({
           decision: decisionTarget.decision,
-          admin_motif: adminMotif.trim() || null, // Motif optionnel de l'Admin
-          reviewed_by: `${currentUser.name} (${currentUser.code})`,
+          admin_motif: adminMotif.trim() || null, // Motif optionnel de l'Admin / SA
+          reviewed_by: `${currentUser.name} (${currentUser.role})`,
         }),
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        const actionLabel = decisionTarget.decision === 'validee' ? 'validée' : 'rejetée';
+        const actionLabel = decisionTarget.decision === 'validee' ? 'validée' : 'refusée';
         setFeedbackBanner({
           type: 'success',
           text: `Demande d'achat ${decisionTarget.request.reference} ${actionLabel} avec succès. Une notification a été envoyée à ${decisionTarget.request.requester_name} (${decisionTarget.request.requester_role}).`,
@@ -305,7 +308,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
     } catch {
       setFeedbackBanner({
         type: 'error',
-        text: 'Erreur réseau lors de la validation/rejet.',
+        text: 'Erreur réseau lors de la validation/refus.',
       });
     } finally {
       setIsSubmittingDecision(false);
@@ -317,11 +320,11 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
       const sameRole =
         r.requester_role === currentUser.role ||
         (isMagasinier && (r.requester_role === 'Gestionnaire de stock' || r.requester_role === 'Magasinier'));
-      if (!isAdmin && !sameRole && r.requester_id !== currentUser.id) {
+      if (!canReviewRequest && !sameRole && r.requester_id !== currentUser.id) {
         return false;
       }
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
-      if (isAdmin && roleFilter !== 'all') {
+      if (canReviewRequest && roleFilter !== 'all') {
         if (roleFilter === 'Gestionnaire de stock' || roleFilter === 'Magasinier') {
           if (r.requester_role !== 'Gestionnaire de stock' && r.requester_role !== 'Magasinier') return false;
         } else if (r.requester_role !== roleFilter) {
@@ -330,10 +333,10 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
       }
       return true;
     });
-  }, [requests, isAdmin, isMagasinier, currentUser.role, currentUser.id, statusFilter, roleFilter]);
+  }, [requests, canReviewRequest, isMagasinier, currentUser.role, currentUser.id, statusFilter, roleFilter]);
 
   const counts = useMemo(() => {
-    const base = isAdmin
+    const base = canReviewRequest
       ? requests
       : requests.filter(
           (r) =>
@@ -350,7 +353,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         .filter((r) => r.status === 'validee')
         .reduce((acc, r) => acc + Number(r.total_amount || 0), 0),
     };
-  }, [requests, isAdmin, isMagasinier, currentUser.role, currentUser.id]);
+  }, [requests, canReviewRequest, isMagasinier, currentUser.role, currentUser.id]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
@@ -359,13 +362,15 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-              {isAdmin
+              {canReviewRequest
                 ? "Validation des Demandes d'Achat"
                 : "Mes Demandes d'Achat"}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white">
               {isAdmin
                 ? 'Administrateur'
+                : isSalesAdmin
+                ? 'Sales Admin'
                 : currentUser.role === 'Gestionnaire de stock'
                 ? 'Magasinier'
                 : currentUser.role}
@@ -373,13 +378,15 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
           </div>
           <div className="flex items-center gap-1.5 mt-1">
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-              Suivi et validation des demandes d&apos;achat.
+              {canReviewRequest
+                ? "Validation ou refus des demandes d'achat soumises par le Magasinier et le Comptable."
+                : "Suivi et soumission de vos demandes d'achat."}
             </p>
             <InfoTooltip
               text={
-                isAdmin
-                  ? "Examinez, validez ou rejetez les demandes d'achat soumises par le Gestionnaire de stock et le Comptable (avec motif optionnel). Le demandeur reçoit immédiatement une notification de votre décision."
-                  : "Soumettez vos demandes d'achat (avec motif optionnel) à l'Administrateur et recevez une notification dès validation ou rejet."
+                canReviewRequest
+                  ? "Examinez, validez ou refusez les demandes d'achat soumises par le Gestionnaire de stock et le Comptable (avec motif optionnel). Le demandeur reçoit immédiatement une notification de votre décision."
+                  : "Soumettez vos demandes d'achat (avec motif optionnel) à l'Administrateur / Sales Admin et recevez une notification dès validation ou refus."
               }
             />
           </div>
@@ -411,7 +418,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
           ) : (
             <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold">
               <ShieldCheck className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-              <span>Validation / Rejet Administrateur (Motif optionnel)</span>
+              <span>Validation / Refus ({isAdmin ? 'Administrateur' : 'Sales Admin'})</span>
             </div>
           )}
         </div>
@@ -445,12 +452,12 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
       )}
 
       {/* Recent Decision Notifications for Magasinier / Comptable */}
-      {!isAdmin && notifications.length > 0 && (
+      {!canReviewRequest && notifications.length > 0 && (
         <div className="rounded-2xl border border-[#008DA9]/30 bg-cyan-50/50 dark:bg-cyan-950/20 p-4 space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2">
               <Bell className="w-4 h-4 text-[#008DA9]" />
-              <span>Notifications de Validation / Rejet reçues de l&apos;Administrateur</span>
+              <span>Notifications de Validation / Refus reçues</span>
             </div>
             <span className="text-[11px] font-bold text-[#008DA9]">
               {notifications.length} notification(s)
@@ -604,7 +611,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
           </button>
         </div>
 
-        {isAdmin && (
+        {canReviewRequest && (
           <div className="grid grid-cols-3 gap-2">
             {(['all', 'Magasinier', 'Comptable'] as const).map((r) => (
               <button
@@ -625,349 +632,333 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
       </div>
 
       {/* Purchase Requests List */}
-      <div className="space-y-4">
-        {visibleRequests.length === 0 ? (
-          <div className="p-10 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-xs text-slate-400">
-            Aucune demande d&apos;achat trouvée pour ce filtre.
-          </div>
-        ) : (
-          visibleRequests.map((req) => {
-            const isPending = req.status === 'en_attente';
-            const isValidee = req.status === 'validee';
-            const isRejetee = req.status === 'rejetee';
-            const createdDate = (req.created_at || '').split('T')[0];
-            const createdTime = (req.created_at || '').split('T')[1]?.slice(0, 5) || '09:00';
-
-            return (
-              <div
-                key={req.id}
-                className={`rounded-2xl border bg-white dark:bg-slate-900 p-5 shadow-xs transition space-y-4 ${
-                  isPending
-                    ? 'border-amber-300 dark:border-amber-800/80'
-                    : isValidee
-                    ? 'border-emerald-200 dark:border-emerald-800/70'
-                    : 'border-rose-200 dark:border-rose-800/70'
+      <CardList<PurchaseRequestRecord>
+        data={visibleRequests}
+        rowKey={(req) => req.id}
+        pageSize={20}
+        searchable={true}
+        searchPlaceholder="Rechercher par N° de demande, titre, fournisseur, catégorie, demandeur..."
+        searchPredicate={(req, q) =>
+          [
+            req.reference,
+            req.title,
+            req.category,
+            req.supplier_name,
+            req.requester_name,
+            req.requester_code,
+            req.requester_role,
+            req.request_motif,
+            req.admin_motif,
+            ...(req.items || []).map((it) => `${it.code} ${it.name}`),
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(q)
+        }
+        sortOptions={[
+          {
+            key: 'date_desc',
+            label: 'Date (plus récentes)',
+            compare: (a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')),
+          },
+          {
+            key: 'amount_desc',
+            label: 'Montant demandé (décroissant)',
+            compare: (a, b) => Number(b.total_amount || 0) - Number(a.total_amount || 0),
+          },
+          {
+            key: 'ref_asc',
+            label: 'Référence (A → Z)',
+            compare: (a, b) => String(a.reference || '').localeCompare(String(b.reference || '')),
+          },
+        ]}
+        defaultSortKey="date_desc"
+        emptyMessage="Aucune demande d'achat trouvée pour ce filtre."
+        cardClassName={(req) =>
+          req.status === 'en_attente'
+            ? 'border-amber-300 dark:border-amber-800/80'
+            : req.status === 'validee'
+            ? 'border-emerald-200 dark:border-emerald-800/70'
+            : 'border-rose-200 dark:border-rose-800/70'
+        }
+        title={(req) => {
+          const createdDate = (req.created_at || '').split('T')[0];
+          const createdTime = (req.created_at || '').split('T')[1]?.slice(0, 5) || '09:00';
+          return (
+            <div className="flex flex-wrap items-baseline justify-between gap-2 w-full min-w-0">
+              <span className="font-mono font-extrabold text-sm sm:text-base text-[#008DA9] dark:text-teal-400 [overflow-wrap:anywhere]">
+                {req.reference}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 [overflow-wrap:anywhere]">
+                Soumise le {createdDate} à {createdTime}
+              </span>
+            </div>
+          );
+        }}
+        subtitle={(req) => (
+          <span className="font-extrabold text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+            {req.title}
+          </span>
+        )}
+        badges={(req) => {
+          const isPending = req.status === 'en_attente';
+          const isValidee = req.status === 'validee';
+          const isRejetee = req.status === 'rejetee';
+          return (
+            <>
+              {isPending && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 text-[11px] font-black">
+                  <Clock className="w-3.5 h-3.5 shrink-0" />
+                  <span>En attente Admin</span>
+                </span>
+              )}
+              {isValidee && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300 text-[11px] font-black">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Validée par l&apos;Admin</span>
+                </span>
+              )}
+              {isRejetee && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 dark:bg-rose-950/70 dark:text-rose-300 text-[11px] font-black">
+                  <XCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Rejetée par l&apos;Admin</span>
+                </span>
+              )}
+              <span
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold ${
+                  req.requester_role === 'Magasinier'
+                    ? 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300'
+                    : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
                 }`}
               >
-                {/* Top Row */}
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs font-black px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white">
-                        {req.reference}
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                          req.requester_role === 'Magasinier'
-                            ? 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300'
-                            : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
-                        }`}
-                      >
-                        {req.requester_role === 'Magasinier' ? (
-                          <Package className="w-3 h-3" />
-                        ) : (
-                          <Calculator className="w-3 h-3" />
-                        )}
-                        <span>
-                          {req.requester_role} • {req.requester_name} ({req.requester_code})
-                        </span>
-                      </span>
-                      <span className="text-[11px] text-slate-400 font-medium">
-                        Soumise le {createdDate} à {createdTime}
-                      </span>
-                    </div>
-
-                    <h3 className="text-base font-black text-slate-900 dark:text-white">
-                      {req.title}
-                    </h3>
-                    <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span>
-                        Catégorie : <strong className="text-slate-700 dark:text-slate-300">{req.category}</strong>
-                      </span>
-                      <span>&bull;</span>
-                      <span>
-                        Fournisseur : <strong className="text-slate-700 dark:text-slate-300">{req.supplier_name}</strong>
-                      </span>
-                    </div>
+                {req.requester_role === 'Magasinier' ? (
+                  <Package className="w-3 h-3 shrink-0" />
+                ) : (
+                  <Calculator className="w-3 h-3 shrink-0" />
+                )}
+                <span>
+                  {req.requester_role} &bull; {req.requester_name} ({req.requester_code})
+                </span>
+              </span>
+              <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                {req.category}
+              </span>
+            </>
+          );
+        }}
+        fields={[
+          {
+            key: 'requester',
+            label: 'Demandeur',
+            render: (req) => (
+              <span className="[overflow-wrap:anywhere]">
+                <strong className="text-slate-900 dark:text-white">{req.requester_name}</strong>{' '}
+                <span className="font-mono text-xs text-slate-500">
+                  ({req.requester_code} &bull; {req.requester_role})
+                </span>
+              </span>
+            ),
+          },
+          {
+            key: 'category',
+            label: 'Catégorie',
+            render: (req) => req.category,
+          },
+          {
+            key: 'supplier',
+            label: 'Fournisseur',
+            render: (req) => <strong className="text-slate-900 dark:text-white">{req.supplier_name}</strong>,
+          },
+          {
+            key: 'items',
+            label: 'Articles demandés',
+            render: (req) => {
+              const items = Array.isArray(req.items) ? req.items : [];
+              return (
+                <div className="space-y-1.5">
+                  <div className="font-bold text-slate-900 dark:text-white">
+                    {items.length} article{items.length > 1 ? 's' : ''}
                   </div>
-
-                  <div className="flex items-center justify-between lg:justify-end gap-4 shrink-0">
-                    <div className="text-right">
-                      <span className="text-[10px] font-bold uppercase text-slate-400 block">
-                        Montant Total Demandé
-                      </span>
-                      <span className="text-lg font-black text-[#008DA9]">
-                        {Number(req.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                      </span>
-                    </div>
-
-                    <div>
-                      {isPending && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 text-xs font-black">
-                          <Clock className="w-3.5 h-3.5" />
-                          <span>En attente Admin</span>
-                        </span>
-                      )}
-                      {isValidee && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300 text-xs font-black">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Validée par l&apos;Admin</span>
-                        </span>
-                      )}
-                      {isRejetee && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-100 text-rose-900 dark:bg-rose-950/70 dark:text-rose-300 text-xs font-black">
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>Rejetée par l&apos;Admin</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <DataTable
-                  data={(req.items || []).map((it, idx) => ({ ...it, idx }))}
-                  rowKey={(it) => `${req.id}-item-${it.idx}`}
-                  pageSize={20}
-                  emptyMessage="Aucun article dans cette demande."
-                  mobileTitle={(it) => (
-                    <div>
-                      <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
-                        {it.code || `ART-0${it.idx + 1}`}
-                      </span>
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white mt-1">
-                        {it.name}
-                      </div>
-                    </div>
-                  )}
-                  mobileBadge={(it) => (
-                    <span className="font-black text-xs text-[#008DA9] whitespace-nowrap">
-                      {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
-                    </span>
-                  )}
-                  totalsFooter={
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span>Total articles : {(req.items || []).length}</span>
-                      <span className="whitespace-nowrap font-black text-[var(--marque-fonce)] dark:text-teal-300">
-                        Total : {Number(req.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                      </span>
-                    </div>
-                  }
-                  columns={[
-                    {
-                      key: 'code',
-                      header: 'Réf.',
-                      hideOnMobileCard: true,
-                      render: (it) => (
-                        <span className="font-mono font-bold text-slate-600 dark:text-slate-400">
-                          {it.code || `ART-0${it.idx + 1}`}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'name',
-                      header: "Désignation de l'article / besoin",
-                      hideOnMobileCard: true,
-                      render: (it) => (
-                        <span className="font-semibold text-slate-900 dark:text-white">
-                          {it.name}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'qty',
-                      header: 'Quantité',
-                      mobileLabel: 'Quantité',
-                      align: 'center',
-                      isNumeric: true,
-                      render: (it) => (
-                        <span className="font-bold text-slate-700 dark:text-slate-300">
-                          {it.qty}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'unitPrice',
-                      header: 'Prix Unitaire',
-                      mobileLabel: 'Prix Unitaire',
-                      align: 'right',
-                      isNumeric: true,
-                      render: (it) => (
-                        <span className="text-slate-600 dark:text-slate-400 font-medium">
-                          {Number(it.unitPrice || 0).toLocaleString('fr-FR')} FCFA
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'total',
-                      header: 'Sous-total',
-                      mobileLabel: 'Sous-total',
-                      align: 'right',
-                      isNumeric: true,
-                      hideOnMobileCard: true,
-                      render: (it) => (
-                        <span className="font-black text-slate-900 dark:text-white">
-                          {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
-                        </span>
-                      ),
-                    },
-                  ]}
-                />
-
-                {/* Motifs (Motif de la demande optionnel + Motif de décision Admin optionnel) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
-                    <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1.5">
-                      <MessageSquare className="w-3.5 h-3.5 text-[#008DA9]" />
-                      <span>Motif de la demande ({req.requester_role} • Optionnel) :</span>
-                    </div>
-                    <p className="mt-1 font-medium text-slate-700 dark:text-slate-200">
-                      {req.request_motif ? (
-                        req.request_motif
-                      ) : (
-                        <span className="italic text-slate-400">Aucun motif renseigné (optionnel)</span>
-                      )}
-                    </p>
-                  </div>
-
-                  {!isPending && (
+                  {items.map((it, idx) => (
                     <div
-                      className={`p-3 rounded-xl border ${
-                        isValidee
-                          ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/70'
-                          : 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/70'
-                      }`}
+                      key={idx}
+                      className="flex flex-wrap items-baseline justify-between gap-2 text-xs text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800/60 pb-1 last:border-b-0 last:pb-0"
                     >
-                      <div className="text-[10px] font-bold uppercase flex items-center justify-between gap-2">
-                        <span
-                          className={
-                            isValidee
-                              ? 'text-emerald-800 dark:text-emerald-300'
-                              : 'text-rose-800 dark:text-rose-300'
-                          }
-                        >
-                          Décision Administrateur ({isValidee ? 'Validée' : 'Rejetée'}) • Motif (Optionnel) :
-                        </span>
-                        {req.reviewed_at && (
-                          <span className="font-mono text-[10px] opacity-75">
-                            {req.reviewed_at.split('T')[0]}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">
-                        {req.admin_motif ? (
-                          req.admin_motif
-                        ) : (
-                          <span className="italic text-slate-400">
-                            Aucun motif précisé par l&apos;Administrateur (optionnel)
-                          </span>
-                        )}
-                      </p>
-                      {req.reviewed_by && (
-                        <div className="text-[10px] text-slate-500 mt-1">
-                          Traitée par : <strong>{req.reviewed_by}</strong>
-                        </div>
-                      )}
+                      <span className="min-w-0 [overflow-wrap:anywhere]">
+                        <span className="font-mono font-bold text-slate-500 dark:text-slate-400">
+                          {it.code || `ART-0${idx + 1}`}
+                        </span>{' '}
+                        &bull; <strong className="text-slate-900 dark:text-white">{it.name}</strong> (x{it.qty} à{' '}
+                        {Number(it.unitPrice || 0).toLocaleString('fr-FR')} FCFA)
+                      </span>
+                      <span className="font-extrabold text-slate-900 dark:text-white whitespace-nowrap ml-auto">
+                        {Number(it.total || 0).toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            },
+          },
+          {
+            key: 'request_motif',
+            label: 'Motif de la demande',
+            render: (req) =>
+              req.request_motif ? (
+                <span className="[overflow-wrap:anywhere]">{req.request_motif}</span>
+              ) : (
+                <span className="italic text-slate-400">Aucun motif renseigné (optionnel)</span>
+              ),
+          },
+          {
+            key: 'admin_decision',
+            label: 'Décision Administrateur',
+            hidden: (req) => req.status === 'en_attente',
+            render: (req) => {
+              const isValidee = req.status === 'validee';
+              return (
+                <div className="space-y-0.5 [overflow-wrap:anywhere]">
+                  <div className="font-semibold text-slate-900 dark:text-white">
+                    <span
+                      className={
+                        isValidee
+                          ? 'text-emerald-700 dark:text-emerald-300 font-bold'
+                          : 'text-rose-700 dark:text-rose-300 font-bold'
+                      }
+                    >
+                      {isValidee ? 'Validée' : 'Rejetée'} :{' '}
+                    </span>
+                    {req.admin_motif || (
+                      <span className="italic text-slate-400 font-normal">
+                        Aucun motif précisé par l&apos;Administrateur (optionnel)
+                      </span>
+                    )}
+                  </div>
+                  {(req.reviewed_by || req.reviewed_at) && (
+                    <div className="text-[11px] text-slate-500">
+                      {req.reviewed_by ? `Traitée par ${req.reviewed_by}` : ''}
+                      {req.reviewed_at ? ` le ${req.reviewed_at.split('T')[0]}` : ''}
                     </div>
                   )}
                 </div>
+              );
+            },
+          },
+          {
+            key: 'total_amount',
+            label: 'Montant total demandé',
+            isAmount: true,
+            render: (req) => (
+              <span className="font-black text-base text-[#008DA9] dark:text-teal-400 whitespace-nowrap">
+                {Number(req.total_amount || 0).toLocaleString('fr-FR')} FCFA
+              </span>
+            ),
+          },
+        ]}
+        renderActions={(req) => {
+          const isValidee = req.status === 'validee';
+          const isRejetee = req.status === 'rejetee';
+          const createdDate = (req.created_at || '').split('T')[0];
+          const createdTime = (req.created_at || '').split('T')[1]?.slice(0, 5) || '09:00';
+          return (
+            <>
+              {onOpenDocument && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenDocument({
+                      id: req.id,
+                      number: req.reference,
+                      date: `${createdDate} à ${createdTime}`,
+                      type: 'demande_achat',
+                      docTypeTitle: "DEMANDE D'ACHAT FOURNISSEUR",
+                      emitterTitle: `DEMANDEUR (${req.requester_role.toUpperCase()} BAOBAB)`,
+                      recipientTitle: 'FOURNISSEUR / DIRECTION ACHATS',
+                      vendorName: req.requester_name,
+                      vendorCode: req.requester_code,
+                      vendorTeam: `Service ${req.requester_role} — Baobab Distribution`,
+                      clientName: req.supplier_name || 'Fournisseur Partenaire',
+                      pdvName: req.supplier_name || 'Fournisseur Partenaire',
+                      pdvNeighborhood: `Catégorie : ${req.category}`,
+                      pdvManager: req.title,
+                      items: (req.items || []).map((it, idx) => ({
+                        id: `${req.id}-${idx}`,
+                        code: it.code || `ART-0${idx + 1}`,
+                        description: it.name,
+                        quantity: Number(it.qty || 1),
+                        unitPrice: Number(it.unitPrice || 0),
+                        total: Number(it.total || 0),
+                      })),
+                      subtotal: Number(req.total_amount || 0),
+                      taxRate: 0,
+                      taxAmount: 0,
+                      total: Number(req.total_amount || 0),
+                      paymentMethod: 'Bon de commande fournisseur',
+                      status: isValidee
+                        ? 'Validée par la Direction'
+                        : isRejetee
+                        ? 'Rejetée par la Direction'
+                        : 'En attente de validation Admin',
+                      isAcquittee: isValidee,
+                      notes: req.request_motif
+                        ? `Motif : ${req.request_motif}${req.admin_motif ? ` | Décision Admin : ${req.admin_motif}` : ''}`
+                        : req.admin_motif || undefined,
+                      sigLeftLabel: `Le Demandeur (${req.requester_role})`,
+                      sigCenterLabel: 'Service Comptabilité / Budget',
+                      sigRightLabel: 'Direction Générale (Validation)',
+                    })
+                  }
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 shrink-0" />
+                  <span>Imprimer</span>
+                </button>
+              )}
 
-                {/* Action Buttons (Aperçu / Imprimer A4 + Validation Admin si applicable) */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
-                  <span className="text-[11px] text-slate-500">
-                    {isAdmin
-                      ? isPending
-                        ? `Cette demande de ${req.requester_name} (${req.requester_role}) attend votre validation ou rejet.`
-                        : `Demande déjà ${isValidee ? 'validée' : 'rejetée'} — vous pouvez modifier votre décision si nécessaire.`
-                      : `Document officiel de demande d'achat • Catégorie : ${req.category}`}
-                  </span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {onOpenDocument && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onOpenDocument({
-                            id: req.id,
-                            number: req.reference,
-                            date: `${createdDate} à ${createdTime}`,
-                            type: 'demande_achat',
-                            docTypeTitle: "DEMANDE D'ACHAT FOURNISSEUR",
-                            emitterTitle: `DEMANDEUR (${req.requester_role.toUpperCase()} BAOBAB)`,
-                            recipientTitle: 'FOURNISSEUR / DIRECTION ACHATS',
-                            vendorName: req.requester_name,
-                            vendorCode: req.requester_code,
-                            vendorTeam: `Service ${req.requester_role} — Baobab Distribution`,
-                            clientName: req.supplier_name || 'Fournisseur Partenaire',
-                            pdvName: req.supplier_name || 'Fournisseur Partenaire',
-                            pdvNeighborhood: `Catégorie : ${req.category}`,
-                            pdvManager: req.title,
-                            items: (req.items || []).map((it, idx) => ({
-                              id: `${req.id}-${idx}`,
-                              code: it.code || `ART-0${idx + 1}`,
-                              description: it.name,
-                              quantity: Number(it.qty || 1),
-                              unitPrice: Number(it.unitPrice || 0),
-                              total: Number(it.total || 0),
-                            })),
-                            subtotal: Number(req.total_amount || 0),
-                            taxRate: 0,
-                            taxAmount: 0,
-                            total: Number(req.total_amount || 0),
-                            paymentMethod: 'Bon de commande fournisseur',
-                            status: isValidee
-                              ? 'Validée par la Direction'
-                              : isRejetee
-                              ? 'Rejetée par la Direction'
-                              : 'En attente de validation Admin',
-                            isAcquittee: isValidee,
-                            notes: req.request_motif
-                              ? `Motif : ${req.request_motif}${req.admin_motif ? ` | Décision Admin : ${req.admin_motif}` : ''}`
-                              : req.admin_motif || undefined,
-                            sigLeftLabel: `Le Demandeur (${req.requester_role})`,
-                            sigCenterLabel: 'Service Comptabilité / Budget',
-                            sigRightLabel: 'Direction Générale (Validation)',
-                          })
-                        }
-                        className="inline-flex items-center gap-1.5 h-[48px] px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                      >
-                        <Printer className="w-4 h-4 shrink-0" />
-                        <span className="whitespace-nowrap">Imprimer</span>
-                      </button>
-                    )}
+              {canReviewRequest && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDecisionTarget({ request: req, decision: 'validee' });
+                      setAdminMotif(req.admin_motif || '');
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>Valider (Motif optionnel)</span>
+                  </button>
 
-                    {isAdmin && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDecisionTarget({ request: req, decision: 'validee' });
-                            setAdminMotif(req.admin_motif || '');
-                          }}
-                          className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Accepter / Valider (Motif optionnel)</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDecisionTarget({ request: req, decision: 'rejetee' });
-                            setAdminMotif(req.admin_motif || '');
-                          }}
-                          className="inline-flex items-center gap-1.5 h-[48px] px-3.5 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
-                        >
-                          <XCircle className="w-4 h-4" />
-                          <span>Rejeter (Motif optionnel)</span>
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDecisionTarget({ request: req, decision: 'rejetee' });
+                      setAdminMotif(req.admin_motif || '');
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3.5 py-2 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                  >
+                    <XCircle className="w-4 h-4 shrink-0" />
+                    <span>Refuser (Motif optionnel)</span>
+                  </button>
+                </>
+              )}
+            </>
+          );
+        }}
+        totalsFooter={
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>Total demandes d&apos;achat ({visibleRequests.length})</span>
+            <span className="whitespace-nowrap font-black text-[var(--marque-fonce)] dark:text-teal-300">
+              Montant total :{' '}
+              {visibleRequests
+                .reduce((s, r) => s + Number(r.total_amount || 0), 0)
+                .toLocaleString('fr-FR')}{' '}
+              FCFA
+            </span>
+          </div>
+        }
+      />
 
       {/* MODAL: Create Purchase Request (Magasinier & Comptable) */}
       {canCreateRequest && showCreateModal && (
@@ -1162,13 +1153,13 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         </FormModal>
       )}
 
-      {/* MODAL: Admin Decision (Accept / Reject with Optional Motif) */}
-      {isAdmin && decisionTarget && (
+      {/* MODAL: Admin / Sales Admin Decision (Accept / Reject with Optional Motif) */}
+      {canReviewRequest && decisionTarget && (
         <FormModal
           title={
             decisionTarget.decision === 'validee'
               ? "Valider la Demande d'Achat"
-              : "Rejeter la Demande d'Achat"
+              : "Refuser la Demande d'Achat"
           }
           icon={
             decisionTarget.decision === 'validee' ? (
@@ -1184,7 +1175,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
               ? 'Traitement...'
               : decisionTarget.decision === 'validee'
               ? 'Confirmer la Validation & Notifier'
-              : 'Confirmer le Rejet & Notifier'
+              : 'Confirmer le Refus & Notifier'
           }
           submitDisabled={isSubmittingDecision}
           isDirty={Boolean(adminMotif.trim())}

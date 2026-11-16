@@ -24,23 +24,35 @@ import {
   fetchUserPushStatus,
   updateUserPushPreferences,
   triggerTestPushNotification,
+  getPushBannerDismissInfo,
+  clearPushBannerDismissal,
 } from '../utils/pushNotifications';
 
 interface NotificationSettingsPanelProps {
   currentUser: UserSession;
   onClose?: () => void;
   isModal?: boolean;
+  hideHeader?: boolean;
 }
 
 export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps> = ({
   currentUser,
   onClose,
   isModal = false,
+  hideHeader = false,
 }) => {
   const [supportInfo, setSupportInfo] = useState(() => getPushSupportInfo());
   const [hasLocalSubscription, setHasLocalSubscription] = useState(false);
   const [devices, setDevices] = useState<
-    Array<{ id: string; endpoint?: string; deviceLabel?: string; device_label?: string; updatedAt?: string; updated_at?: string; created_at?: string }>
+    Array<{
+      id: string;
+      endpoint?: string;
+      deviceLabel?: string;
+      device_label?: string;
+      updatedAt?: string;
+      updated_at?: string;
+      created_at?: string;
+    }>
   >([]);
   const [preferences, setPreferences] = useState<NotificationPreferences>({
     enabled: true,
@@ -52,10 +64,12 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
     type: 'success' | 'error' | 'info';
     message: string;
   } | null>(null);
+  const [dismissInfo, setDismissInfo] = useState(() => getPushBannerDismissInfo(currentUser.id));
 
   const refreshState = useCallback(async () => {
     setLoading(true);
     setSupportInfo(getPushSupportInfo());
+    setDismissInfo(getPushBannerDismissInfo(currentUser.id));
     const sub = await getActivePushSubscription(currentUser.id);
     setHasLocalSubscription(Boolean(sub));
     const status = await fetchUserPushStatus(currentUser.id, currentUser.role);
@@ -92,6 +106,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
             message: res.error || "Impossible d'activer les notifications sur cet appareil.",
           });
         } else {
+          clearPushBannerDismissal(currentUser.id);
           const updatedPrefs = await updateUserPushPreferences(currentUser.id, currentUser.role, {
             enabled: true,
           });
@@ -112,7 +127,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
         await refreshState();
         setFeedback({
           type: 'info',
-          message: 'Notifications système désactivées pour votre compte sur cet appareil.',
+          message: 'Notifications système désactivées sur cet appareil.',
         });
         window.dispatchEvent(new Event('baobab-push-subscription-changed'));
       }
@@ -156,6 +171,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
           });
           return;
         }
+        clearPushBannerDismissal(currentUser.id);
         await refreshState();
       }
       const res = await triggerTestPushNotification(currentUser.id, currentUser.role);
@@ -168,76 +184,60 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
     }
   };
 
-  const content = (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-6 shadow-xs space-y-5">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-[#008DA9] dark:text-cyan-300 shrink-0">
-            <Bell className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
-              Notifications
-            </h2>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Alertes en temps réel et badge d&apos;application.
-              </p>
-              <InfoTooltip text={`Alertes système en temps réel et badge sur l'icône de l'application (${currentUser.name} • ${currentUser.role}).`} />
+  const innerContent = (
+    <div className="space-y-4">
+      {!hideHeader && (
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3.5">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2.5 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0">
+              <Bell className="w-5 h-5" />
             </div>
-          </div>
-        </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
-            aria-label="Fermer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Message clair si refusé ou non supporté avec marche à suivre */}
-      {(!supportInfo.supported || supportInfo.permission === 'denied') && (
-        <div className="rounded-2xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4 space-y-2.5 text-xs">
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <div className="font-extrabold text-amber-950 dark:text-amber-200 text-sm">
-                {!supportInfo.supported
-                  ? 'Notifications système non prises en charge dans ce contexte'
-                  : 'Permission de notifications refusée sur cet appareil'}
+            <div className="min-w-0">
+              <h2 className="text-[18px] font-bold text-slate-900 dark:text-white leading-snug">
+                Notifications
+              </h2>
+              <div className="flex items-center gap-1 mt-0.5">
+                <p className="text-[14px] text-slate-500 dark:text-slate-400 leading-snug">
+                  Alertes temps réel et pastille d&apos;application.
+                </p>
+                <InfoTooltip
+                  text={`Configurez les notifications système en temps réel et le badge d'icône pour ${currentUser.name} (${currentUser.role}).`}
+                />
               </div>
-              <p className="text-amber-900 dark:text-amber-300 leading-relaxed">
-                {supportInfo.reason ||
-                  'Les notifications système sont bloquées par les réglages de votre navigateur ou de votre téléphone.'}
-              </p>
             </div>
           </div>
-          <div className="pl-7 space-y-1.5 text-amber-900 dark:text-amber-200 border-t border-amber-200/70 dark:border-amber-800/70 pt-2.5">
-            <div className="font-bold">Marche à suivre pour activer les notifications :</div>
-            <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed">
-              <li>
-                <strong>Dans le navigateur (Chrome / Edge / Firefox) :</strong> appuyez sur l'icône de cadenas ou de réglages à gauche de la barre d'adresse &rarr; <em>Autorisations</em> &rarr; <em>Notifications</em> &rarr; sélectionnez <strong>Autoriser</strong>, puis rechargez la page.
-              </li>
-              <li>
-                <strong>Sur téléphone ou tablette Android :</strong> ouvrez <em>Paramètres</em> &rarr; <em>Applications</em> &rarr; <em>Baobab Distribution</em> (ou <em>Chrome</em>) &rarr; <em>Notifications</em> &rarr; activez <strong>Autoriser les notifications</strong>.
-              </li>
-              <li>
-                <strong>Sur iPhone / iPad (iOS / iPadOS) :</strong> touchez <em>Partager</em> &rarr; <em>Sur l'écran d'accueil</em>, ouvrez l'application installée, puis allez dans <em>Réglages</em> &rarr; <em>Notifications</em> &rarr; <em>Baobab</em> &rarr; activez <strong>Autoriser les notifications</strong> et <strong>Pastilles</strong>.
-              </li>
-            </ul>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white inline-flex items-center justify-center cursor-pointer shrink-0"
+              aria-label="Fermer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Rappel discret lorsque les notifications ne sont pas activées ou ont été reportées pour 7 jours */}
+      {!isEffectiveActive && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/30 px-3.5 py-2.5 flex items-center justify-between gap-2.5 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <Bell className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="font-semibold text-amber-900 dark:text-amber-200 leading-snug">
+              {dismissInfo.dismissed
+                ? 'Rappel : bannière masquée pour 7 jours. Vous pouvez activer les notifications ici à tout moment.'
+                : 'Rappel : les notifications en temps réel ne sont pas encore activées sur cet appareil.'}
+            </span>
           </div>
+          <InfoTooltip text="Dans le navigateur : icône cadenas à gauche de l'adresse > Autorisations > Notifications > Autoriser. Sur Android : Paramètres > Applications > Notifications. Sur iOS : Partager > Sur l'écran d'accueil, puis Réglages > Notifications." />
         </div>
       )}
 
       {/* Feedback Banner */}
       {feedback && (
         <div
-          className={`p-3.5 rounded-xl border flex items-start gap-2.5 text-xs ${
+          className={`p-3 rounded-xl border flex items-start gap-2.5 text-xs ${
             feedback.type === 'success'
               ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
               : feedback.type === 'error'
@@ -252,149 +252,140 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
           ) : (
             <Info className="w-4 h-4 text-[#008DA9] shrink-0 mt-0.5" />
           )}
-          <span className="font-medium leading-relaxed">{feedback.message}</span>
+          <span className="font-medium leading-snug">{feedback.message}</span>
         </div>
       )}
 
-      {/* Activer / Désactiver + Tester */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
-        <div className="space-y-1.5 min-w-0">
-          <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2">
-            <span className="text-sm font-extrabold text-slate-900 dark:text-white whitespace-nowrap">
-              Statut sur cet appareil&nbsp;:
-            </span>
-            <span
-              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold shrink-0 ${
-                isEffectiveActive
-                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
-                  : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
-              }`}
-            >
-              {isEffectiveActive ? 'Activées' : 'Désactivées'}
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-            Recevez les alertes même lorsque l'application Baobab Distribution est fermée.
-          </p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={handleToggleMain}
-            disabled={busyAction !== null || !supportInfo.supported}
-            className={`w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-extrabold transition cursor-pointer disabled:opacity-50 ${
+      {/* Statut actuel sur l'appareil */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-slate-900 dark:text-white">
+            Statut sur cet appareil :
+          </span>
+          <span
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold ${
               isEffectiveActive
-                ? 'bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-100'
-                : 'bg-[#008DA9] hover:bg-[#00748C] text-white shadow-xs'
+                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
             }`}
           >
-            {busyAction === 'toggle' ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-            ) : isEffectiveActive ? (
-              <BellOff className="w-3.5 h-3.5 shrink-0" />
-            ) : (
-              <Bell className="w-3.5 h-3.5 shrink-0" />
-            )}
-            <span>
-              {isEffectiveActive ? 'Désactiver les notifications' : 'Activer les notifications'}
-            </span>
-          </button>
+            {isEffectiveActive ? 'Activées' : 'Désactivées'}
+          </span>
+          <InfoTooltip text="Recevez les alertes même lorsque l'application Baobab Distribution est fermée ou en arrière-plan." />
+        </div>
 
-          <button
-            type="button"
-            onClick={handleSendTest}
-            disabled={busyAction !== null || !supportInfo.supported}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-extrabold bg-teal-50 hover:bg-teal-100 text-[#008DA9] dark:bg-teal-950/60 dark:hover:bg-teal-900/60 dark:text-cyan-300 border border-[#008DA9]/30 transition cursor-pointer disabled:opacity-50"
-          >
-            {busyAction === 'test' ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-            ) : (
-              <Send className="w-3.5 h-3.5 shrink-0" />
-            )}
-            <span>Envoyer une notification de test</span>
-          </button>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+          <Smartphone className="w-4 h-4 text-[#008DA9] shrink-0" />
+          <span>
+            Appareils abonnés :{' '}
+            <strong className="text-slate-800 dark:text-slate-200">{devices.length}</strong>
+          </span>
         </div>
       </div>
 
       {/* Choix des types de notifications */}
-      <div className="space-y-3">
+      <div className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Types de notifications reçues
-          </h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Catégories d&apos;alertes
+            </h3>
+            <InfoTooltip text="Cochez ou décochez les familles d'alertes que vous souhaitez recevoir sur vos appareils." />
+          </div>
           {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {NOTIFICATION_CATEGORY_LABELS.map((item) => {
             const checked = Boolean(preferences.types?.[item.key]);
             return (
               <label
                 key={item.key}
-                className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition ${
+                className={`flex items-center justify-between gap-2.5 p-3 rounded-xl border text-xs cursor-pointer transition ${
                   checked
                     ? 'bg-teal-50/40 dark:bg-teal-950/25 border-[#008DA9]/40'
                     : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-75'
                 }`}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => handleToggleCategory(item.key)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#008DA9] focus:ring-[#008DA9] cursor-pointer"
-                />
-                <div className="min-w-0">
-                  <div className="font-bold text-slate-900 dark:text-white">{item.label}</div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
-                    {item.description}
-                  </div>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => handleToggleCategory(item.key)}
+                    className="h-4 w-4 rounded border-slate-300 text-[#15803D] focus:ring-[#15803D] cursor-pointer shrink-0"
+                  />
+                  <span className="font-bold text-slate-900 dark:text-white leading-snug">
+                    {item.label}
+                  </span>
                 </div>
+                <InfoTooltip text={item.description} />
               </label>
             );
           })}
         </div>
       </div>
 
-      {/* Appareils enregistrés (téléphone, tablette, ordinateur) */}
-      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
-        <div className="flex items-center gap-1.5">
-          <Smartphone className="w-4 h-4 text-[#008DA9]" />
+      {/* Boutons principaux verts en bas de la section */}
+      <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
+        <button
+          type="button"
+          onClick={handleSendTest}
+          disabled={busyAction !== null || !supportInfo.supported}
+          className="h-[48px] min-h-[48px] px-4 rounded-xl border border-[#15803D] bg-[#DCFCE7] hover:bg-[#BBF7D0] dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-[#15803D] dark:text-emerald-300 font-bold text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+        >
+          {busyAction === 'test' ? (
+            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+          ) : (
+            <Send className="w-4 h-4 shrink-0" />
+          )}
+          <span>Tester la notification</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleToggleMain}
+          disabled={busyAction !== null || !supportInfo.supported}
+          className="h-[48px] min-h-[48px] px-5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+        >
+          {busyAction === 'toggle' ? (
+            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+          ) : isEffectiveActive ? (
+            <BellOff className="w-4 h-4 shrink-0" />
+          ) : (
+            <Bell className="w-4 h-4 shrink-0" />
+          )}
           <span>
-            Appareils abonnés pour <strong>{currentUser.name}</strong> :{' '}
-            <strong className="text-slate-800 dark:text-slate-200">{devices.length}</strong>
+            {isEffectiveActive ? 'Désactiver les notifications' : 'Activer les notifications'}
           </span>
-        </div>
-        {devices.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {devices.map((d) => (
-              <span
-                key={d.id}
-                className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-semibold"
-              >
-                {d.device_label || d.deviceLabel || 'Appareil'}
-              </span>
-            ))}
-          </div>
-        )}
+        </button>
       </div>
     </div>
   );
 
+  if (hideHeader && !isModal) {
+    return innerContent;
+  }
+
+  const cardWrapped = (
+    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-6 shadow-xs">
+      {innerContent}
+    </div>
+  );
+
   if (!isModal) {
-    return content;
+    return cardWrapped;
   }
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center md:items-center md:p-4"
+      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
-        className="w-full h-[100dvh] max-h-[100dvh] md:h-auto md:max-h-[90dvh] md:max-w-[640px] bg-white dark:bg-[#0F172A] opacity-100 rounded-none md:rounded-2xl shadow-2xl md:border md:border-[#64748B] dark:md:border-[#94A3B8] overflow-y-auto"
+        className="w-full h-[100dvh] max-h-[100dvh] sm:h-auto sm:max-h-[90dvh] sm:max-w-[640px] bg-white dark:bg-[#0F172A] opacity-100 rounded-none sm:rounded-2xl shadow-2xl sm:border sm:border-[#64748B] dark:sm:border-[#94A3B8] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {content}
+        {cardWrapped}
       </div>
     </div>
   );

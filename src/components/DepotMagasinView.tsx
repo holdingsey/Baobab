@@ -41,7 +41,7 @@ import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
 import { exportTableToCsv } from '../utils/csvExport';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
-import { DataTable } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 import { InvoiceData } from './PrintableDocument';
 import {
@@ -1524,9 +1524,9 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
   const selectableVendors = useMemo(() => {
     if (vendorsList.length > 0) return vendorsList;
     return [
-      { id: 'usr-vnd-1', code: 'BAO-VND-001', name: 'Oumar Konaté', team: 'Équipe Sotuba / Rive Gauche' },
-      { id: 'usr-vnd-2', code: 'BAO-VND-002', name: 'Sékou Traoré', team: 'Équipe Badalabougou / Rive Droite' },
-      { id: 'usr-vnd-3', code: 'BAO-VND-003', name: 'Bakary Sidibé', team: 'Équipe Centre Commercial / ACI' },
+      { id: 'usr-vnd-1', code: 'BAO-VND-001', name: 'Oumar Konaté', team: '' },
+      { id: 'usr-vnd-2', code: 'BAO-VND-002', name: 'Bakary Sidibé', team: '' },
+      { id: 'usr-vnd-3', code: 'BAO-VND-003', name: 'Seydou Diakité', team: '' },
     ];
   }, [vendorsList]);
 
@@ -2093,11 +2093,11 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 setValidatedLines([]);
                 setIsAddingLine(true);
               }}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+              className="inline-flex items-center justify-center gap-2 min-h-[48px] h-auto py-3 px-4 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer min-w-0"
             >
-              <PlusCircle className="w-4 h-4" />
+              <PlusCircle className="w-4 h-4 shrink-0" />
               <span>
-                {isDirecteurOps || isAdmin ? 'Demander du stock pour un vendeur' : 'Demander un Chargement'}
+                {isDirecteurOps || isAdmin ? 'Demander du stock' : 'Mon chargement'}
               </span>
             </button>
           )}
@@ -2311,96 +2311,92 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
       {/* ---------------------------------------------------- */}
       {activeTab === 'stock' && (
         <div className="space-y-6">
-          <DataTable<any>
+          <CardList<any>
             data={products}
-            getRowKey={(p) => p.id}
+            rowKey={(p) => p.id}
+            pageSize={20}
             emptyMessage="Aucun produit dans le stock dépôt."
-            mobileTitle={(p) => p.name}
-            mobileSubtitle={(p) => `${p.code} • ${p.gamme}`}
-            mobileStatusBadge={(p) => (
-              <StockBadge stock={p.stock_depot} threshold={p.threshold_depot} />
-            )}
-            columns={[
+            searchable
+            searchPlaceholder="Rechercher par produit, référence ou gamme..."
+            searchPredicate={(p, q) =>
+              String(p.name || '').toLowerCase().includes(q) ||
+              String(p.code || '').toLowerCase().includes(q) ||
+              String(p.gamme || '').toLowerCase().includes(q) ||
+              String(p.packaging || '').toLowerCase().includes(q)
+            }
+            sortOptions={[
+              {
+                key: 'stock',
+                label: 'Stock Physique',
+                compare: (a, b) => Number(a.stock_depot || 0) - Number(b.stock_depot || 0),
+              },
               {
                 key: 'name',
-                label: 'Produit & Référence',
-                hideOnMobileCard: true,
-                render: (p) => (
-                  <div>
-                    <div className="font-bold text-slate-900 dark:text-white">{p.name}</div>
-                    <div className="font-mono text-[10px] text-slate-400">{p.code}</div>
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux Dépôt</span>,
+                label: 'Nom du produit',
+                compare: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
               },
               {
-                key: 'gamme',
-                label: 'Gamme',
-                hideOnMobileCard: true,
-                render: (p) => (
-                  <span className="text-[11px] font-bold uppercase text-teal-600 dark:text-teal-400">
-                    {p.gamme}
-                  </span>
-                ),
+                key: 'price',
+                label: 'Prix Carton',
+                compare: (a, b) => Number(a.price_box || 0) - Number(b.price_box || 0),
               },
+            ]}
+            defaultSortKey="name"
+            defaultSortDirection="asc"
+            renderTitle={(p) => (
+              <div className="min-w-0">
+                <div className="font-bold text-slate-900 dark:text-white break-words">{p.name}</div>
+                <div className="font-mono text-xs text-slate-400 break-words">{p.code}</div>
+              </div>
+            )}
+            renderBadges={(p) => (
+              <>
+                <StockBadge stock={p.stock_depot} threshold={p.threshold_depot} />
+                <span className="px-2.5 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/60 text-xs font-bold uppercase text-teal-700 dark:text-teal-300">
+                  {p.gamme}
+                </span>
+              </>
+            )}
+            fields={[
               {
                 key: 'packaging',
                 label: 'Conditionnement',
-                isSecondary: true,
-                render: (p) => (
-                  <span className="text-slate-600 dark:text-slate-300">{p.packaging}</span>
-                ),
-              },
-              {
-                key: 'price_box',
-                label: 'Prix Carton',
-                align: 'right',
-                isNumeric: true,
-                render: (p) => (
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">
-                    {p.price_box.toLocaleString('fr-FR')} FCFA
-                  </span>
-                ),
+                render: (p) => p.packaging,
               },
               {
                 key: 'stock_depot',
                 label: 'Stock Physique',
-                align: 'right',
-                isNumeric: true,
                 render: (p) => (
-                  <span className="font-black text-slate-900 dark:text-white">
-                    {p.stock_depot} <span className="text-[10px] font-bold text-teal-600">ctn</span>
-                  </span>
-                ),
-                footer: (
-                  <span>
-                    {products.reduce((acc, p) => acc + Number(p.stock_depot || 0), 0)} ctn
+                  <span className="font-black text-slate-900 dark:text-white whitespace-nowrap">
+                    {p.stock_depot} <span className="text-xs font-bold text-teal-600">cartons</span>
                   </span>
                 ),
               },
               {
                 key: 'autonomy',
-                label: 'Couverture',
-                isSecondary: true,
-                align: 'center',
+                label: 'Couverture estimée',
                 render: (p) => (
-                  <span className="text-[11px] text-emerald-600 font-semibold">
+                  <span className="text-emerald-600 font-semibold">
                     ~{Math.round(p.stock_depot / 25)} j (obj. 30-45j)
                   </span>
                 ),
               },
               {
-                key: 'status',
-                label: 'Statut Seuil',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: (p) => (
-                  <StockBadge stock={p.stock_depot} threshold={p.threshold_depot} />
-                ),
+                key: 'price_box',
+                label: 'Prix Carton',
+                isAmount: true,
+                render: (p) => `${Number(p.price_box || 0).toLocaleString('fr-FR')} FCFA`,
+              },
+              {
+                key: 'valorisation',
+                label: 'Valorisation Stock',
+                isAmount: true,
+                render: (p) =>
+                  `${(Number(p.stock_depot || 0) * Number(p.price_box || 0)).toLocaleString('fr-FR')} FCFA`,
               },
             ]}
             totalsFooter={
-              <>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                 <span>
                   Références :{' '}
                   <strong className="text-slate-900 dark:text-white">{products.length}</strong>
@@ -2411,7 +2407,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     {products.reduce((acc, p) => acc + Number(p.stock_depot || 0), 0)} cartons
                   </strong>
                 </span>
-                <span>
+                <span className="whitespace-nowrap">
                   Valorisation Dépôt :{' '}
                   <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
                     {products
@@ -2423,7 +2419,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     FCFA
                   </strong>
                 </span>
-              </>
+              </div>
             }
           />
 
@@ -2534,14 +2530,42 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
             </div>
           </div>
 
-          {/* Lots & FEFO — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Lots & FEFO — Composant partagé CardList */}
+          <CardList<any>
             data={filteredLots}
-            getRowKey={(lot) => lot.id}
+            rowKey={(lot) => lot.id}
+            pageSize={20}
             emptyMessage="Aucun lot ne correspond aux critères de filtre."
-            mobileTitle={(lot) => lot.lot_number}
-            mobileSubtitle={(lot) => `${lot.product_name} (${lot.product_code})`}
-            mobileStatusBadge={(lot) => {
+            sortOptions={[
+              {
+                key: 'expiry',
+                label: 'Date de péremption (FEFO)',
+                compare: (a, b) => Number(a.days_remaining || 0) - Number(b.days_remaining || 0),
+              },
+              {
+                key: 'quantity',
+                label: 'Quantité disponible',
+                compare: (a, b) => Number(a.quantity || 0) - Number(b.quantity || 0),
+              },
+            ]}
+            defaultSortKey="expiry"
+            defaultSortDirection="asc"
+            renderTitle={(lot) => (
+              <div className="min-w-0">
+                <div className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                  {lot.lot_number}
+                </div>
+                <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 break-words">
+                  {lot.product_name} ({lot.product_code})
+                </div>
+              </div>
+            )}
+            renderSubtitle={(lot) => (
+              <span className="font-mono text-xs text-slate-500 whitespace-nowrap">
+                Exp. {lot.expiry_date}
+              </span>
+            )}
+            renderBadges={(lot) => {
               let badgeClasses = '';
               if (lot.shelf_life_status === 'bon') {
                 badgeClasses =
@@ -2557,123 +2581,59 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   'bg-slate-200 text-slate-800 border-slate-400 dark:bg-slate-700 dark:text-slate-200';
               }
               return (
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${badgeClasses}`}
-                >
-                  {lot.shelf_life_label}
-                </span>
+                <>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${badgeClasses}`}
+                  >
+                    {lot.shelf_life_label}
+                  </span>
+                  {lot.is_expired ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-red-600 text-white uppercase">
+                      Bloqué vente &amp; chargement
+                    </span>
+                  ) : lot.quantity === 0 ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-500">
+                      Épuisé
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300">
+                      Priorité FEFO
+                    </span>
+                  )}
+                </>
               );
             }}
-            columns={[
+            fields={[
               {
-                key: 'lot_number',
-                label: 'N° Lot & Produit',
-                hideOnMobileCard: true,
-                render: (lot) => (
-                  <div>
-                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                      {lot.lot_number}
-                    </div>
-                    <div className="font-semibold text-slate-800 dark:text-slate-200">
-                      {lot.product_name}
-                    </div>
-                    <div className="text-[10px] text-slate-400">{lot.product_code}</div>
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux Lots</span>,
+                key: 'product',
+                label: 'Produit',
+                render: (lot) => `${lot.product_name} (${lot.product_code})`,
               },
               {
-                key: 'expiry',
+                key: 'expiry_date',
                 label: 'Péremption & Délai',
-                align: 'center',
                 render: (lot) => (
-                  <div>
-                    <div className="font-mono font-medium text-slate-600 dark:text-slate-300">
-                      {lot.expiry_date}
-                    </div>
-                    <div className="font-bold">
-                      <span
-                        className={
-                          lot.days_remaining <= 0
-                            ? 'text-slate-400'
-                            : lot.days_remaining < 30
-                            ? 'text-red-600'
-                            : 'text-slate-700 dark:text-slate-300'
-                        }
-                      >
-                        {lot.days_remaining <= 0 ? 'Expiré' : `${lot.days_remaining} j`}
-                      </span>
-                    </div>
-                  </div>
+                  <span
+                    className={`font-bold ${
+                      lot.days_remaining <= 0
+                        ? 'text-slate-400'
+                        : lot.days_remaining < 30
+                        ? 'text-red-600'
+                        : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {lot.expiry_date} ({lot.days_remaining <= 0 ? 'Expiré' : `${lot.days_remaining} j`})
+                  </span>
                 ),
-              },
-              {
-                key: 'status',
-                label: 'Statut Rayon',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: (lot) => {
-                  let badgeClasses = '';
-                  if (lot.shelf_life_status === 'bon') {
-                    badgeClasses =
-                      'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300';
-                  } else if (lot.shelf_life_status === 'attention') {
-                    badgeClasses =
-                      'bg-amber-100 text-[#92400E] border-amber-300 dark:bg-amber-950/80 dark:text-amber-300';
-                  } else if (lot.shelf_life_status === 'urgent') {
-                    badgeClasses =
-                      'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-300';
-                  } else {
-                    badgeClasses =
-                      'bg-slate-200 text-slate-800 border-slate-400 dark:bg-slate-700 dark:text-slate-200';
-                  }
-                  return (
-                    <div>
-                      <span
-                        className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold border ${badgeClasses}`}
-                      >
-                        {lot.shelf_life_label}
-                      </span>
-                      {lot.is_expired && (
-                        <div className="text-[9px] font-black text-red-600 dark:text-red-400 uppercase mt-0.5">
-                          Bloqué vente & chargement
-                        </div>
-                      )}
-                    </div>
-                  );
-                },
               },
               {
                 key: 'quantity',
-                label: 'Stock Dispo',
-                align: 'right',
-                isNumeric: true,
+                label: 'Stock Disponible',
                 render: (lot) => (
-                  <span className="font-black text-slate-900 dark:text-white">
-                    {lot.quantity} <span className="text-[10px] font-bold text-teal-600">ctn</span>
+                  <span className="font-black text-slate-900 dark:text-white whitespace-nowrap">
+                    {lot.quantity} <span className="text-xs font-bold text-teal-600">cartons</span>
                   </span>
                 ),
-                footer: (
-                  <span>
-                    {filteredLots.reduce((acc, l) => acc + Number(l.quantity || 0), 0)} ctn
-                  </span>
-                ),
-              },
-              {
-                key: 'fefo',
-                label: 'Ordre FEFO',
-                align: 'center',
-                isSecondary: true,
-                render: (lot) =>
-                  lot.is_expired ? (
-                    <span className="text-[10px] text-slate-400 font-bold">Exclu</span>
-                  ) : lot.quantity === 0 ? (
-                    <span className="text-[10px] text-slate-400">Épuisé</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-600 dark:text-teal-400">
-                      <span>Priorité FEFO</span>
-                    </span>
-                  ),
               },
             ]}
             renderActions={(lot) =>
@@ -2681,7 +2641,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleOpenLossModal(lot)}
-                  className="px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-700 dark:text-red-300 text-[11px] font-bold transition cursor-pointer"
+                  className="min-h-[48px] px-4 py-2 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-700 dark:text-red-300 text-xs font-bold transition cursor-pointer"
                   title="Sortie Perte / Casse / Péremption"
                 >
                   Sortie Perte
@@ -2689,7 +2649,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
               ) : null
             }
             totalsFooter={
-              <>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                 <span>
                   Nombre de lots :{' '}
                   <strong className="text-slate-900 dark:text-white">
@@ -2702,7 +2662,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     {filteredLots.reduce((acc, l) => acc + Number(l.quantity || 0), 0)} cartons
                   </strong>
                 </span>
-              </>
+              </div>
             }
           />
         </div>
@@ -2776,7 +2736,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                       >
                         {selectableVendors.map((v: any) => (
                           <option key={v.id} value={v.id}>
-                            {v.name} ({v.code}) — {v.team || 'Équipe Vente'}
+                            {v.name} ({v.code})
                           </option>
                         ))}
                       </select>
@@ -2809,12 +2769,13 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
                 {/* 2. Catalogue & Liste des Produits Disponibles (Quantité + Valider directement dans le produit sélectionné) */}
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-1">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between md:flex-wrap gap-1 min-w-0">
                     <label className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider">
-                      Catalogue des Produits Disponibles au Dépôt ({availableProductsForLine.length} disponibles) :
+                      Sélectionner un produit
                     </label>
-                    <span className="text-[11px] text-slate-500">
-                      Touchez un produit pour indiquer la quantité et valider
+                    <span className="text-xs font-semibold text-slate-500">
+                      {availableProductsForLine.length}{' '}
+                      {availableProductsForLine.length > 1 ? 'produits disponibles' : 'produit disponible'}
                     </span>
                   </div>
 
@@ -2851,29 +2812,34 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                               {prod.code}
                             </span>
                           </div>
-                          <div className="font-black text-sm text-slate-900 dark:text-white">
+                          <div className="font-black text-sm text-slate-900 dark:text-white break-words">
                             {prod.name}
                           </div>
                           <div className="text-[11px] text-slate-500 mt-0.5">
                             {prod.packaging} &bull; <strong>{prod.price_box.toLocaleString('fr-FR')} FCFA</strong>/ctn
                           </div>
-                          <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                              Stock dépôt : <span className="text-[#008DA9] dark:text-cyan-400 font-black">{prod.stock_depot} ctn</span>
-                            </span>
-                            {validatedItem ? (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
-                                Validé ({validatedItem.requestedBoxes} ctn)
+                          <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-700/60 flex flex-col gap-1 text-[11px]">
+                            <div className="text-slate-600 dark:text-slate-300">
+                              Mon stock : <strong className="text-teal-700 dark:text-teal-400">{chargements.find((c: any) => c.vendor_id === (currentRole === 'Vendeur' ? currentUser?.id : selectedRequestVendorId) && c.remise_confirmed)?.items?.find((i: any) => i.productId === prod.id)?.allocatedBoxes ?? 0} ctn</strong>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-slate-700 dark:text-slate-300">
+                                Dépôt : <span className="text-[#008DA9] dark:text-cyan-400 font-black">{prod.stock_depot} ctn</span>
                               </span>
-                            ) : isCurrentlySelected ? (
-                              <span className="px-2 py-0.5 rounded-full bg-[#008DA9] text-white text-[10px] font-bold">
-                                Sélectionné
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-bold text-[#008DA9] underline">
-                                Choisir
-                              </span>
-                            )}
+                              {validatedItem ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold shrink-0">
+                                  Validé ({validatedItem.requestedBoxes} ctn)
+                                </span>
+                              ) : isCurrentlySelected ? (
+                                <span className="px-2 py-0.5 rounded-full bg-[#008DA9] text-white text-[10px] font-bold shrink-0">
+                                  Sélectionné
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold text-[#008DA9] underline shrink-0">
+                                  Choisir
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           {/* Quantité + Bouton "Valider" directement dans le bloc du produit sélectionné */}
@@ -2912,7 +2878,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                         setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
                                       }
                                     }}
-                                    className="w-full h-8 px-2 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-black text-xs text-center focus:outline-none"
+                                    className="w-full min-w-[76px] h-10 px-2 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-black text-base text-center focus:outline-none"
                                   />
                                   <button
                                     type="button"
@@ -2946,11 +2912,12 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     <button
                       type="button"
                       onClick={handleStartNextLine}
-                      className="w-full py-3 rounded-xl border-2 border-dashed border-[#008DA9] text-[#008DA9] dark:text-cyan-300 hover:bg-[#008DA9]/5 font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+                      className="w-full min-h-[48px] h-auto py-3 px-4 rounded-xl border-2 border-dashed border-[#008DA9] text-[#008DA9] dark:text-cyan-300 hover:bg-[#008DA9]/5 font-bold flex items-center justify-center gap-2 transition cursor-pointer min-w-0"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="w-4 h-4 shrink-0" />
                       <span>
-                        + Ajouter un produit ({availableProductsForLine.length} produit(s) restant(s) au catalogue)
+                        + Ajouter un produit ({availableProductsForLine.length}{' '}
+                        {availableProductsForLine.length > 1 ? 'produits disponibles' : 'produit disponible'})
                       </span>
                     </button>
                   </div>
@@ -2958,10 +2925,12 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
                 {/* 4. Récapitulatif des lignes validées */}
                 <div className="space-y-2">
-                  <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                    <span>Lignes de produits validées dans cette demande ({validatedLines.length}) :</span>
+                  <div className="font-bold text-slate-800 dark:text-slate-200 flex flex-col md:flex-row md:items-center md:justify-between md:flex-wrap gap-1 min-w-0">
+                    <span>
+                      Lignes validées ({validatedLines.length})
+                    </span>
                     {validatedLines.length > 0 && (
-                      <span className="text-[#008DA9] dark:text-cyan-400 font-black text-sm">
+                      <span className="text-[#008DA9] dark:text-cyan-400 font-black text-sm baobab-amount">
                         Valeur totale : {validatedLines.reduce((s, it) => s + it.total, 0).toLocaleString('fr-FR')} FCFA
                       </span>
                     )}
@@ -2974,18 +2943,18 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   ) : (
                     <div className="space-y-2">
                       {validatedLines.map((line, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-                          <div className="flex items-center gap-2.5">
+                        <div key={idx} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                            <div>
+                            <div className="min-w-0 flex-1">
                               <span className="font-bold text-slate-900 dark:text-white">{line.name}</span>
                               <span className="text-slate-500 text-[11px] ml-2">
-                                ({line.code} &bull; <strong>{line.requestedBoxes} cartons</strong> &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA)
+                                ({line.code} &bull; <strong>{line.requestedBoxes} {line.requestedBoxes > 1 ? 'cartons' : 'carton'}</strong> &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA)
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="font-black text-slate-900 dark:text-white">{line.total.toLocaleString('fr-FR')} FCFA</span>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="font-black text-slate-900 dark:text-white baobab-amount">{line.total.toLocaleString('fr-FR')} FCFA</span>
                             <ConfirmDestructiveButton
                               label="Retirer"
                               confirmLabel="Retirer ?"
@@ -3003,27 +2972,57 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   <button
                     type="submit"
                     disabled={isSubmittingChargement || validatedLines.length === 0}
-                    className="h-[48px] px-5 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] font-bold text-sm shadow-sm transition disabled:opacity-50 cursor-pointer"
+                    className="w-full sm:w-auto min-h-[48px] h-auto py-3 px-5 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] font-bold text-sm shadow-sm transition disabled:opacity-50 cursor-pointer min-w-0"
                   >
                     {isSubmittingChargement
-                      ? 'Transmission au Gestionnaire de stock...'
-                      : `Envoyer la demande de chargement (${validatedLines.reduce((s, l) => s + l.requestedBoxes, 0)} cartons)`}
+                      ? 'Envoi en cours...'
+                      : 'Envoyer la demande'}
                   </button>
                 </div>
               </form>
             </div>
           )}
 
-          {/* Chargements Vendeurs — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Chargements Vendeurs — Composant partagé CardList */}
+          <CardList<any>
             data={visibleChargements}
-            getRowKey={(chg) => chg.id}
+            rowKey={(chg) => chg.id}
+            pageSize={20}
             emptyMessage="Aucun chargement enregistré."
-            mobileTitle={(chg) => chg.reference}
-            mobileSubtitle={(chg) =>
-              `${chg.date}${chg.desired_date ? ` • Souhaitée: ${chg.desired_date}` : ''}`
+            searchable
+            searchPlaceholder="Rechercher par référence, vendeur, produit ou statut..."
+            searchPredicate={(chg, q) =>
+              String(chg.reference || '').toLowerCase().includes(q) ||
+              String(chg.vendor_name || '').toLowerCase().includes(q) ||
+              String(chg.vendor_code || '').toLowerCase().includes(q) ||
+              String(chg.status || '').toLowerCase().includes(q) ||
+              (chg.items || []).some((it: any) => String(it.name || '').toLowerCase().includes(q))
             }
-            mobileStatusBadge={(chg) => {
+            sortOptions={[
+              {
+                key: 'date',
+                label: 'Date',
+                compare: (a, b) => String(a.date || '').localeCompare(String(b.date || '')),
+              },
+              {
+                key: 'amount',
+                label: 'Valeur',
+                compare: (a, b) => Number(a.total_amount || 0) - Number(b.total_amount || 0),
+              },
+            ]}
+            defaultSortKey="date"
+            defaultSortDirection="desc"
+            renderTitle={(chg) => (
+              <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                {chg.reference}
+              </span>
+            )}
+            renderSubtitle={(chg) => (
+              <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+                {chg.date}
+              </span>
+            )}
+            renderBadges={(chg) => {
               let statusBadge = '';
               if (chg.status === 'Demandée') {
                 statusBadge = 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300';
@@ -3040,78 +3039,68 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 statusBadge = 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300';
               }
               return (
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${statusBadge}`}>
-                  {chg.status}
-                </span>
+                <>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${statusBadge}`}>
+                    {chg.status}
+                  </span>
+                  {chg.status === 'Chargée' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300">
+                      <Check className="w-3.5 h-3.5" /> Remis • FEFO
+                    </span>
+                  )}
+                </>
               );
             }}
-            columns={[
-              {
-                key: 'ref',
-                label: 'Réf. & Dates',
-                hideOnMobileCard: true,
-                render: (chg) => (
-                  <div>
-                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                      {chg.reference}
-                    </div>
-                    <div className="text-[11px] text-slate-500">{chg.date}</div>
-                    {chg.desired_date && (
-                      <div className="text-[10px] text-teal-600 font-semibold">
-                        Souhaitée: {chg.desired_date}
-                      </div>
-                    )}
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux</span>,
-              },
+            fields={[
               {
                 key: 'vendor',
-                label: 'Vendeur & Équipe',
+                label: 'Vendeur',
+                render: (chg) =>
+                  `${chg.vendor_name || 'Vendeur'} (${chg.vendor_code || ''})`,
+              },
+              {
+                key: 'desired_date',
+                label: 'Date souhaitée',
+                hidden: (chg) => !chg.desired_date,
                 render: (chg) => (
-                  <div className="font-semibold text-slate-800 dark:text-slate-200">
-                    <div>
-                      {chg.vendor_name || 'Vendeur'} ({chg.vendor_code || ''})
-                    </div>
-                    <div className="text-[10px] text-slate-400">{chg.vendor_team || ''}</div>
-                  </div>
+                  <span className="font-mono font-semibold text-teal-600 dark:text-teal-400">
+                    {chg.desired_date}
+                  </span>
                 ),
               },
               {
                 key: 'items',
-                label: 'Lignes de Produits',
+                label: 'Détail des cartons',
                 render: (chg) => (
-                  <div>
-                    <div className="flex flex-wrap gap-1">
-                      {(chg.items || []).map((it: any, idx: number) => {
-                        const qty =
-                          it.validatedBoxes !== undefined
-                            ? it.validatedBoxes
-                            : it.requestedBoxes || it.qtyBoxes;
-                        return (
-                          <span
-                            key={idx}
-                            className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] font-medium text-slate-700 dark:text-slate-300"
-                          >
-                            {it.name}: <strong>{qty} ctn</strong>
-                            {it.validatedBoxes !== undefined &&
-                              it.requestedBoxes &&
-                              it.validatedBoxes !== it.requestedBoxes && (
-                                <span className="text-[10px] text-amber-600 line-through ml-1">
-                                  ({it.requestedBoxes})
-                                </span>
-                              )}
-                          </span>
-                        );
-                      })}
-                    </div>
+                  <div className="space-y-1">
+                    {(chg.items || []).map((it: any, idx: number) => {
+                      const qty =
+                        it.validatedBoxes !== undefined
+                          ? it.validatedBoxes
+                          : it.requestedBoxes || it.qtyBoxes;
+                      return (
+                        <div key={idx} className="text-xs break-words">
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">
+                            {it.name} :
+                          </span>{' '}
+                          <strong>{qty} cartons</strong>
+                          {it.validatedBoxes !== undefined &&
+                            it.requestedBoxes &&
+                            it.validatedBoxes !== it.requestedBoxes && (
+                              <span className="text-amber-600 line-through ml-1">
+                                ({it.requestedBoxes} demandés)
+                              </span>
+                            )}
+                        </div>
+                      );
+                    })}
                     {chg.rejection_reason && (
-                      <div className="text-[11px] text-red-600 font-bold mt-1">
+                      <div className="text-xs text-red-600 font-bold mt-1 break-words">
                         Motif rejet : {chg.rejection_reason}
                       </div>
                     )}
                     {chg.cancel_reason && (
-                      <div className="text-[11px] text-red-600 font-bold mt-1">
+                      <div className="text-xs text-red-600 font-bold mt-1 break-words">
                         Motif annulation ({chg.cancelled_by || 'Contrôleur'}) : {chg.cancel_reason}
                       </div>
                     )}
@@ -3120,53 +3109,17 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
               },
               {
                 key: 'total',
-                label: 'Valeur & Statut',
-                align: 'right',
-                isNumeric: true,
-                render: (chg) => {
-                  let statusBadge = '';
-                  if (chg.status === 'Demandée') {
-                    statusBadge = 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300';
-                  } else if (chg.status === 'Validée') {
-                    statusBadge =
-                      'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300';
-                  } else if (chg.status === 'Partiellement validée') {
-                    statusBadge =
-                      'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300';
-                  } else if (chg.status === 'Rejetée' || chg.status === 'Annulée') {
-                    statusBadge = 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300';
-                  } else if (chg.status === 'Chargée') {
-                    statusBadge = 'bg-[#15803D] text-white font-black';
-                  } else {
-                    statusBadge =
-                      'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300';
-                  }
-                  return (
-                    <div>
-                      <div
-                        className={`font-black ${
-                          chg.status === 'Annulée'
-                            ? 'line-through text-slate-400'
-                            : 'text-slate-900 dark:text-white'
-                        }`}
-                      >
-                        {Number(chg.total_amount || 0).toLocaleString('fr-FR')} FCFA
-                      </div>
-                      <span
-                        className={`inline-block mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${statusBadge}`}
-                      >
-                        {chg.status}
-                      </span>
-                    </div>
-                  );
-                },
-                footer: (
-                  <span className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
-                    {visibleChargements
-                      .filter((c) => c.status !== 'Annulée' && c.status !== 'Rejetée')
-                      .reduce((acc, c) => acc + Number(c.total_amount || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
+                label: 'Valeur totale',
+                isAmount: true,
+                render: (chg) => (
+                  <span
+                    className={
+                      chg.status === 'Annulée'
+                        ? 'line-through text-slate-400'
+                        : 'text-slate-900 dark:text-white'
+                    }
+                  >
+                    {Number(chg.total_amount || 0).toLocaleString('fr-FR')} FCFA
                   </span>
                 ),
               },
@@ -3183,6 +3136,15 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
               const canControllerCancelAppro =
                 canControlStock && chg.status !== 'Annulée' && chg.status !== 'Rejetée';
 
+              if (
+                !canMagasinierReview &&
+                !canMagasinierRemise &&
+                !canVendorCancel &&
+                !canControllerCancelAppro
+              ) {
+                return null;
+              }
+
               return (
                 <>
                   {canMagasinierReview && (
@@ -3190,21 +3152,21 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleMagasinierValidate(chg.id)}
-                        className="px-2.5 py-1 rounded-lg bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-[10px] shadow-xs cursor-pointer"
+                        className="min-h-[48px] px-4 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
                       >
                         Valider
                       </button>
                       <button
                         type="button"
                         onClick={() => handleOpenAdjustModal(chg)}
-                        className="px-2.5 py-1 rounded-lg bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-[10px] shadow-xs cursor-pointer"
+                        className="min-h-[48px] px-4 py-2 rounded-xl bg-[#92400E] hover:bg-[#78350F] text-white font-bold text-xs shadow-xs cursor-pointer"
                       >
                         Ajuster
                       </button>
                       <button
                         type="button"
                         onClick={() => handleOpenRejectModal(chg.id)}
-                        className="px-2.5 py-1 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-[10px] shadow-xs cursor-pointer"
+                        className="min-h-[48px] px-4 py-2 rounded-xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xs shadow-xs cursor-pointer"
                       >
                         Rejeter
                       </button>
@@ -3214,9 +3176,9 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleConfirmRemise(chg.id)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
+                      className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
                     >
-                      <Truck className="w-3.5 h-3.5" />
+                      <Truck className="w-4 h-4" />
                       <span>Confirmer la remise</span>
                     </button>
                   )}
@@ -3224,7 +3186,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleCancelChargement(chg.id)}
-                      className="px-2.5 py-1 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 text-[10px] font-bold cursor-pointer"
+                      className="min-h-[48px] px-4 py-2 rounded-xl border border-red-300 text-red-600 hover:bg-red-50 text-xs font-bold cursor-pointer"
                     >
                       Annuler la demande
                     </button>
@@ -3233,29 +3195,24 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleOpenCancelApproModal(chg)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-700 dark:text-red-300 text-[10px] font-bold transition cursor-pointer"
+                      className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-700 dark:text-red-300 text-xs font-bold transition cursor-pointer"
                     >
-                      <XCircle className="w-3.5 h-3.5" />
+                      <XCircle className="w-4 h-4" />
                       <span>Annuler approvisionnement</span>
                     </button>
-                  )}
-                  {chg.status === 'Chargée' && (
-                    <span className="text-[11px] text-teal-700 dark:text-teal-400 font-bold flex items-center gap-1">
-                      <Check className="w-3.5 h-3.5" /> Remis • FEFO
-                    </span>
                   )}
                 </>
               );
             }}
             totalsFooter={
-              <>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                 <span>
                   Chargements :{' '}
                   <strong className="text-slate-900 dark:text-white">
                     {visibleChargements.length}
                   </strong>
                 </span>
-                <span>
+                <span className="whitespace-nowrap">
                   Valeur active :{' '}
                   <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
                     {visibleChargements
@@ -3265,7 +3222,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     FCFA
                   </strong>
                 </span>
-              </>
+              </div>
             }
           />
         </div>
@@ -3307,87 +3264,102 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
             </div>
           )}
 
-          {/* Réceptions — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Réceptions — Composant partagé CardList */}
+          <CardList<any>
             data={receptions}
-            getRowKey={(r) => r.id}
+            rowKey={(r) => r.id}
+            pageSize={20}
             emptyMessage="Aucune réception enregistrée."
-            mobileTitle={(r) => r.reference}
-            mobileSubtitle={(r) => `${r.date} • ${r.supplier_name}`}
-            mobileStatusBadge={(r) => {
+            searchable
+            searchPlaceholder="Rechercher par N° réception, BL, fournisseur, lot..."
+            searchPredicate={(r, q) =>
+              String(r.reference || '').toLowerCase().includes(q) ||
+              String(r.bl_number || '').toLowerCase().includes(q) ||
+              String(r.supplier_name || '').toLowerCase().includes(q) ||
+              (r.items || []).some(
+                (it: any) =>
+                  String(it.name || '').toLowerCase().includes(q) ||
+                  String(it.lot_number || '').toLowerCase().includes(q)
+              )
+            }
+            sortOptions={[
+              {
+                key: 'date',
+                label: 'Date',
+                compare: (a, b) => String(a.date || '').localeCompare(String(b.date || '')),
+              },
+              {
+                key: 'boxes',
+                label: 'Total Cartons',
+                compare: (a, b) => Number(a.total_boxes || 0) - Number(b.total_boxes || 0),
+              },
+            ]}
+            defaultSortKey="date"
+            defaultSortDirection="desc"
+            renderTitle={(r) => (
+              <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                {r.reference}
+              </span>
+            )}
+            renderSubtitle={(r) => (
+              <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+                {r.date}
+              </span>
+            )}
+            renderBadges={(r) => {
               const isPending = r.status === 'en_attente';
               const isCancelled = r.status === 'annulee';
               return (
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                    isPending
-                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                <>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                      isPending
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        : isCancelled
+                        ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                    }`}
+                  >
+                    {isPending
+                      ? 'En attente Contrôleur'
                       : isCancelled
-                      ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                  }`}
-                >
-                  {isPending
-                    ? 'En attente Contrôleur'
-                    : isCancelled
-                    ? 'Annulée'
-                    : 'Validée en stock'}
-                </span>
+                      ? 'Annulée'
+                      : 'Validée en stock'}
+                  </span>
+                  {r.bl_number && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-mono text-xs font-bold">
+                      <FileText className="w-3 h-3" />
+                      {r.bl_number}
+                    </span>
+                  )}
+                </>
               );
             }}
-            columns={[
-              {
-                key: 'ref',
-                label: 'N° Réception & BL',
-                hideOnMobileCard: true,
-                render: (r) => (
-                  <div>
-                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                      {r.reference}
-                    </div>
-                    <div className="text-[11px] text-slate-500">{r.date}</div>
-                    {r.bl_number && (
-                      <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-mono text-[10px] font-bold">
-                        <FileText className="w-3 h-3" />
-                        {r.bl_number}
-                      </span>
-                    )}
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux</span>,
-              },
+            fields={[
               {
                 key: 'supplier',
-                label: 'Fournisseur & Gestionnaire',
-                render: (r) => {
-                  const isCancelled = r.status === 'annulee';
-                  return (
-                    <div>
-                      <div className="font-semibold text-slate-800 dark:text-slate-200">
-                        {r.supplier_name}
-                      </div>
-                      {r.submitted_by && (
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Soumis par : <strong>{r.submitted_by}</strong>
-                        </div>
-                      )}
-                      {r.validated_by && !isCancelled && (
-                        <div className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                          Validé : <strong>{r.validated_by}</strong>
-                        </div>
-                      )}
-                      {r.cancel_reason && (
-                        <div className="text-[10px] text-red-600 font-bold mt-0.5">
-                          Motif annulation ({r.cancelled_by || 'Contrôleur'}) : {r.cancel_reason}
-                        </div>
-                      )}
-                    </div>
-                  );
-                },
+                label: 'Fournisseur',
+                render: (r) => r.supplier_name,
+              },
+              {
+                key: 'submitted_by',
+                label: 'Soumis par',
+                hidden: (r) => !r.submitted_by,
+                render: (r) => r.submitted_by,
+              },
+              {
+                key: 'validated_by',
+                label: 'Validé par',
+                hidden: (r) => !r.validated_by || r.status === 'annulee',
+                render: (r) => (
+                  <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
+                    {r.validated_by}
+                  </span>
+                ),
               },
               {
                 key: 'items',
-                label: "Lignes Reçues, Lots & Note d'écart",
+                label: 'Lignes reçues & Lots',
                 render: (r) => (
                   <div className="space-y-1">
                     {(r.items || []).map((it: any, idx: number) => {
@@ -3395,16 +3367,13 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                       const recBoxes = Number(it.boxes || 0);
                       const hasDiff = reqBoxes > 0 && reqBoxes !== recBoxes;
                       return (
-                        <div
-                          key={idx}
-                          className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 dark:text-slate-300"
-                        >
+                        <div key={idx} className="text-xs break-words">
                           <span className="font-bold text-slate-900 dark:text-white">
-                            {it.name}:
-                          </span>
+                            {it.name} :
+                          </span>{' '}
                           <span className="font-bold">{recBoxes} cartons reçus</span>
                           {hasDiff && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold text-[10px]">
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold">
                               Demandé: {reqBoxes} ctn (
                               {recBoxes - reqBoxes > 0
                                 ? `+${recBoxes - reqBoxes}`
@@ -3413,7 +3382,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                             </span>
                           )}
                           {it.lot_number && (
-                            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300">
+                            <span className="ml-1.5 font-mono px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300">
                               Lot: {it.lot_number} (Exp: {it.expiry_date})
                             </span>
                           )}
@@ -3421,66 +3390,27 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                       );
                     })}
                     {r.notes && (
-                      <div className="mt-1.5 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200">
+                      <div className="mt-1.5 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 break-words">
                         <strong className="font-bold text-amber-800 dark:text-amber-300">
                           Note Gestionnaire de stock :
                         </strong>{' '}
                         {r.notes}
                       </div>
                     )}
+                    {r.cancel_reason && (
+                      <div className="text-xs text-red-600 font-bold mt-1 break-words">
+                        Motif annulation ({r.cancelled_by || 'Contrôleur'}) : {r.cancel_reason}
+                      </div>
+                    )}
                   </div>
                 ),
               },
               {
-                key: 'bl_status',
-                label: 'Pièce Jointe BL & Statut',
-                align: 'center',
-                render: (r) => {
-                  const isPending = r.status === 'en_attente';
-                  const isCancelled = r.status === 'annulee';
-                  return (
-                    <div className="space-y-1.5">
-                      <div>
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            isPending
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                              : isCancelled
-                              ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                          }`}
-                        >
-                          {isPending
-                            ? 'En attente Contrôleur'
-                            : isCancelled
-                            ? 'Annulée'
-                            : 'Validée en stock'}
-                        </span>
-                      </div>
-                      {r.bl_photo ? (
-                        <button
-                          type="button"
-                          onClick={() => setViewingBlReception(r)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#008DA9]/10 hover:bg-[#008DA9]/20 text-[#008DA9] dark:text-cyan-300 font-bold text-[10px] border border-[#008DA9]/30 cursor-pointer"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>Voir Photo BL</span>
-                        </button>
-                      ) : (
-                        <div className="text-[10px] text-slate-400">Sans photo BL</div>
-                      )}
-                    </div>
-                  );
-                },
-              },
-              {
                 key: 'total_boxes',
                 label: 'Total Cartons',
-                align: 'right',
-                isNumeric: true,
                 render: (r) => (
                   <span
-                    className={`font-black ${
+                    className={`font-black whitespace-nowrap ${
                       r.status === 'annulee'
                         ? 'line-through text-slate-400'
                         : 'text-slate-900 dark:text-white'
@@ -3489,58 +3419,57 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     {r.total_boxes?.toLocaleString('fr-FR')} cartons
                   </span>
                 ),
-                footer: (
-                  <span>
-                    {receptions
-                      .filter((r) => r.status !== 'annulee')
-                      .reduce((acc, r) => acc + Number(r.total_boxes || 0), 0)}{' '}
-                    cartons
-                  </span>
-                ),
               },
             ]}
             renderActions={(r) => {
               const isPending = r.status === 'en_attente';
               const isCancelled = r.status === 'annulee';
-              if (canControlStock && !isCancelled) {
-                return (
-                  <>
-                    {isPending && (
-                      <button
-                        type="button"
-                        onClick={() => handleValidateReception(r.id)}
-                        disabled={validatingReceptionId === r.id}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-[10px] shadow-xs cursor-pointer"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>
-                          {validatingReceptionId === r.id
-                            ? 'Validation...'
-                            : 'Valider la réception'}
-                        </span>
-                      </button>
-                    )}
+              return (
+                <>
+                  {r.bl_photo && (
                     <button
                       type="button"
-                      onClick={() => handleOpenCancelReceptionModal(r)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-700 dark:text-red-300 font-bold text-[10px] cursor-pointer"
+                      onClick={() => setViewingBlReception(r)}
+                      className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#008DA9]/10 hover:bg-[#008DA9]/20 text-[#008DA9] dark:text-cyan-300 font-bold text-xs border border-[#008DA9]/30 cursor-pointer"
                     >
-                      <XCircle className="w-3.5 h-3.5" />
-                      <span>
-                        {isPending ? 'Rejeter' : 'Annuler approvisionnement'}
-                      </span>
+                      <Eye className="w-4 h-4" />
+                      <span>Voir Photo BL</span>
                     </button>
-                  </>
-                );
-              }
-              return (
-                <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  Dépôt Central Sotuba
-                </span>
+                  )}
+                  {canControlStock && !isCancelled && (
+                    <>
+                      {isPending && (
+                        <button
+                          type="button"
+                          onClick={() => handleValidateReception(r.id)}
+                          disabled={validatingReceptionId === r.id}
+                          className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>
+                            {validatingReceptionId === r.id
+                              ? 'Validation...'
+                              : 'Valider la réception'}
+                          </span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCancelReceptionModal(r)}
+                        className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-700 dark:text-red-300 font-bold text-xs cursor-pointer"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        <span>
+                          {isPending ? 'Rejeter' : 'Annuler approvisionnement'}
+                        </span>
+                      </button>
+                    </>
+                  )}
+                </>
               );
             }}
             totalsFooter={
-              <>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                 <span>
                   Réceptions :{' '}
                   <strong className="text-slate-900 dark:text-white">
@@ -3556,7 +3485,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     cartons
                   </strong>
                 </span>
-              </>
+              </div>
             }
           />
         </div>
@@ -3584,16 +3513,33 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
             )}
           </div>
 
-          {/* Retours d'invendus — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Retours d'invendus — Composant partagé CardList */}
+          <CardList<any>
             data={visibleRetours}
-            getRowKey={(ret) => ret.id}
+            rowKey={(ret) => ret.id}
+            pageSize={20}
             emptyMessage="Aucun retour d'invendus pour l'instant."
-            mobileTitle={(ret) => ret.reference}
-            mobileSubtitle={(ret) => `${ret.date} • ${ret.vendor_name || 'Vendeur'}`}
-            mobileStatusBadge={(ret) => (
+            searchable
+            searchPlaceholder="Rechercher par référence, vendeur, produit ou motif..."
+            searchPredicate={(ret, q) =>
+              String(ret.reference || '').toLowerCase().includes(q) ||
+              String(ret.vendor_name || '').toLowerCase().includes(q) ||
+              String(ret.reason || '').toLowerCase().includes(q) ||
+              (ret.items || []).some((it: any) => String(it.name || '').toLowerCase().includes(q))
+            }
+            renderTitle={(ret) => (
+              <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                {ret.reference}
+              </span>
+            )}
+            renderSubtitle={(ret) => (
+              <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+                {ret.date}
+              </span>
+            )}
+            renderBadges={(ret) => (
               <span
-                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
                   ret.status === 'confirme' || ret.status === 'valide'
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                     : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
@@ -3604,84 +3550,39 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   : 'En attente'}
               </span>
             )}
-            columns={[
-              {
-                key: 'ref',
-                label: 'Réf. & Date',
-                hideOnMobileCard: true,
-                render: (ret) => (
-                  <div>
-                    <div className="font-mono font-bold text-slate-900 dark:text-white">
-                      {ret.reference}
-                    </div>
-                    <div className="text-[11px] text-slate-500">{ret.date}</div>
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux Retours</span>,
-              },
+            fields={[
               {
                 key: 'vendor',
                 label: 'Vendeur',
-                hideOnMobileCard: true,
-                render: (ret) => (
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">
-                    {ret.vendor_name || 'Vendeur'}
-                  </span>
-                ),
+                render: (ret) => ret.vendor_name || 'Vendeur',
               },
               {
                 key: 'items',
-                label: 'Marchandises & Motif',
+                label: 'Marchandises retournées',
                 render: (ret) => (
-                  <div>
-                    <div className="flex flex-wrap gap-1">
-                      {(ret.items || []).map((it: any, idx: number) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] font-medium text-slate-700 dark:text-slate-300"
-                        >
-                          {it.name}: <strong>{it.boxes || it.qtyBoxes} ctn</strong>
-                        </span>
-                      ))}
-                    </div>
-                    {ret.reason && (
-                      <div className="text-[11px] text-slate-500 mt-1">{ret.reason}</div>
-                    )}
+                  <div className="space-y-1">
+                    {(ret.items || []).map((it: any, idx: number) => (
+                      <div key={idx} className="text-xs break-words">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          {it.name} :
+                        </span>{' '}
+                        <strong>{it.boxes || it.qtyBoxes} cartons</strong>
+                      </div>
+                    ))}
                   </div>
-                ),
-                footer: (
-                  <span>
-                    {visibleRetours.reduce(
-                      (acc, r) =>
-                        acc +
-                        (r.items || []).reduce(
-                          (sum: number, it: any) => sum + Number(it.boxes || it.qtyBoxes || 0),
-                          0
-                        ),
-                      0
-                    )}{' '}
-                    ctn
-                  </span>
                 ),
               },
               {
-                key: 'status',
-                label: 'Statut',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: (ret) => (
-                  <span
-                    className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                      ret.status === 'confirme' || ret.status === 'valide'
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    }`}
-                  >
-                    {ret.status === 'confirme' || ret.status === 'valide'
-                      ? 'Confirmé'
-                      : 'En attente'}
-                  </span>
-                ),
+                key: 'reason',
+                label: 'Motif',
+                hidden: (ret) => !ret.reason,
+                render: (ret) => ret.reason,
+              },
+              {
+                key: 'confirmed_by',
+                label: 'Confirmation',
+                hidden: (ret) => !ret.confirmed_by,
+                render: (ret) => `Validé par ${ret.confirmed_by}`,
               },
             ]}
             renderActions={(ret) =>
@@ -3689,18 +3590,14 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleConfirmRetour(ret.id)}
-                  className="px-3 py-1.5 rounded-lg bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs cursor-pointer"
                 >
                   Confirmer le retour
                 </button>
-              ) : (
-                <span className="text-[11px] text-slate-400">
-                  {ret.confirmed_by ? `Validé par ${ret.confirmed_by}` : 'Clôturé'}
-                </span>
-              )
+              ) : null
             }
             totalsFooter={
-              <>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                 <span>
                   Retours déclarés :{' '}
                   <strong className="text-slate-900 dark:text-white">
@@ -3722,7 +3619,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     cartons
                   </strong>
                 </span>
-              </>
+              </div>
             }
           />
         </div>
@@ -3790,7 +3687,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                         className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white text-xs"
                       >
                         {vendorsList.map(v => (
-                          <option key={v.id} value={v.id}>{v.name} ({v.code}) - {v.team}</option>
+                          <option key={v.id} value={v.id}>{v.name} ({v.code})</option>
                         ))}
                       </select>
                     )}
@@ -3811,53 +3708,47 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
                 {/* Table comparing theoretical vs counted */}
                 <form onSubmit={handleSubmitVendorInventory} className="space-y-4">
-                  {/* Inventaire Vendeur — Composant partagé DataTable */}
-                  <DataTable<any>
+                  {/* Inventaire Vendeur — Composant partagé CardList */}
+                  <CardList<any>
                     data={liveVariance.items}
-                    getRowKey={(it) => it.productId}
+                    rowKey={(it) => it.productId}
+                    pageSize={20}
                     emptyMessage="Aucun produit pour cet inventaire."
-                    mobileTitle={(it) => it.name}
-                    mobileSubtitle={(it) =>
-                      `${it.code} • ${it.price_box.toLocaleString('fr-FR')} FCFA/ctn`
-                    }
-                    mobileStatusBadge={(it) => (
+                    renderTitle={(it) => (
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 dark:text-white break-words">
+                          {it.name}
+                        </div>
+                        <div className="font-mono text-xs text-slate-400 break-words">
+                          {it.code}
+                        </div>
+                      </div>
+                    )}
+                    renderBadges={(it) => (
                       <span
-                        className={`font-mono text-[11px] font-black ${
-                          it.diffFcfa === 0
-                            ? 'text-slate-400'
-                            : it.diffFcfa < 0
-                            ? 'text-red-600'
-                            : 'text-blue-600'
+                        className={`px-2.5 py-0.5 rounded-full font-mono text-xs font-black ${
+                          it.diff === 0
+                            ? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                            : it.diff < 0
+                            ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+                            : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
                         }`}
                       >
-                        {it.diff > 0 ? `+${it.diff}` : it.diff} ctn (
-                        {it.diffFcfa.toLocaleString('fr-FR')} FCFA)
+                        Écart : {it.diff > 0 ? `+${it.diff}` : it.diff} ctn
                       </span>
                     )}
-                    columns={[
+                    fields={[
                       {
-                        key: 'name',
-                        label: 'Produit',
-                        hideOnMobileCard: true,
-                        render: (it) => (
-                          <div>
-                            <div className="font-bold text-slate-900 dark:text-white">
-                              {it.name}
-                            </div>
-                            <div className="text-[10px] text-slate-400 font-normal">
-                              {it.code} • {it.price_box.toLocaleString('fr-FR')} FCFA/ctn
-                            </div>
-                          </div>
-                        ),
-                        footer: <span className="uppercase text-[11px]">Bilan Écart</span>,
+                        key: 'price_box',
+                        label: 'Prix Carton',
+                        isAmount: true,
+                        render: (it) => `${it.price_box.toLocaleString('fr-FR')} FCFA`,
                       },
                       {
                         key: 'flows',
                         label: 'Chargé / Vendu / Rendu',
-                        align: 'center',
-                        isNumeric: true,
                         render: (it) => (
-                          <span className="font-mono text-[11px]">
+                          <span className="font-mono text-xs">
                             <span className="text-slate-700 dark:text-slate-300">
                               {it.chargedBoxes}
                             </span>
@@ -3871,18 +3762,15 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                       {
                         key: 'theoretical',
                         label: 'Stock Théorique',
-                        align: 'center',
-                        isNumeric: true,
                         render: (it) => (
                           <span className="font-mono font-bold text-teal-700 dark:text-teal-400">
-                            {it.theoreticalQty} ctn
+                            {it.theoreticalQty} cartons
                           </span>
                         ),
                       },
                       {
                         key: 'physical',
                         label: 'Comptage Physique',
-                        align: 'center',
                         render: (it) => (
                           <input
                             type="number"
@@ -3895,54 +3783,43 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                 [it.productId]: Number(e.target.value),
                               })
                             }
-                            className="w-20 px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-center font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-800 focus:ring-2 focus:ring-teal-500 disabled:opacity-60"
+                            className="w-28 min-w-[84px] px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-center font-mono font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-800 focus:ring-2 focus:ring-teal-500 disabled:opacity-60"
                           />
                         ),
                       },
                       {
                         key: 'variance',
-                        label: 'Écart (Cartons & FCFA)',
-                        align: 'right',
-                        isNumeric: true,
+                        label: 'Écart valorisé',
+                        isAmount: true,
                         render: (it) => (
-                          <div className="font-black font-mono">
-                            <div
-                              className={
-                                it.diff === 0
-                                  ? 'text-slate-400'
-                                  : it.diff < 0
-                                  ? 'text-red-600'
-                                  : 'text-blue-600'
-                              }
-                            >
-                              {it.diff > 0 ? `+${it.diff}` : it.diff} ctn
-                            </div>
-                            <div
-                              className={`text-[11px] ${
-                                it.diffFcfa === 0
-                                  ? 'text-slate-400'
-                                  : it.diffFcfa < 0
-                                  ? 'text-red-600'
-                                  : 'text-blue-600'
-                              }`}
-                            >
-                              {it.diffFcfa > 0
-                                ? `+${it.diffFcfa.toLocaleString('fr-FR')}`
-                                : it.diffFcfa.toLocaleString('fr-FR')}{' '}
-                              FCFA
-                            </div>
-                          </div>
-                        ),
-                        footer: (
-                          <span>
-                            {liveVariance.totalEcartBoxes > 0
-                              ? `+${liveVariance.totalEcartBoxes}`
-                              : liveVariance.totalEcartBoxes}{' '}
-                            ctn ({liveVariance.totalEcartFcfa.toLocaleString('fr-FR')} FCFA)
+                          <span
+                            className={
+                              it.diffFcfa === 0
+                                ? 'text-slate-400'
+                                : it.diffFcfa < 0
+                                ? 'text-red-600'
+                                : 'text-blue-600'
+                            }
+                          >
+                            {it.diffFcfa > 0
+                              ? `+${it.diffFcfa.toLocaleString('fr-FR')}`
+                              : it.diffFcfa.toLocaleString('fr-FR')}{' '}
+                            FCFA
                           </span>
                         ),
                       },
                     ]}
+                    totalsFooter={
+                      <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+                        <span>Bilan Écart Camionnette :</span>
+                        <span className="whitespace-nowrap font-black">
+                          {liveVariance.totalEcartBoxes > 0
+                            ? `+${liveVariance.totalEcartBoxes}`
+                            : liveVariance.totalEcartBoxes}{' '}
+                          ctn ({liveVariance.totalEcartFcfa.toLocaleString('fr-FR')} FCFA)
+                        </span>
+                      </div>
+                    }
                   />
 
                   <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -3973,30 +3850,63 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
                   {isVendeur ? 'Historique de Mes Inventaires' : 'Historique des Inventaires Vendeurs Réalisés'}
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {visibleInventories.map((inv) => (
-                    <div key={inv.id} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2 text-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-slate-900 dark:text-white">{inv.reference}</span>
-                        <span className="text-slate-400">{inv.date}</span>
-                      </div>
-                      <div className="font-semibold text-slate-800 dark:text-slate-200">
-                        Vendeur : {inv.vendor_name} ({inv.vendor_code}) &bull; {inv.vendor_team}
-                      </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                        <span className="text-slate-500">Écart net constaté :</span>
-                        <span className={`font-black ${
-                          inv.total_ecart_boxes === 0 ? 'text-emerald-600' : 'text-red-600'
-                        }`}>
-                          {inv.total_ecart_boxes > 0 ? `+${inv.total_ecart_boxes}` : inv.total_ecart_boxes} ctn ({inv.total_ecart_fcfa?.toLocaleString('fr-FR')} FCFA)
+                <CardList<any>
+                  data={visibleInventories}
+                  rowKey={(inv) => inv.id}
+                  pageSize={20}
+                  emptyMessage="Aucun inventaire vendeur enregistré."
+                  renderTitle={(inv) => (
+                    <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                      {inv.reference}
+                    </span>
+                  )}
+                  renderSubtitle={(inv) => (
+                    <span className="font-mono text-xs text-slate-500 whitespace-nowrap">
+                      {inv.date}
+                    </span>
+                  )}
+                  renderBadges={(inv) => (
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        inv.total_ecart_boxes === 0
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                      }`}
+                    >
+                      {inv.total_ecart_boxes > 0
+                        ? `+${inv.total_ecart_boxes}`
+                        : inv.total_ecart_boxes}{' '}
+                      ctn
+                    </span>
+                  )}
+                  fields={[
+                    {
+                      key: 'vendor',
+                      label: 'Vendeur',
+                      render: (inv) => `${inv.vendor_name} (${inv.vendor_code})`,
+                    },
+                    {
+                      key: 'notes',
+                      label: 'Observations',
+                      hidden: (inv) => !inv.notes,
+                      render: (inv) => inv.notes,
+                    },
+                    {
+                      key: 'ecart_fcfa',
+                      label: 'Écart net constaté',
+                      isAmount: true,
+                      render: (inv) => (
+                        <span
+                          className={
+                            inv.total_ecart_boxes === 0 ? 'text-emerald-600' : 'text-red-600'
+                          }
+                        >
+                          {Number(inv.total_ecart_fcfa || 0).toLocaleString('fr-FR')} FCFA
                         </span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 italic">
-                        &ldquo;{inv.notes}&rdquo; &bull; Notifié à l&apos;Administrateur et au Comptable
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      ),
+                    },
+                  ]}
+                />
               </div>
             </>
           ) : (
@@ -4044,70 +3954,54 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 </div>
 
                 <form onSubmit={handleSubmitDepotInventory} className="space-y-4">
-                  {/* Inventaire Dépôt Central — Composant partagé DataTable */}
-                  <DataTable<any>
+                  {/* Inventaire Dépôt Central — Composant partagé CardList */}
+                  <CardList<any>
                     data={liveDepotVariance.items}
-                    getRowKey={(it) => it.id}
+                    rowKey={(it) => it.id}
+                    pageSize={20}
                     emptyMessage="Aucun produit dans le dépôt."
-                    mobileTitle={(it) => it.name}
-                    mobileSubtitle={(it) => `${it.code} • ${it.gamme}`}
-                    mobileStatusBadge={(it) => (
+                    renderTitle={(it) => (
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 dark:text-white break-words">
+                          {it.name}
+                        </div>
+                        <div className="font-mono text-xs text-slate-400 break-words">
+                          {it.code} • {it.gamme}
+                        </div>
+                      </div>
+                    )}
+                    renderBadges={(it) => (
                       <span
-                        className={`font-mono text-[11px] font-black ${
-                          it.diffFcfa === 0
-                            ? 'text-slate-400'
-                            : it.diffFcfa < 0
-                            ? 'text-red-600'
-                            : 'text-blue-600'
+                        className={`px-2.5 py-0.5 rounded-full font-mono text-xs font-black ${
+                          it.diff === 0
+                            ? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                            : it.diff < 0
+                            ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+                            : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
                         }`}
                       >
-                        {it.diff > 0 ? `+${it.diff}` : it.diff} ctn (
-                        {it.diffFcfa.toLocaleString('fr-FR')} FCFA)
+                        Écart : {it.diff > 0 ? `+${it.diff}` : it.diff} ctn
                       </span>
                     )}
-                    columns={[
-                      {
-                        key: 'name',
-                        label: 'Produit & Gamme',
-                        hideOnMobileCard: true,
-                        render: (it) => (
-                          <div>
-                            <div className="font-bold text-slate-900 dark:text-white">
-                              {it.name}
-                            </div>
-                            <div className="text-[10px] text-slate-400 font-normal">
-                              {it.code} • {it.gamme}
-                            </div>
-                          </div>
-                        ),
-                        footer: <span className="uppercase text-[11px]">Écart Dépôt</span>,
-                      },
+                    fields={[
                       {
                         key: 'price',
                         label: 'Prix Carton',
-                        align: 'center',
-                        isNumeric: true,
-                        render: (it) => (
-                          <span className="font-mono">
-                            {it.price_box.toLocaleString('fr-FR')} FCFA
-                          </span>
-                        ),
+                        isAmount: true,
+                        render: (it) => `${it.price_box.toLocaleString('fr-FR')} FCFA`,
                       },
                       {
                         key: 'theoretical',
                         label: 'Stock Système Dépôt',
-                        align: 'center',
-                        isNumeric: true,
                         render: (it) => (
                           <span className="font-mono font-bold text-teal-700 dark:text-teal-400">
-                            {it.theoreticalQty} ctn
+                            {it.theoreticalQty} cartons
                           </span>
                         ),
                       },
                       {
                         key: 'physical',
                         label: 'Comptage Physique',
-                        align: 'center',
                         render: (it) => (
                           <input
                             type="number"
@@ -4119,54 +4013,43 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                 [it.id]: Number(e.target.value),
                               })
                             }
-                            className="w-24 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-center font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-800 focus:ring-2 focus:ring-teal-500"
+                            className="w-28 min-w-[84px] px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-center font-mono font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-800 focus:ring-2 focus:ring-teal-500"
                           />
                         ),
                       },
                       {
                         key: 'variance',
-                        label: 'Écart (Cartons & FCFA)',
-                        align: 'right',
-                        isNumeric: true,
+                        label: 'Écart valorisé',
+                        isAmount: true,
                         render: (it) => (
-                          <div className="font-black font-mono">
-                            <div
-                              className={
-                                it.diff === 0
-                                  ? 'text-slate-400'
-                                  : it.diff < 0
-                                  ? 'text-red-600'
-                                  : 'text-blue-600'
-                              }
-                            >
-                              {it.diff > 0 ? `+${it.diff}` : it.diff} ctn
-                            </div>
-                            <div
-                              className={`text-[11px] ${
-                                it.diffFcfa === 0
-                                  ? 'text-slate-400'
-                                  : it.diffFcfa < 0
-                                  ? 'text-red-600'
-                                  : 'text-blue-600'
-                              }`}
-                            >
-                              {it.diffFcfa > 0
-                                ? `+${it.diffFcfa.toLocaleString('fr-FR')}`
-                                : it.diffFcfa.toLocaleString('fr-FR')}{' '}
-                              FCFA
-                            </div>
-                          </div>
-                        ),
-                        footer: (
-                          <span>
-                            {liveDepotVariance.totalEcartBoxes > 0
-                              ? `+${liveDepotVariance.totalEcartBoxes}`
-                              : liveDepotVariance.totalEcartBoxes}{' '}
-                            ctn ({liveDepotVariance.totalEcartFcfa.toLocaleString('fr-FR')} FCFA)
+                          <span
+                            className={
+                              it.diffFcfa === 0
+                                ? 'text-slate-400'
+                                : it.diffFcfa < 0
+                                ? 'text-red-600'
+                                : 'text-blue-600'
+                            }
+                          >
+                            {it.diffFcfa > 0
+                              ? `+${it.diffFcfa.toLocaleString('fr-FR')}`
+                              : it.diffFcfa.toLocaleString('fr-FR')}{' '}
+                            FCFA
                           </span>
                         ),
                       },
                     ]}
+                    totalsFooter={
+                      <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+                        <span>Bilan Écart Dépôt :</span>
+                        <span className="whitespace-nowrap font-black">
+                          {liveDepotVariance.totalEcartBoxes > 0
+                            ? `+${liveDepotVariance.totalEcartBoxes}`
+                            : liveDepotVariance.totalEcartBoxes}{' '}
+                          ctn ({liveDepotVariance.totalEcartFcfa.toLocaleString('fr-FR')} FCFA)
+                        </span>
+                      </div>
+                    }
                   />
 
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
@@ -4207,36 +4090,70 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
                   Historique des Inventaires Physiques du Dépôt Central ({depotInventoriesList.length})
                 </h3>
-                {depotInventoriesList.length === 0 ? (
-                  <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-xs text-slate-400">
-                    Aucun inventaire physique dépôt enregistré pour le moment.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {depotInventoriesList.map((dinv: any) => (
-                      <div key={dinv.id} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono font-bold text-slate-900 dark:text-white">{dinv.reference}</span>
-                          <span className="text-slate-400">{dinv.date}</span>
-                        </div>
-                        <div className="font-semibold text-slate-800 dark:text-slate-200">
-                          Réalisé par : {dinv.performed_by} ({dinv.performed_role})
-                        </div>
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                          <span className="text-slate-500">Écart net dépôt :</span>
-                          <span className={`font-black ${
+                <CardList<any>
+                  data={depotInventoriesList}
+                  rowKey={(dinv) => dinv.id}
+                  pageSize={20}
+                  emptyMessage="Aucun inventaire physique dépôt enregistré pour le moment."
+                  renderTitle={(dinv) => (
+                    <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+                      {dinv.reference}
+                    </span>
+                  )}
+                  renderSubtitle={(dinv) => (
+                    <span className="font-mono text-xs text-slate-500 whitespace-nowrap">
+                      {dinv.date}
+                    </span>
+                  )}
+                  renderBadges={(dinv) => (
+                    <>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                          dinv.total_ecart_boxes === 0
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                        }`}
+                      >
+                        {dinv.total_ecart_boxes > 0
+                          ? `+${dinv.total_ecart_boxes}`
+                          : dinv.total_ecart_boxes}{' '}
+                        ctn
+                      </span>
+                      {dinv.applied_adjustment ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300">
+                          Stock ajusté
+                        </span>
+                      ) : null}
+                    </>
+                  )}
+                  fields={[
+                    {
+                      key: 'performed_by',
+                      label: 'Réalisé par',
+                      render: (dinv) => `${dinv.performed_by} (${dinv.performed_role})`,
+                    },
+                    {
+                      key: 'notes',
+                      label: 'Observations',
+                      hidden: (dinv) => !dinv.notes,
+                      render: (dinv) => dinv.notes,
+                    },
+                    {
+                      key: 'ecart_fcfa',
+                      label: 'Écart net dépôt',
+                      isAmount: true,
+                      render: (dinv) => (
+                        <span
+                          className={
                             dinv.total_ecart_boxes === 0 ? 'text-emerald-600' : 'text-red-600'
-                          }`}>
-                            {dinv.total_ecart_boxes > 0 ? `+${dinv.total_ecart_boxes}` : dinv.total_ecart_boxes} ctn ({dinv.total_ecart_fcfa?.toLocaleString('fr-FR')} FCFA)
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 italic">
-                          &ldquo;{dinv.notes}&rdquo; {dinv.applied_adjustment ? '• Stock ajusté' : ''}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                          }
+                        >
+                          {Number(dinv.total_ecart_fcfa || 0).toLocaleString('fr-FR')} FCFA
+                        </span>
+                      ),
+                    },
+                  ]}
+                />
               </div>
             </>
           )}
@@ -4255,122 +4172,110 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
             <InfoTooltip text="Les mouvements entrants sont enregistrés en ajout seul (quantité positive, jamais négative) avec traçabilité stricte par numéro de lot et motif." />
           </div>
 
-          {/* Journal de Stock / Audit — Composant partagé DataTable */}
-          <DataTable<any>
+          {/* Journal de Stock / Audit — Composant partagé CardList */}
+          <CardList<any>
             data={movementsList}
-            getRowKey={(m) => m.id}
+            rowKey={(m) => m.id}
+            pageSize={20}
             emptyMessage="Aucun mouvement enregistré dans le journal."
-            mobileTitle={(m) => m.type?.replace(/_/g, ' ')}
-            mobileSubtitle={(m) => m.created_at?.replace('T', ' ').substring(0, 19)}
-            mobileStatusBadge={(m) =>
-              m.direction === 'IN' ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                  + Entrée ({m.quantity} ctn)
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300">
-                  - Sortie ({m.quantity} ctn)
-                </span>
-              )
+            searchable
+            searchPlaceholder="Rechercher par type, produit, lot, motif ou référence..."
+            searchPredicate={(m, q) =>
+              String(m.type || '').toLowerCase().includes(q) ||
+              String(m.product_name || '').toLowerCase().includes(q) ||
+              String(m.lot_number || '').toLowerCase().includes(q) ||
+              String(m.motif || '').toLowerCase().includes(q) ||
+              String(m.reference || '').toLowerCase().includes(q)
             }
-            columns={[
+            sortOptions={[
               {
-                key: 'date_type',
-                label: 'Date & Type',
-                hideOnMobileCard: true,
-                render: (m) => (
-                  <div>
-                    <div className="font-bold text-slate-900 dark:text-white capitalize">
-                      {m.type === 'Bon cadeau' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                          <Gift className="w-3 h-3" /> Bon cadeau
-                        </span>
-                      ) : (
-                        m.type?.replace(/_/g, ' ')
-                      )}
-                    </div>
-                    <div className="font-mono text-slate-500 text-[10px] mt-0.5">
-                      {m.created_at?.replace('T', ' ').substring(0, 19)}
-                    </div>
-                  </div>
-                ),
-                footer: <span className="uppercase text-[11px]">Totaux Mouvements</span>,
+                key: 'date',
+                label: 'Date',
+                compare: (a, b) =>
+                  String(a.created_at || '').localeCompare(String(b.created_at || '')),
               },
               {
+                key: 'value',
+                label: 'Valeur FCFA',
+                compare: (a, b) => Number(a.value_fcfa || 0) - Number(b.value_fcfa || 0),
+              },
+            ]}
+            defaultSortKey="date"
+            defaultSortDirection="desc"
+            renderTitle={(m) => (
+              <span className="font-bold text-slate-900 dark:text-white capitalize break-words">
+                {m.type?.replace(/_/g, ' ')}
+              </span>
+            )}
+            renderSubtitle={(m) => (
+              <span className="font-mono text-xs text-slate-500 whitespace-nowrap">
+                {m.created_at?.replace('T', ' ').substring(0, 19)}
+              </span>
+            )}
+            renderBadges={(m) => (
+              <>
+                {m.direction === 'IN' ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    + Entrée ({m.quantity} ctn)
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                    - Sortie ({m.quantity} ctn)
+                  </span>
+                )}
+                {m.type === 'Bon cadeau' && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                    <Gift className="w-3 h-3" /> Bon cadeau
+                  </span>
+                )}
+              </>
+            )}
+            fields={[
+              {
                 key: 'product',
-                label: 'Produit & Lot',
+                label: 'Produit',
+                render: (m) => m.product_name,
+              },
+              {
+                key: 'lot_number',
+                label: 'Numéro de lot',
+                hidden: (m) => !m.lot_number,
                 render: (m) => (
-                  <div>
-                    <div className="font-semibold text-slate-800 dark:text-slate-200">
-                      {m.product_name}
-                    </div>
-                    {m.lot_number && (
-                      <div className="font-mono text-[10px] text-teal-600">
-                        Lot: {m.lot_number}
-                      </div>
-                    )}
-                  </div>
+                  <span className="font-mono font-bold text-teal-600 dark:text-teal-400">
+                    {m.lot_number}
+                  </span>
                 ),
               },
               {
                 key: 'motif',
                 label: 'Motif / Justification',
+                render: (m) => m.motif || m.reference || '-',
+              },
+              {
+                key: 'quantity',
+                label: 'Quantité',
                 render: (m) => (
-                  <span className="text-slate-600 dark:text-slate-300">
-                    {m.motif || m.reference || '-'}
+                  <span className="font-mono font-black text-slate-900 dark:text-white whitespace-nowrap">
+                    {m.direction === 'IN' ? `+${m.quantity}` : `-${m.quantity}`} cartons
                   </span>
                 ),
               },
               {
-                key: 'direction',
-                label: 'Direction',
-                align: 'center',
-                hideOnMobileCard: true,
-                render: (m) =>
-                  m.direction === 'IN' ? (
-                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                      + Entrée (Ajout seul)
-                    </span>
-                  ) : (
-                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300">
-                      - Sortie (FEFO)
-                    </span>
-                  ),
-              },
-              {
-                key: 'value',
-                label: 'Quantité & Valeur',
-                align: 'right',
-                isNumeric: true,
-                render: (m) => (
-                  <div className="font-mono">
-                    <div className="font-black text-slate-900 dark:text-white">
-                      {m.direction === 'IN' ? `+${m.quantity}` : `-${m.quantity}`} ctn
-                    </div>
-                    <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
-                      {Number(m.value_fcfa || 0).toLocaleString('fr-FR')} FCFA
-                    </div>
-                  </div>
-                ),
-                footer: (
-                  <span>
-                    {movementsList
-                      .reduce((acc, m) => acc + Number(m.value_fcfa || 0), 0)
-                      .toLocaleString('fr-FR')}{' '}
-                    FCFA
-                  </span>
-                ),
+                key: 'value_fcfa',
+                label: 'Valeur',
+                isAmount: true,
+                render: (m) => `${Number(m.value_fcfa || 0).toLocaleString('fr-FR')} FCFA`,
               },
             ]}
             totalsFooter={
-              <>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                 <span>
                   Mouvements tracés :{' '}
                   <strong className="text-slate-900 dark:text-white">
                     {movementsList.length}
                   </strong>
                 </span>
-                <span>
+                <span className="whitespace-nowrap">
                   Volume total mouvementé :{' '}
                   <strong className="text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">
                     {movementsList
@@ -4379,7 +4284,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     FCFA
                   </strong>
                 </span>
-              </>
+              </div>
             }
           />
         </div>
@@ -4643,10 +4548,10 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                   sigRightLabel: 'Direction Commerciale (DOV)',
                                 });
                               }}
-                              className="inline-flex items-center gap-1.5 h-[48px] px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+                              className="inline-flex items-center gap-1.5 min-h-[48px] h-auto py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs shadow-xs transition cursor-pointer"
                             >
                               <Printer className="w-4 h-4 shrink-0" />
-                              <span className="whitespace-nowrap">Imprimer le bon</span>
+                              <span>Imprimer le bon</span>
                             </button>
                           )}
 
@@ -4655,13 +4560,13 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                               type="button"
                               onClick={() => handleConfirmBonRemise(bon.id)}
                               disabled={isProcessingBon === bon.id}
-                              className="h-[48px] px-4 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-black text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                              className="min-h-[48px] h-auto py-3 px-4 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-black text-xs shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-4 h-4 shrink-0" />
-                              <span className="whitespace-nowrap">
+                              <span>
                                 {isProcessingBon === bon.id
                                   ? 'Validation en cours...'
-                                  : 'Remise effectuée (Sortie de stock « Bon cadeau »)'}
+                                  : 'Confirmer la remise'}
                               </span>
                             </button>
                           )}
@@ -4902,7 +4807,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                           <CheckCircle2 className="w-4 h-4" />
                           <span>Photo du BL fournisseur jointe</span>
                         </div>
-                        <div className="text-[11px] text-slate-500 font-mono truncate max-w-xs">
+                        <div className="text-[11px] text-slate-500 font-mono whitespace-normal [overflow-wrap:anywhere]">
                           {blFilename || 'photo_bl_fournisseur.jpg'}
                         </div>
                       </div>
@@ -5225,11 +5130,11 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
       {/* ---------------------------------------------------- */}
       {showRequestLoadingModal && (
         <FormModal
-          title="Demande de Chargement Camionnette (Dépôt-Vente)"
+          title="Mon chargement"
           icon={<Truck className="w-5 h-5 text-[#008DA9]" />}
           onClose={() => setShowRequestLoadingModal(false)}
           onSubmit={handleSubmitChargementRequest}
-          submitLabel={isSubmittingChargement ? 'Envoi...' : 'Envoyer la demande (Statut : Demandée)'}
+          submitLabel={isSubmittingChargement ? 'Envoi...' : 'Envoyer la demande'}
           submitDisabled={isSubmittingChargement || validatedLines.length === 0}
           isDirty={validatedLines.length > 0}
         >
@@ -5253,7 +5158,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   >
                     {selectableVendors.map((v: any) => (
                       <option key={v.id} value={v.id}>
-                        {v.name} ({v.code}) — {v.team || 'Équipe Vente'}
+                        {v.name} ({v.code})
                       </option>
                     ))}
                   </select>
@@ -5274,9 +5179,12 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
               {/* Interactive Product Catalog List (Quantité + Valider directement dans le bloc du produit sélectionné) */}
               <div className="space-y-2">
-                <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between gap-2">
-                  <span>Catalogue des produits disponibles au dépôt ({availableProductsForLine.length} disponibles) :</span>
-                  <span className="text-[10px] text-slate-500 text-right">Touchez un produit pour saisir la quantité et valider</span>
+                <div className="font-bold text-slate-800 dark:text-slate-200 flex flex-col md:flex-row md:items-center md:justify-between md:flex-wrap gap-1 min-w-0">
+                  <span>Sélectionner un produit</span>
+                  <span className="text-xs font-semibold text-slate-500">
+                    {availableProductsForLine.length}{' '}
+                    {availableProductsForLine.length > 1 ? 'produits disponibles' : 'produit disponible'}
+                  </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {products.map((prod) => {
@@ -5302,32 +5210,42 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                             : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-[#008DA9] cursor-pointer'
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="font-black text-slate-900 dark:text-white">{prod.name}</span>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
+                            {prod.gamme}
+                          </span>
                           <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold">
                             {prod.code}
                           </span>
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          {prod.gamme} &bull; {prod.packaging} &bull; <strong>{prod.price_box.toLocaleString('fr-FR')} FCFA</strong>/ctn
+                        <div className="font-black text-slate-900 dark:text-white break-words">
+                          {prod.name}
                         </div>
-                        <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                            Stock dépôt : <span className="text-[#008DA9] dark:text-cyan-400 font-black">{prod.stock_depot} ctn</span>
-                          </span>
-                          {validatedItem ? (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
-                              Validé ({validatedItem.requestedBoxes} ctn)
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          {prod.packaging} &bull; <strong>{prod.price_box.toLocaleString('fr-FR')} FCFA</strong>/ctn
+                        </div>
+                        <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700/60 flex flex-col gap-1 text-[11px]">
+                          <div className="text-slate-600 dark:text-slate-300">
+                            Mon stock : <strong className="text-teal-700 dark:text-teal-400">{chargements.find((c: any) => c.vendor_id === (currentRole === 'Vendeur' ? currentUser?.id : selectedRequestVendorId) && c.remise_confirmed)?.items?.find((i: any) => i.productId === prod.id)?.allocatedBoxes ?? 0} ctn</strong>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">
+                              Dépôt : <span className="text-[#008DA9] dark:text-cyan-400 font-black">{prod.stock_depot} ctn</span>
                             </span>
-                          ) : isCurrentlySelected ? (
-                            <span className="px-2 py-0.5 rounded-full bg-[#008DA9] text-white text-[10px] font-bold">
-                              Sélectionné
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-bold text-[#008DA9] underline">
-                              Choisir
-                            </span>
-                          )}
+                            {validatedItem ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold shrink-0">
+                                Validé ({validatedItem.requestedBoxes} ctn)
+                              </span>
+                            ) : isCurrentlySelected ? (
+                              <span className="px-2 py-0.5 rounded-full bg-[#008DA9] text-white text-[10px] font-bold shrink-0">
+                                Sélectionné
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-[#008DA9] underline shrink-0">
+                                Choisir
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Saisie directe de la quantité + bouton "Valider" juste en bas dans le bloc du produit sélectionné */}
@@ -5366,7 +5284,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                       setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
                                     }
                                   }}
-                                  className="w-full h-9 px-3 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-black text-sm text-center focus:outline-none"
+                                  className="w-full min-w-[76px] h-10 px-2 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-black text-base text-center focus:outline-none"
                                 />
                                 <button
                                   type="button"
@@ -5465,7 +5383,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
           }
           onClose={() => setAdjustingChargement(null)}
           onSubmit={handleSubmitAdjustment}
-          submitLabel="Valider l'ajustement (Partiellement validée)"
+          submitLabel="Valider l'ajustement"
         >
           <div className="space-y-3 text-xs">
             {adjustingChargement.items.map((it: any) => (
@@ -5485,7 +5403,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                         [it.productId]: Number(e.target.value)
                       })
                     }
-                    className="w-20 px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-center font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-900"
+                    className="w-24 min-w-[80px] px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-center font-mono font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-900"
                   />
                   <span className="text-slate-400">ctn</span>
                 </div>
@@ -5617,7 +5535,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                           [p.id]: Number(e.target.value)
                         })
                       }
-                      className="w-24 h-12 px-3 rounded-xl border border-slate-300 dark:border-slate-700 text-center font-bold text-base text-slate-900 dark:text-white bg-white dark:bg-slate-900"
+                      className="w-28 min-w-[84px] h-12 px-2 rounded-xl border border-slate-300 dark:border-slate-700 text-center font-mono font-bold text-base text-slate-900 dark:text-white bg-white dark:bg-slate-900"
                     />
                     <span className="text-sm text-slate-400 font-medium">ctn</span>
                   </div>

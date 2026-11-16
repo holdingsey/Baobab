@@ -24,6 +24,7 @@ import {
   BarChart3,
   Download,
   X,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -59,6 +60,8 @@ interface DashboardViewProps {
   balances: any[];
   wholesaleClients?: any[];
   wholesaleOrders?: any[];
+  anomalyAlerts?: any[];
+  newAnomaliesCount?: number;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -74,6 +77,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   balances,
   wholesaleClients = [],
   wholesaleOrders = [],
+  anomalyAlerts = [],
+  newAnomaliesCount = 0,
 }) => {
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [activePlusModal, setActivePlusModal] = useState<'cadeaux' | 'tournee' | null>(null);
@@ -235,7 +240,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         'Date',
         'Nom Vendeur',
         'Code Vendeur',
-        'Equipe',
         'Mode de Reglement',
         'Motif / Notes',
         'Statut Validation',
@@ -246,7 +250,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         v.date || '',
         v.vendor_name || '',
         v.vendor_code || '',
-        v.vendor_team || 'Equipe Commerciale',
         v.payment_mode || 'Especes',
         v.notes || 'Versement de caisse des ventes PDV',
         v.status === 'en_attente' ? 'En attente' : 'Valide en Caisse',
@@ -334,38 +337,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Bonjour, {currentUser.name}
             </h1>
 
-            {/* Description 14 px complète, jamais coupée, retour à la ligne autorisé */}
+            {/* Description d'accueil par rôle (1 ligne de 60 caractères maximum, jamais celle d'un autre rôle) */}
             <p className="text-[14px] leading-snug text-slate-600 dark:text-slate-300 font-medium whitespace-normal break-words">
-              {isAdmin && "Vue d'ensemble : ventes, stocks et validations."}
-              {isDirecteurOps && "Vue d'ensemble : ventes, stocks et validations."}
-              {isSalesAdmin && "Vue d'ensemble : ventes, stocks et validations."}
-              {isGrossiste && "Vue d'ensemble : ventes, stocks et validations."}
-              {isMagasinier && "Vue d'ensemble : ventes, stocks et validations."}
-              {isComptable && "Vue d'ensemble : ventes, stocks et validations."}
-              {isVendeur && "Vue d'ensemble : ventes, stocks et validations."}
+              {isAdmin
+                ? "Vue d'ensemble : ventes, stocks et validations."
+                : isDirecteurOps
+                ? "Ventes, PDV et équipes terrain."
+                : isSalesAdmin
+                ? "Contrôle : réceptions, inventaires et retours."
+                : isGrossiste
+                ? "Commandes et clients en gros."
+                : isMagasinier
+                ? "Dépôt : réceptions, chargements et lots."
+                : isComptable
+                ? "Caisse : versements, soldes et factures."
+                : "Vos ventes, votre stock et vos versements."}
             </p>
           </div>
 
-          {/* Boutons d'action : grille 2 colonnes, hauteur uniforme 56 px, 1 seul bouton principal couleur de marque, secondaires fond neutre avec bordure et icône couleur de marque, bulle de compteur en haut à droite (#DC2626 chiffre blanc) */}
-          <div className="grid grid-cols-2 gap-2.5 w-full lg:w-auto max-w-full">
+          {/* Boutons d'accueil : grille de 2 colonnes, icône au-dessus du libellé, 1 à 2 lignes jamais coupé, hauteur auto avec min 72 px */}
+          <div className="grid grid-cols-2 gap-2.5 w-full lg:w-auto max-w-full min-w-0">
             {isAdmin && (
               <>
                 <button
                   type="button"
                   onClick={() => onNavigateTab('ventes')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <BarChart3 className="w-4 h-4 shrink-0" />
-                  <span>Ventes</span>
+                  <BarChart3 className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">Ventes</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('validation-pdv')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <CheckSquare className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span className="whitespace-nowrap">Valider PDV</span>
+                  <CheckSquare className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Valider PDV</span>
                   {pendingPdvsCount > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {pendingPdvsCount}
@@ -376,10 +385,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('receptions')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Package className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Réceptions</span>
+                  <Package className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Réceptions</span>
                   {pendingReceptionsCount > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {pendingReceptionsCount}
@@ -390,28 +399,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('chargements')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Truck className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Chargements</span>
+                  <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Chargements</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('versements')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <DollarSign className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Versements</span>
+                  <DollarSign className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Versements</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('utilisateurs')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Users className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Utilisateurs</span>
+                  <Users className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Utilisateurs</span>
                 </button>
               </>
             )}
@@ -421,19 +430,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('nouvelle-commande-gros')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <PlusCircle className="w-4 h-4 shrink-0" />
-                  <span>+ Commande</span>
+                  <PlusCircle className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">+ Commande</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('commandes-gros')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Layers className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Commandes</span>
+                  <Layers className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Commandes</span>
                   {activeWholesaleOrders.length > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {activeWholesaleOrders.length}
@@ -444,10 +453,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('clients-gros')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Store className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Clients</span>
+                  <Store className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Clients</span>
                   {wholesaleClients.length > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {wholesaleClients.length}
@@ -458,19 +467,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('stock-depot')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Package className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Stock dépôt</span>
+                  <Package className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Stock dépôt</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('catalogue')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <FileText className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Catalogue</span>
+                  <FileText className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Catalogue</span>
                 </button>
               </>
             )}
@@ -480,19 +489,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('ventes')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <BarChart3 className="w-4 h-4 shrink-0" />
-                  <span>Ventes</span>
+                  <BarChart3 className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">Ventes</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('demandes-annulation-vente')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <AlertTriangle className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Annulations</span>
+                  <AlertTriangle className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Annulations</span>
                   {pendingSaleCancelRequestsCount > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {pendingSaleCancelRequestsCount}
@@ -503,10 +512,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('validation-pdv')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <CheckSquare className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span className="whitespace-nowrap">Valider PDV</span>
+                  <CheckSquare className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Valider PDV</span>
                   {pendingPdvsCount > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {pendingPdvsCount}
@@ -517,19 +526,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('demande-stock-vendeur')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Truck className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Stock vendeur</span>
+                  <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Stock vendeur</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('pdvs')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Store className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>PDV</span>
+                  <Store className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">PDV</span>
                 </button>
               </>
             )}
@@ -539,10 +548,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('receptions')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <CheckSquare className="w-4 h-4 shrink-0" />
-                  <span>Réceptions</span>
+                  <CheckSquare className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">Réceptions</span>
                   {pendingReceptionsCount > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {pendingReceptionsCount}
@@ -553,46 +562,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('chargements')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Truck className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Chargements</span>
+                  <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Chargements</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('ventes')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <BarChart3 className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Ventes</span>
+                  <BarChart3 className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Ventes</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('inventaire')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <CheckCircle2 className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Inventaires</span>
+                  <CheckCircle2 className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Inventaires</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('stock-depot')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Package className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Stock dépôt</span>
+                  <Package className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Stock dépôt</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('lots')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Layers className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Lots</span>
+                  <Layers className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Lots</span>
                 </button>
               </>
             )}
@@ -602,10 +611,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('chargements')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <Truck className="w-4 h-4 shrink-0" />
-                  <span>Chargements</span>
+                  <Truck className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">Chargements</span>
                   {chargements.length > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {chargements.length}
@@ -616,46 +625,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('receptions')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Package className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Réceptions</span>
+                  <Package className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Réceptions</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('retours')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <ArrowRight className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Retours</span>
+                  <ArrowRight className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Retours</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('inventaire')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <CheckSquare className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Inventaire</span>
+                  <CheckSquare className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Inventaire</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('lots')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Layers className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Lots</span>
+                  <Layers className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Lots</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('bons-a-remettre')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Gift className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Bons cadeaux</span>
+                  <Gift className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Bons cadeaux</span>
                 </button>
               </>
             )}
@@ -665,10 +674,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('versements')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <DollarSign className="w-4 h-4 shrink-0" />
-                  <span>Versements</span>
+                  <DollarSign className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">Versements</span>
                   {versements.length > 0 && (
                     <span className="absolute -top-2 right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#DC2626] text-white text-[11px] font-black flex items-center justify-center leading-none shadow-xs pointer-events-none z-10">
                       {versements.length}
@@ -679,37 +688,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('soldes-vendeurs')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Users className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Soldes vendeurs</span>
+                  <Users className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Soldes vendeurs</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('factures')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <FileText className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Factures</span>
+                  <FileText className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Factures</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('caisse')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <DollarSign className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Caisse</span>
+                  <DollarSign className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Caisse</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('rapports')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <BarChart3 className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Rapports</span>
+                  <BarChart3 className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Rapports</span>
                 </button>
               </>
             )}
@@ -719,60 +728,60 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateTab('nouvelle-vente')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-[var(--marque-texte-sur-plein)] border border-[var(--marque-fonce)] font-bold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center leading-snug"
                 >
-                  <PlusCircle className="w-4 h-4 shrink-0" />
-                  <span>Nouvelle vente</span>
+                  <PlusCircle className="w-5 h-5 shrink-0" />
+                  <span className="whitespace-normal break-words">Nouvelle vente</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('mon-chargement')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Truck className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Mon chargement</span>
+                  <Truck className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Mon chargement</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('nouveau-pdv')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Store className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Nouveau PDV</span>
+                  <Store className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Nouveau PDV</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('mon-stock')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <Package className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Mon stock</span>
+                  <Package className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Mon stock</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => onNavigateTab('mon-solde')}
-                  className="relative h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                  className="relative w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                 >
-                  <DollarSign className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
-                  <span>Mon solde</span>
+                  <DollarSign className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
+                  <span className="whitespace-normal break-words">Mon solde</span>
                 </button>
 
-                <div className="relative">
+                <div className="relative min-w-0">
                   <button
                     type="button"
                     onClick={() => setShowPlusMenu(!showPlusMenu)}
-                    className="w-full h-[56px] min-h-[56px] px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                    className="w-full min-w-0 min-h-[72px] h-auto py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs sm:text-sm flex flex-col items-center justify-center gap-1.5 transition cursor-pointer text-center leading-snug"
                   >
-                    <span>Plus</span>
                     <ChevronDown
-                      className={`w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] transition-transform duration-200 ${
+                      className={`w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0 transition-transform duration-200 ${
                         showPlusMenu ? 'rotate-180' : ''
                       }`}
                     />
+                    <span className="whitespace-normal break-words">Plus</span>
                   </button>
 
                   {showPlusMenu && (
@@ -895,6 +904,123 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* BLOC "À TRAITER" DU TABLEAU DE BORD (Détection d'anomalies — jamais pour Vendeur) */}
+      {(isAdmin || isDirecteurOps || isSalesAdmin || isComptable || isMagasinier) && (
+        <div className="p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/70 text-[#DC2626] dark:text-rose-400 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
+                    À traiter
+                  </h2>
+                  {newAnomaliesCount > 0 && (
+                    <span
+                      className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-black text-white shadow-xs"
+                      style={{ backgroundColor: '#DC2626' }}
+                      title={`${newAnomaliesCount} nouvelle(s) alerte(s)`}
+                    >
+                      {newAnomaliesCount}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Détection d&apos;anomalies ({isComptable ? 'Caisse et versements' : isMagasinier ? 'Stock et lots' : 'Commerciales et stock'}) &bull; Aide à la décision non bloquante.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onNavigateTab('alertes')}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
+            >
+              <span>Voir toutes les alertes</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {(() => {
+            const pendingAnomalies = anomalyAlerts.filter(
+              (a) => a.status === 'Nouvelle' || a.status === 'En examen'
+            );
+            if (pendingAnomalies.length === 0) {
+              return (
+                <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60 flex items-center gap-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>Aucune anomalie nouvelle ou en examen à traiter pour votre périmètre.</span>
+                </div>
+              );
+            }
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {pendingAnomalies.slice(0, 6).map((alert) => {
+                  const isCritique = alert.severity === 'Critique';
+                  const isAttention = alert.severity === 'Attention';
+                  return (
+                    <div
+                      key={alert.id}
+                      onClick={() => onNavigateTab('alertes')}
+                      className={`p-3.5 rounded-xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
+                        isCritique
+                          ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/70 hover:border-rose-400'
+                          : isAttention
+                          ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/70 hover:border-amber-400'
+                          : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 hover:border-teal-400'
+                      }`}
+                    >
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              isCritique
+                                ? 'bg-[#DC2626] text-white'
+                                : isAttention
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-sky-600 text-white'
+                            }`}
+                          >
+                            {alert.severity}
+                          </span>
+                          <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300">
+                            {alert.status}
+                          </span>
+                        </div>
+                        <div className="text-xs font-extrabold text-slate-900 dark:text-white leading-snug">
+                          {alert.type_label}
+                        </div>
+                        <div className="text-[11px] font-semibold text-teal-700 dark:text-teal-300 leading-snug">
+                          {alert.target_label}
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">
+                          {alert.explanation}
+                        </p>
+                      </div>
+                      <div className="pt-1.5 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-between gap-2 text-[10.5px] text-slate-500 dark:text-slate-400">
+                        <span className="font-medium whitespace-normal break-words min-w-0 flex-1">
+                          {Array.isArray(alert.measured_values)
+                            ? alert.measured_values
+                                .slice(0, 2)
+                                .map((m: any) => `${m.label} : ${m.value}`)
+                                .join(' • ')
+                            : String(alert.measured_values || '')}
+                        </span>
+                        <span className="font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0">
+                          Examiner &rarr;
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* 
         ROLE-SPECIFIC KPIS

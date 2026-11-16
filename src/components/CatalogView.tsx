@@ -5,7 +5,7 @@ import { exportTableToPdf, formatFcfaPdf } from '../utils/pdfExport';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
 import { FORM_FIELD_CLASS, FORM_LABEL_CLASS, FORM_ROW_CLASS } from './FormControls';
-import { DataTable } from './DataTable';
+import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
 
 interface ProductItem {
@@ -292,121 +292,127 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         </div>
       </div>
 
-      {/* Tableau et cartes partagées du Catalogue Officiel */}
-      <DataTable<ProductItem>
+      {/* Liste de cartes partagée du Catalogue Officiel */}
+      <CardList<ProductItem>
         data={filtered}
         rowKey={(prod) => prod.id}
-        mobileTitle={(prod) => (
-          <span>
-            <span className="font-mono text-teal-600 dark:text-teal-400 mr-1.5">{prod.code}</span>
-            {prod.name}
-          </span>
+        pageSize={20}
+        searchable={true}
+        searchPlaceholder="Rechercher par référence, nom du produit, gamme, conditionnement..."
+        searchPredicate={(prod, q) =>
+          [prod.code, prod.name, prod.gamme, prod.packaging]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(q)
+        }
+        sortOptions={[
+          {
+            key: 'code_asc',
+            label: 'Référence (A → Z)',
+            compare: (a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'fr'),
+          },
+          {
+            key: 'name_asc',
+            label: 'Désignation (A → Z)',
+            compare: (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'),
+          },
+          {
+            key: 'price_desc',
+            label: 'Prix carton (décroissant)',
+            compare: (a, b) => Number(b.price_box || 0) - Number(a.price_box || 0),
+          },
+          {
+            key: 'stock_desc',
+            label: 'Stock dépôt (décroissant)',
+            compare: (a, b) => Number(b.stock_depot || 0) - Number(a.stock_depot || 0),
+          },
+        ]}
+        defaultSortKey="code_asc"
+        emptyMessage="Aucun produit trouvé dans le catalogue."
+        title={(prod) => (
+          <div className="flex flex-wrap items-baseline justify-between gap-2 w-full min-w-0">
+            <span className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white [overflow-wrap:anywhere]">
+              {prod.name}
+            </span>
+            <span className="font-mono font-extrabold text-xs text-teal-600 dark:text-teal-400 [overflow-wrap:anywhere]">
+              {prod.code}
+            </span>
+          </div>
         )}
-        mobileSubtitle={(prod) => `${prod.gamme} • ${prod.packaging}`}
-        mobileBadge={(prod) => <StockBadge stock={prod.stock_depot} threshold={prod.threshold_depot} />}
-        columns={[
+        badges={(prod) => (
+          <>
+            <StockBadge stock={prod.stock_depot} threshold={prod.threshold_depot} />
+            <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+              {prod.gamme}
+            </span>
+          </>
+        )}
+        fields={[
           {
             key: 'code',
-            header: 'Référence',
-            hideInMobileCard: true,
-            cell: (prod) => (
-              <span className="font-mono text-xs px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-bold whitespace-nowrap">
+            label: 'Référence',
+            render: (prod) => (
+              <span className="font-mono font-bold text-teal-700 dark:text-teal-300">
                 {prod.code}
               </span>
             ),
-            footer: 'TOTAUX CATALOGUE',
           },
           {
             key: 'name',
-            header: 'Désignation du Produit',
-            hideInMobileCard: true,
-            cell: (prod) => (
-              <div className="font-bold text-slate-900 dark:text-white">{prod.name}</div>
-            ),
+            label: 'Désignation du produit',
+            render: (prod) => <strong className="text-slate-900 dark:text-white">{prod.name}</strong>,
           },
           {
             key: 'gamme',
-            header: 'Gamme',
-            mobileLabel: 'Gamme',
-            secondary: true,
-            cell: (prod) => (
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                {prod.gamme}
-              </span>
-            ),
+            label: 'Gamme',
+            render: (prod) => prod.gamme,
           },
           {
             key: 'packaging',
-            header: 'Conditionnement',
-            mobileLabel: 'Conditionnement',
-            secondary: true,
-            cell: (prod) => (
-              <div>
-                <div className="font-medium text-slate-800 dark:text-slate-200">{prod.packaging}</div>
-                <div className="text-[11px] text-slate-400">({prod.units_per_box} unités / carton)</div>
-              </div>
+            label: 'Conditionnement',
+            render: (prod) => `${prod.packaging} (${prod.units_per_box} unités / carton)`,
+          },
+          {
+            key: 'stock_depot',
+            label: 'Stock dépôt central',
+            isAmount: true,
+            render: (prod) => (
+              <span className="font-extrabold text-slate-900 dark:text-white whitespace-nowrap">
+                {prod.stock_depot.toLocaleString('fr-FR')} cartons (seuil : {prod.threshold_depot} ctn)
+              </span>
             ),
           },
           {
             key: 'price_box',
-            header: 'Prix Vente / Carton',
-            mobileLabel: 'Prix vente',
-            isNumeric: true,
-            cell: (prod) => (
-              <span className="font-black text-slate-900 dark:text-white">
-                {prod.price_box.toLocaleString('fr-FR')} <span className="text-[10px] font-bold text-teal-600">FCFA</span>
+            label: 'Prix vente / carton',
+            isAmount: true,
+            render: (prod) => (
+              <span className="font-black text-base text-[#008DA9] dark:text-teal-400 whitespace-nowrap">
+                {prod.price_box.toLocaleString('fr-FR')} FCFA
               </span>
             ),
           },
           {
-            key: 'stock_depot',
-            header: 'Stock Dépôt',
-            mobileLabel: 'Stock Dépôt',
-            isNumeric: true,
-            cell: (prod) => (
-              <span className="font-extrabold text-slate-800 dark:text-slate-200">
-                {prod.stock_depot.toLocaleString('fr-FR')} ctn
+            key: 'stock_value',
+            label: 'Valorisation stock',
+            isAmount: true,
+            render: (prod) => (
+              <span className="font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                {(Number(prod.stock_depot || 0) * Number(prod.price_box || 0)).toLocaleString('fr-FR')} FCFA
               </span>
             ),
-            footer: `${filtered.reduce((acc, p) => acc + Number(p.stock_depot || 0), 0).toLocaleString('fr-FR')} ctn`,
           },
-          {
-            key: 'status',
-            header: 'Niveau Stock',
-            align: 'center',
-            hideInMobileCard: true,
-            cell: (prod) => <StockBadge stock={prod.stock_depot} threshold={prod.threshold_depot} />,
-          },
-          ...(isAdmin
-            ? [
-                {
-                  key: 'actions',
-                  header: 'Actions',
-                  align: 'right' as const,
-                  hideInMobileCard: true,
-                  cell: (prod: ProductItem) => (
-                    <button
-                      type="button"
-                      onClick={() => startEdit(prod)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] text-xs font-semibold text-[#0F172A] dark:text-[#F8FAFC] transition cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-                      <span>Modifier</span>
-                    </button>
-                  ),
-                },
-              ]
-            : []),
         ]}
-        mobileActions={
+        renderActions={
           isAdmin
             ? (prod) => (
                 <button
                   type="button"
                   onClick={() => startEdit(prod)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] text-xs font-semibold text-[#0F172A] dark:text-[#F8FAFC] transition cursor-pointer"
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2 rounded-xl border border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] text-xs font-bold text-[#0F172A] dark:text-[#F8FAFC] transition cursor-pointer"
                 >
-                  <Edit3 className="w-3.5 h-3.5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+                  <Edit3 className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0" />
                   <span>Modifier le produit</span>
                 </button>
               )

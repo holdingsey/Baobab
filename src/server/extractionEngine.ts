@@ -427,6 +427,14 @@ export function initExtractionPermissionsTable() {
     .get() as { value: string } | undefined;
 
   if (seededRow?.value === '1') {
+    const nowIso = new Date().toISOString();
+    const ensureSadPerm = db.prepare(`
+      INSERT OR IGNORE INTO extraction_permissions (role, jeu, autorise, updated_by, updated_at)
+      VALUES (?, 'demandes_d_achat', 1, 'SYSTEM_DEFAULT', ?)
+    `);
+    for (const roleLabel of ['Sales Admin', 'Sales Admin / Contrôleur', 'Contrôleur']) {
+      ensureSadPerm.run(roleLabel, nowIso);
+    }
     return;
   }
 
@@ -462,7 +470,7 @@ export function initExtractionPermissionsTable() {
     }
   }
 
-  // 3. Sales Admin / Contrôleur (BAO-SAD): réceptions, approvisionnements, ventes, inventaires et écarts, stock dépôt, lots, retours
+  // 3. Sales Admin / Contrôleur (BAO-SAD): réceptions, approvisionnements, ventes, inventaires et écarts, stock dépôt, lots, retours, demandes d'achat
   const salesAdminDatasets: CanonicalExtractionDataset[] = [
     'receptions',
     'approvisionnements',
@@ -472,6 +480,7 @@ export function initExtractionPermissionsTable() {
     'stock_depot',
     'lots',
     'retours',
+    'demandes_d_achat',
   ];
   for (const roleLabel of ['Sales Admin', 'Sales Admin / Contrôleur', 'Contrôleur']) {
     for (const ds of salesAdminDatasets) {
@@ -1979,7 +1988,7 @@ function createDatasetBatchFetcher(
               LEFT JOIN users u ON s.vendor_id = u.id
               LEFT JOIN points_de_vente p ON s.pdv_id = p.id
               ${whereSql}
-              ORDER BY s.date DESC, s.number DESC
+              ORDER BY COALESCE(s.cancel_requested_at, s.cancel_reviewed_at, s.cancelled_at, s.created_at, s.date) DESC, s.date DESC, s.number DESC
               LIMIT ? OFFSET ?
             `
             )

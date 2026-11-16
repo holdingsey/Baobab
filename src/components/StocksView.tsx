@@ -105,7 +105,7 @@ export const StocksView: React.FC<StocksViewProps> = ({ products, currentRole })
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
+              className={`min-h-[48px] h-auto px-3 py-2 rounded-xl text-xs font-semibold transition ${
                 selectedCategory === cat
                   ? 'bg-teal-600 text-white shadow-xs'
                   : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'

@@ -316,7 +316,7 @@ export function DataTable<T>({
                             className={`py-3.5 px-3.5 align-middle ${alignClass} ${visibilityClass} ${nowrapClass} ${minWidthClass} ${stickyClass}`}
                           >
                             {isActionsCol ? (
-                              <div className="inline-flex items-center justify-end gap-2 flex-nowrap whitespace-nowrap">
+                              <div className="inline-flex items-center justify-end gap-1.5 flex-wrap">
                                 {getColCell(col, row, globalIdx)}
                               </div>
                             ) : (
@@ -327,11 +327,11 @@ export function DataTable<T>({
                       })}
 
                       {hasSecondaryColumns && (
-                        <td className="py-3.5 px-3.5 text-center align-middle lg:hidden whitespace-nowrap">
+                        <td className="py-3.5 px-3.5 text-center align-middle lg:hidden">
                           <button
                             type="button"
                             onClick={() => setDetailRow({ row, index: globalIdx })}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--marque-fonce)] dark:border-[var(--marque-eclaircie)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] bg-[var(--marque-clair)] hover:opacity-90 font-bold text-[11px] cursor-pointer transition whitespace-nowrap"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--marque-fonce)] dark:border-[var(--marque-eclaircie)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] bg-[var(--marque-clair)] hover:opacity-90 font-bold text-[11px] cursor-pointer transition"
                           >
                             <Eye className="w-3.5 h-3.5 shrink-0" />
                             <span>Détails</span>
@@ -396,7 +396,7 @@ export function DataTable<T>({
 
           {/* Pagination par 20 */}
           <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 flex-wrap">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
               {startIndex}–{endIndex} sur {totalItems}
             </span>
             {totalPages > 1 && (
@@ -411,7 +411,7 @@ export function DataTable<T>({
                   <ChevronLeft className="w-4 h-4" />
                   <span className="hidden sm:inline ml-0.5">Préc.</span>
                 </button>
-                <span className="px-2.5 py-1 rounded-lg bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-black text-xs whitespace-nowrap">
+                <span className="px-2.5 py-1 rounded-lg bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] font-black text-xs">
                   Page {currentPage} / {totalPages}
                 </span>
                 <button

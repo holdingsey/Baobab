@@ -23,6 +23,7 @@ import { VendorStockView } from './components/VendorStockView';
 import { DemandesAchatView } from './components/DemandesAchatView';
 import { GrossisteView } from './components/GrossisteView';
 import { ExtractionsView } from './components/ExtractionsView';
+import { AlertesView } from './components/AlertesView';
 import { isAppOnline, syncPendingOfflineData } from './utils/offlineSync';
 import {
   clearAppBadge,
@@ -33,7 +34,7 @@ import {
 
 function resolveTabForRole(tab: string, role: UserSession['role']): string {
   if (role === 'Vendeur') {
-    if (tab === 'extractions') return 'dashboard';
+    if (tab === 'extractions' || tab === 'alertes') return 'dashboard';
     if (tab === 'chargements') return 'mon-chargement';
     if (tab === 'versements') return 'mes-versements';
     if (tab === 'pdvs' || tab === 'validation-pdv') return 'mes-pdvs';
@@ -135,7 +136,7 @@ export default function App() {
       email: 'vendeur1@baobab.ml',
       role: 'Vendeur',
       phone: '+223 75 44 22 11',
-      team: 'Équipe Sotuba / Rive Gauche',
+      team: '',
       must_change_password: 0,
     },
     {
@@ -145,7 +146,7 @@ export default function App() {
       email: 'vendeur2@baobab.ml',
       role: 'Vendeur',
       phone: '+223 69 88 77 66',
-      team: 'Équipe Badalabougou / Rive Droite',
+      team: '',
       must_change_password: 0,
     },
     {
@@ -155,7 +156,7 @@ export default function App() {
       email: 'vendeur3@baobab.ml',
       role: 'Vendeur',
       phone: '+223 73 11 00 99',
-      team: 'Équipe Centre Commercial / Commune 3',
+      team: '',
       must_change_password: 1, // mot de passe provisoire
     },
   ]);
@@ -204,6 +205,8 @@ export default function App() {
   const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [wholesaleClients, setWholesaleClients] = useState<any[]>([]);
   const [wholesaleOrders, setWholesaleOrders] = useState<any[]>([]);
+  const [anomalyAlerts, setAnomalyAlerts] = useState<any[]>([]);
+  const [newAnomaliesCount, setNewAnomaliesCount] = useState<number>(0);
   const [selectedDocument, setSelectedDocument] = useState<InvoiceData | null>(null);
   const [externalRectificationSaleId, setExternalRectificationSaleId] = useState<string | null>(null);
 
@@ -316,7 +319,14 @@ export default function App() {
         fetch('/api/wholesale/orders').then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
 
-      if (setRes?.settings?.logo_url) setLogoUrl(setRes.settings.logo_url);
+      if (setRes?.settings) {
+        if (setRes.settings.logo_url) setLogoUrl(setRes.settings.logo_url);
+        try {
+          localStorage.setItem('baobab_company_settings', JSON.stringify(setRes.settings));
+        } catch {
+          // ignore
+        }
+      }
 
       if (uRes?.users && uRes.users.length > 0) {
         const normalizedUsers = uRes.users.map((u: any) => ({
@@ -365,10 +375,21 @@ export default function App() {
               : null) ||
             normalizedUsers.find((u: any) => u.role === prev.role) ||
             prev;
-          if (matched && (matched.role === 'Magasinier' || matched.code === 'BAO-MAG')) {
-            return { ...matched, role: 'Gestionnaire de stock' };
+          const nextUser =
+            matched && (matched.role === 'Magasinier' || matched.code === 'BAO-MAG')
+              ? { ...matched, role: 'Gestionnaire de stock' }
+              : matched;
+          if (
+            prev &&
+            nextUser &&
+            prev.id === nextUser.id &&
+            prev.role === nextUser.role &&
+            prev.name === nextUser.name &&
+            prev.code === nextUser.code
+          ) {
+            return prev;
           }
-          return matched;
+          return nextUser;
         });
       }
 
@@ -386,14 +407,57 @@ export default function App() {
       if (woRes?.wholesaleOrders) setWholesaleOrders(woRes.wholesaleOrders);
 
       window.dispatchEvent(new Event('baobab-notifications-updated'));
+      window.dispatchEvent(new Event('baobab-anomalies-updated'));
     } catch (e) {
       console.error('Error fetching data:', e);
     }
   };
 
+  const loadAnomaliesForRole = React.useCallback(async (user: UserSession | null) => {
+    if (!user || user.role === 'Vendeur') {
+      setAnomalyAlerts([]);
+      setNewAnomaliesCount(0);
+      return;
+    }
+    try {
+      const res = await fetch('/api/anomalies', {
+        headers: {
+          'x-user-role': user.role,
+          'x-user-id': user.id,
+        },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const list = Array.isArray(d.alerts) ? d.alerts : [];
+        setAnomalyAlerts(list);
+        setNewAnomaliesCount(
+          typeof d.newCount === 'number'
+            ? d.newCount
+            : list.filter((a: any) => a.status === 'Nouvelle').length
+        );
+      } else {
+        setAnomalyAlerts([]);
+        setNewAnomaliesCount(0);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    loadAnomaliesForRole(currentUser);
+    const onAnomaliesUpdated = () => {
+      loadAnomaliesForRole(currentUser);
+    };
+    window.addEventListener('baobab-anomalies-updated', onAnomaliesUpdated);
+    return () => {
+      window.removeEventListener('baobab-anomalies-updated', onAnomaliesUpdated);
+    };
+  }, [currentUser, loadAnomaliesForRole]);
 
   // Sauvegarde automatique du cache local pour la recherche en mode hors ligne
   useEffect(() => {
@@ -505,7 +569,7 @@ export default function App() {
       : bons.filter(b => !b.revealed).length;
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen w-full max-w-full overflow-x-clip bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row lg:items-start font-sans">
       {/* Sidebar with Baobab logo & role modules */}
       <Sidebar
         activeTab={activeTab}
@@ -519,9 +583,10 @@ export default function App() {
         unrevealedBonsCount={unrevealedBonsCount}
         pendingPurchaseRequestsCount={pendingPurchaseRequestsCount}
         pendingReceptionsCount={pendingReceptionsCount}
+        newAnomaliesCount={newAnomaliesCount}
       />
 
-      <div className="lg:pl-72 flex flex-col flex-1 min-w-0 w-full max-w-full overflow-x-hidden">
+      <div className="flex flex-col flex-1 min-w-0 w-full max-w-full overflow-x-clip">
         {/* Header (32px logo, "Baobab" next to it on PC) */}
         <Header
           currentUser={currentUser}
@@ -552,52 +617,77 @@ export default function App() {
                 // ignore
               }
             }
-            if (item.type === 'factures') {
+            if (item.type === 'factures' || item.type === 'ventes') {
+              const refStr = String(item.reference || '').toUpperCase();
+              const isTicketSearch = refStr.startsWith('TKT-');
               const matchedSale = sales.find(
                 (s) =>
                   String(s.id) === String(item.id) ||
-                  String(s.invoice_number) === String(item.reference)
+                  String(s.invoice_number) === String(item.reference) ||
+                  String(s.thermal_ticket_number) === String(item.reference)
               );
               if (matchedSale && Array.isArray(matchedSale.items) && matchedSale.items.length > 0) {
                 const matchedPdv = pdvs.find((p) => p.id === matchedSale.pdv_id || p.name === matchedSale.pdv_name);
                 const matchedVendor = usersList.find((u) => u.id === matchedSale.vendor_id || u.name === matchedSale.vendor_name);
+                const ticketNo =
+                  matchedSale.thermal_ticket_number ||
+                  String(matchedSale.number || matchedSale.id || '').replace(/^VTE-/, 'TKT-THERM-');
+                const subtotalHt = Number(matchedSale.subtotal_ht || matchedSale.total_amount || matchedSale.total || 0);
+                const withTva = Boolean(matchedSale.with_tva);
+                const tvaRate = withTva ? Number(matchedSale.tva_rate || 18) : 0;
+                const tvaAmount = Number(matchedSale.tva_amount || (withTva ? Math.round(subtotalHt * 0.18) : 0));
+                const totalTtc = Number(matchedSale.total_ttc || subtotalHt + tvaAmount);
                 setSelectedDocument({
                   id: matchedSale.id,
-                  number: matchedSale.invoice_number || matchedSale.id,
-                  type: 'facture',
+                  number: isTicketSearch ? ticketNo : matchedSale.invoice_number || matchedSale.id,
+                  type: isTicketSearch ? 'mini_thermique' : 'facture',
+                  docTypeTitle: isTicketSearch ? 'TICKET DE VENTE' : 'FACTURE DE VENTE PDV',
                   date: String(matchedSale.date || '').split('T')[0] || '',
-                  saleTime: String(matchedSale.date || '').includes('T')
-                    ? String(matchedSale.date).split('T')[1]?.slice(0, 5)
-                    : undefined,
+                  saleTime:
+                    matchedSale.sale_time ||
+                    (String(matchedSale.date || '').includes('T')
+                      ? String(matchedSale.date).split('T')[1]?.slice(0, 5)
+                      : undefined),
                   clientName: matchedSale.pdv_name || 'Client PDV',
                   clientPhone: matchedPdv?.phone || '',
                   pdvName: matchedSale.pdv_name,
                   pdvCode: matchedPdv?.code,
-                  pdvNeighborhood: matchedPdv ? `${matchedPdv.quartier || ''}, ${matchedPdv.commune || ''}` : undefined,
-                  pdvManager: matchedPdv?.owner,
-                  pdvPhone: matchedPdv?.phone,
+                  pdvNeighborhood:
+                    matchedSale.pdv_neighborhood ||
+                    (matchedPdv ? `${matchedPdv.quartier || ''}, ${matchedPdv.commune || ''}` : undefined),
+                  pdvManager: matchedSale.pdv_manager || matchedPdv?.owner,
+                  pdvPhone: matchedSale.pdv_phone || matchedPdv?.phone,
                   vendorId: matchedSale.vendor_id,
                   vendorName: matchedSale.vendor_name,
-                  vendorCode: matchedVendor?.code,
-                  vendorTeam: matchedVendor?.team,
-                  vendorPhone: matchedVendor?.phone,
+                  vendorCode: matchedSale.vendor_code || matchedVendor?.code,
+                  vendorTeam: matchedSale.vendor_team || matchedVendor?.team,
+                  vendorPhone: matchedSale.vendor_phone || matchedVendor?.phone,
                   saleId: matchedSale.id,
-                  saleNumber: matchedSale.id,
-                  thermalTicketNumber: matchedSale.thermal_ticket_number,
+                  saleNumber: matchedSale.number || matchedSale.id,
+                  thermalTicketNumber: ticketNo,
+                  withTva,
+                  subtotalHt,
+                  tvaRate,
+                  tvaAmount,
+                  totalTtc,
                   items: matchedSale.items.map((it: any) => ({
                     code: it.code || it.product_id || '',
                     name: it.name || it.product_name || 'Produit',
-                    qty: Number(it.qty || 0),
-                    price: Number(it.price || 0),
-                    total: Number(it.total || Number(it.qty || 0) * Number(it.price || 0)),
+                    qty: Number(it.qtyBoxes ?? it.qty ?? 0),
+                    price: Number(it.unitPrice ?? it.price ?? 0),
+                    total: Number(
+                      it.total ||
+                        Number(it.qtyBoxes ?? it.qty ?? 0) * Number(it.unitPrice ?? it.price ?? 0)
+                    ),
                   })),
-                  total: Number(matchedSale.total || 0),
-                  paymentMethod: matchedSale.payment_method || 'Espèces',
+                  total: totalTtc,
+                  paymentMethod: matchedSale.payment_type || matchedSale.payment_method || 'Comptant',
                   cashierName: matchedSale.vendor_name || currentUser.name,
-                  status:
-                    Number(matchedSale.amount_paid ?? matchedSale.total ?? 0) < Number(matchedSale.total ?? 0)
-                      ? 'Impayée / Crédit'
-                      : 'Payée',
+                  status: isTicketSearch
+                    ? 'Ticket Thermique Certifié (Preuve de vente)'
+                    : Number(matchedSale.amount_paid ?? totalTtc) < totalTtc
+                    ? 'Impayée / Crédit'
+                    : 'Payée',
                 });
               }
             }
@@ -605,7 +695,7 @@ export default function App() {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 pb-24 w-full max-w-full min-w-0 overflow-x-hidden">
+        <main className="flex-1 pb-24 w-full max-w-full min-w-0 overflow-x-clip">
           {(activeTab === 'dashboard' || activeTab === 'stats') && (
             <DashboardView
               currentUser={currentUser}
@@ -618,9 +708,22 @@ export default function App() {
               balances={balances}
               wholesaleClients={wholesaleClients}
               wholesaleOrders={wholesaleOrders}
+              anomalyAlerts={anomalyAlerts}
+              newAnomaliesCount={newAnomaliesCount}
               logoUrl={logoUrl}
               onOpenDocument={(doc) => setSelectedDocument(doc)}
               onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
+
+          {activeTab === 'alertes' && currentUser.role !== 'Vendeur' && (
+            <AlertesView
+              currentUser={currentUser}
+              usersList={usersList}
+              onAlertsUpdated={(count: number) => {
+                setNewAnomaliesCount(count);
+                loadAnomaliesForRole(currentUser);
+              }}
             />
           )}
 
@@ -823,6 +926,9 @@ export default function App() {
               currentUser={currentUser}
               logoUrl={logoUrl}
               onLogoUpdated={(url) => setLogoUrl(url)}
+              users={usersList}
+              products={products}
+              onRefreshData={loadData}
             />
           )}
         </main>
@@ -843,9 +949,10 @@ export default function App() {
           currentRole={currentUser.role}
           onClose={() => setSelectedDocument(null)}
           onRequestRectification={(doc) => {
+            const cleanId = String(doc.id || '').replace(/^doc-sale-/, '');
             setSelectedDocument(null);
-            setExternalRectificationSaleId(doc.id);
-            setActiveTab('mes-factures');
+            setExternalRectificationSaleId(cleanId);
+            setActiveTab(currentUser.role === 'Vendeur' ? 'mes-factures' : 'factures');
           }}
         />
       )}

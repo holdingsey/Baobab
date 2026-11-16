@@ -1408,7 +1408,7 @@ export function handleGlobalSearch(req: Request, res: Response) {
               type: 'utilisateurs',
               code: String(u.code),
               title: `${u.code} — ${u.name}`,
-              subtitle: `${u.team || 'Équipe Vente'} • Dernière vente : ${u.last_sale_date || 'Aucune'} (${u.total_sales_count || 0} ventes)`,
+              subtitle: `Vendeur • Dernière vente : ${u.last_sale_date || 'Aucune'} (${u.total_sales_count || 0} ventes)`,
               date: u.last_sale_date || u.created_at || null,
               amount: null,
               status: statusKey,
@@ -1416,7 +1416,7 @@ export function handleGlobalSearch(req: Request, res: Response) {
               link: `/?tab=ventes&ref=${encodeURIComponent(u.code)}`,
             },
             exactCodes: [String(u.code || '')],
-            searchFields: [u.code, u.name, u.role, u.team, u.phone, u.email, statusLabel],
+            searchFields: [u.code, u.name, u.role, u.phone, u.email, statusLabel],
           };
         });
 
@@ -1432,7 +1432,7 @@ export function handleGlobalSearch(req: Request, res: Response) {
             type: 'utilisateurs',
             code: String(u.code),
             title: `${u.code} — ${u.name}`,
-            subtitle: `${u.role} • ${u.team || 'Baobab Distribution'} • Actif`,
+            subtitle: u.role === 'Vendeur' ? 'Vendeur • Actif' : `${u.role}${u.team ? ` • ${u.team}` : ''} • Actif`,
             date: u.created_at || null,
             amount: null,
             status: 'valide',

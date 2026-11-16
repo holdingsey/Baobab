@@ -16,7 +16,9 @@ import {
 import { UserSession } from './LoginScreen';
 import { ensureUserAuthToken } from '../utils/pushNotifications';
 import { DataTable, DataTableColumn } from './DataTable';
+import { CardList } from './CardList';
 import { FormModal } from './FormModal';
+import { InfoTooltip } from './InfoTooltip';
 
 interface BackupFileEntry {
   filename: string;
@@ -49,6 +51,7 @@ interface BackupListResponse {
 
 interface DatabaseBackupSectionProps {
   currentUser: UserSession;
+  hideHeader?: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -72,7 +75,7 @@ function formatDateTimeFr(iso: string): string {
   return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
 }
 
-export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ currentUser }) => {
+export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ currentUser, hideHeader = false }) => {
   const [data, setData] = useState<BackupListResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -394,123 +397,91 @@ export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ cu
   return (
     <section
       id="section-sauvegarde-admin"
-      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-xs space-y-6"
+      className={
+        hideHeader
+          ? 'space-y-5'
+          : 'rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-6 shadow-xs space-y-5'
+      }
     >
       {/* En-tête de la section Sauvegarde */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
-        <div className="flex items-start gap-3 min-w-0">
-          <div className="p-2.5 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0">
-            <Database className="w-6 h-6" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                Réglages &rsaquo; Sauvegarde de la base de données
-              </h2>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#15803D] text-white">
-                <Lock className="w-3 h-3" />
-                Administrateur seul (403 autres rôles)
-              </span>
+      {!hideHeader && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="p-2.5 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0">
+              <Database className="w-5 h-5" />
             </div>
-            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-              Export complet via l&apos;API Backup SQLite natif, archive compressée Gzip (<code>.db.gz</code>), sauvegarde quotidienne automatique conservée <strong>14 jours</strong> dans <code>BACKUP_PATH</code>, mots de passe toujours hachés (<code>scrypt</code>) et journal d&apos;audit intégral.
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-[18px] font-bold text-slate-900 dark:text-white leading-snug">
+                  Sauvegarde
+                </h2>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#15803D] text-white">
+                  <Lock className="w-3 h-3" />
+                  Admin
+                </span>
+              </div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <p className="text-[14px] text-slate-500 dark:text-slate-400 leading-snug">
+                  Archives SQLite compressées (.db.gz) et rétention 14 jours.
+                </p>
+                <InfoTooltip text="Export complet via l'API Backup SQLite natif, archive compressée Gzip (.db.gz), sauvegarde quotidienne automatique conservée 14 jours dans BACKUP_PATH, mots de passe hachés (scrypt) et journal d'audit intégral." />
+              </div>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Boutons d'action principaux */}
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={fetchBackups}
-            disabled={loading}
-            className="inline-flex items-center gap-2 h-[48px] px-4 rounded-[12px] border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Actualiser
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              openPasswordModal(
-                'create_snapshot',
-                'Créer une sauvegarde SQLite compressée dans BACKUP_PATH'
-              )
-            }
-            className="inline-flex items-center gap-2 h-[48px] px-4 rounded-[12px] font-bold text-xs text-[var(--marque-texte-sur-plein)] bg-[var(--marque-fonce)] hover:bg-[#00586B] transition shadow-xs cursor-pointer"
-          >
-            <HardDrive className="w-4 h-4" />
-            Sauvegarder maintenant
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              openPasswordModal(
-                'export_full',
-                'Exporter et télécharger la base complète (.db.gz)'
-              )
-            }
-            className="inline-flex items-center gap-2 h-[48px] px-5 rounded-[12px] font-bold text-xs text-white bg-[#15803D] hover:bg-[#166534] transition shadow-xs cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            Exporter la base complète (.db.gz)
-          </button>
-        </div>
-      </div>
-
-      {/* Cartes de garanties techniques */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-1">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-            <HardDrive className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-            Dossier BACKUP_PATH
+      {/* Cartes de garanties techniques compactes */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-0.5">
+          <div className="flex items-center justify-between gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <HardDrive className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              Dossier
+            </span>
+            <InfoTooltip text={`Stockage serveur isolé (${data?.backups?.length ?? 0} archive(s) active(s))`} />
           </div>
           <div className="font-mono text-xs font-extrabold text-slate-900 dark:text-white break-all">
             {data?.backupPath || './data/backups'}
           </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            Stockage serveur isolé ({data?.backups?.length ?? 0} archive(s) active(s))
-          </div>
         </div>
 
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-1">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-            <Clock className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-            Sauvegarde quotidienne
+        <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-0.5">
+          <div className="flex items-center justify-between gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              Rétention
+            </span>
+            <InfoTooltip text="Rotation et purge automatique des archives quotidiennes au-delà de 14 jours." />
           </div>
           <div className="text-xs font-extrabold text-slate-900 dark:text-white">
             Conservation {data?.retentionDays ?? 14} jours
           </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            Rotation et purge automatique au-delà de 14 jours
-          </div>
         </div>
 
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-1">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-            <ShieldCheck className="w-4 h-4 text-[#15803D]" />
-            Mots de passe utilisateurs
+        <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-0.5">
+          <div className="flex items-center justify-between gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-[#15803D]" />
+              Hachage
+            </span>
+            <InfoTooltip text="Aucun mot de passe en clair dans la base ou dans les archives exportées." />
           </div>
           <div className="text-xs font-extrabold text-[#15803D] dark:text-emerald-400">
-            100 % hachés ({data?.hashAlgorithm || 'scrypt + sel aléatoire'})
-          </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            Aucun mot de passe en clair dans la base ou les archives
+            100 % hachés ({data?.hashAlgorithm || 'scrypt'})
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-1">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-            <KeyRound className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-            Protection &amp; Audit
+        <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 space-y-0.5">
+          <div className="flex items-center justify-between gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <KeyRound className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+              Sécurité
+            </span>
+            <InfoTooltip text="Toute opération de sauvegarde ou de téléchargement requiert le mot de passe Administrateur et est tracée dans l'audit." />
           </div>
           <div className="text-xs font-extrabold text-slate-900 dark:text-white">
-            Confirmation par mot de passe
-          </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            API SQLite Backup + Gzip • Audit de chaque action
+            Mot de passe requis
           </div>
         </div>
       </div>
@@ -518,7 +489,7 @@ export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ cu
       {/* Message de retour d'action */}
       {feedback && (
         <div
-          className={`p-4 rounded-xl border flex items-start gap-3 ${
+          className={`p-3.5 rounded-xl border flex items-start gap-3 ${
             feedback.type === 'success'
               ? 'bg-[#15803D] text-white border-[#15803D]'
               : 'bg-[#B91C1C] text-white border-[#B91C1C]'
@@ -534,22 +505,22 @@ export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ cu
       )}
 
       {error && (
-        <div className="p-4 rounded-xl border bg-[#B91C1C] text-white border-[#B91C1C] flex items-start gap-3">
+        <div className="p-3.5 rounded-xl border bg-[#B91C1C] text-white border-[#B91C1C] flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
           <div className="text-xs sm:text-sm font-semibold break-words">{error}</div>
         </div>
       )}
 
       {/* Liste des sauvegardes disponibles dans BACKUP_PATH */}
-      <div className="space-y-3">
+      <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <FileArchive className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-            Archives disponibles dans BACKUP_PATH ({data?.backups?.length ?? 0})
-          </h3>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Le téléchargement d&apos;une archive requiert la confirmation du mot de passe Administrateur
-          </span>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              Archives disponibles ({data?.backups?.length ?? 0})
+            </h3>
+            <InfoTooltip text="Le téléchargement d'une archive requiert la confirmation du mot de passe Administrateur." />
+          </div>
         </div>
 
         <DataTable<BackupFileEntry>
@@ -579,9 +550,9 @@ export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ cu
           )}
           totalsFooter={
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-700 dark:text-slate-200">
-              <span>Total des archives conservées (≤ 14 jours) : {data?.backups?.length ?? 0}</span>
+              <span>Archives conservées (≤ 14j) : {data?.backups?.length ?? 0}</span>
               <span>
-                Volume cumulé compressé :{' '}
+                Volume cumulé :{' '}
                 {formatBytes(
                   (data?.backups || []).reduce((acc, item) => acc + (item.sizeBytes || 0), 0)
                 )}
@@ -592,25 +563,100 @@ export const DatabaseBackupSection: React.FC<DatabaseBackupSectionProps> = ({ cu
       </div>
 
       {/* Journal d'audit des opérations de sauvegarde */}
-      <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <History className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
-            Journal d&apos;audit des sauvegardes (Toutes les actions sont tracées)
+      <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-1.5">
+          <History className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+          <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+            Journal d&apos;audit des sauvegardes
           </h3>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Créations, exports, téléchargements, sauvegardes quotidiennes, purges 14j et refus 403
-          </span>
+          <InfoTooltip text="Créations, exports, téléchargements, sauvegardes quotidiennes, purges 14 jours et refus 403." />
         </div>
 
-        <DataTable<BackupAuditEntry>
-          columns={auditColumns}
+        <CardList<BackupAuditEntry>
           data={data?.auditLogs || []}
           rowKey={(row) => String(row.id)}
-          mobileTitle={(row) => renderAuditBadge(row.action)}
-          pageSize={10}
+          pageSize={20}
           emptyMessage="Aucune entrée d'audit de sauvegarde enregistrée."
+          searchable
+          searchPlaceholder="Rechercher par action, opérateur ou détail..."
+          searchPredicate={(row, q) =>
+            String(row.action || '').toLowerCase().includes(q) ||
+            String(row.user_name || '').toLowerCase().includes(q) ||
+            String(row.details || '').toLowerCase().includes(q)
+          }
+          renderTitle={(row) => (
+            <span className="font-mono font-bold text-slate-900 dark:text-white break-words">
+              #{row.id} &bull; {row.action}
+            </span>
+          )}
+          renderSubtitle={(row) => (
+            <span className="font-mono text-xs text-slate-500 whitespace-nowrap">
+              {formatDateTimeFr(row.timestamp)}
+            </span>
+          )}
+          renderBadges={(row) => renderAuditBadge(row.action)}
+          fields={[
+            {
+              key: 'user_name',
+              label: 'Opérateur',
+              render: (row) => (
+                <span className="font-semibold text-slate-800 dark:text-slate-200 break-words">
+                  {row.user_name}
+                </span>
+              ),
+            },
+            {
+              key: 'details',
+              label: 'Détails & Paramètres',
+              render: (row) => (
+                <span className="text-slate-600 dark:text-slate-300 break-words">
+                  {row.details}
+                </span>
+              ),
+            },
+          ]}
         />
+      </div>
+
+      {/* Boutons principaux verts en bas de la section */}
+      <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
+        <button
+          type="button"
+          onClick={fetchBackups}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-2 h-[48px] px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs sm:text-sm font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Actualiser
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            openPasswordModal(
+              'create_snapshot',
+              'Créer une sauvegarde SQLite compressée dans BACKUP_PATH'
+            )
+          }
+          className="inline-flex items-center justify-center gap-2 h-[48px] px-4 rounded-xl border border-[#15803D] bg-[#DCFCE7] hover:bg-[#BBF7D0] dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-300 font-bold text-xs sm:text-sm transition cursor-pointer"
+        >
+          <HardDrive className="w-4 h-4" />
+          Sauvegarder maintenant
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            openPasswordModal(
+              'export_full',
+              'Exporter et télécharger la base complète (.db.gz)'
+            )
+          }
+          className="inline-flex items-center justify-center gap-2 h-[48px] px-5 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#15803D] hover:bg-[#166534] transition shadow-xs cursor-pointer"
+        >
+          <Download className="w-4 h-4" />
+          Exporter la base complète (.db.gz)
+        </button>
       </div>
 
       {/* Modal de confirmation par mot de passe Administrateur */}

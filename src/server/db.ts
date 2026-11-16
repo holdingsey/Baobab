@@ -495,6 +495,12 @@ export function initDatabase() {
   // Check if initial demo seed has already been loaded via 'seeded_at'
   const seededCheck = db.prepare("SELECT value FROM settings WHERE key = 'seeded_at'").get() as { value: string } | undefined;
   if (seededCheck && seededCheck.value) {
+    // Les vendeurs ne font pas partie de groupe de vente ou dans des secteurs spécifiques
+    try {
+      db.prepare("UPDATE users SET team = '' WHERE role = 'Vendeur'").run();
+    } catch {
+      // ignore
+    }
     // Check if we need to ensure varied lots exist for the 4 status badges
     ensureSampleLots();
     ensurePdvGpsCoordinates();
@@ -620,7 +626,7 @@ export function initDatabase() {
     '2026-04-15'
   );
 
-  // 3 Vendeurs initiaux
+  // 3 Vendeurs initiaux (sans groupe de vente ni secteur spécifique)
   insertUser.run(
     'usr-vnd-1',
     'BAO-VND-001',
@@ -628,7 +634,7 @@ export function initDatabase() {
     'vendeur1@baobab.ml',
     'Vendeur',
     '+223 75 44 22 11',
-    'Équipe Sotuba / Rive Gauche',
+    '',
     0,
     'hash_vnd1',
     '2026-05-01'
@@ -641,7 +647,7 @@ export function initDatabase() {
     'vendeur2@baobab.ml',
     'Vendeur',
     '+223 69 88 77 66',
-    'Équipe Badalabougou / Rive Droite',
+    '',
     0,
     'hash_vnd2',
     '2026-05-01'
@@ -654,7 +660,7 @@ export function initDatabase() {
     'vendeur3@baobab.ml',
     'Vendeur',
     '+223 73 11 00 99',
-    'Équipe Centre Commercial / Commune 3',
+    '',
     1, // mot de passe provisoire à changer à la première connexion
     'hash_vnd3',
     '2026-05-01'
