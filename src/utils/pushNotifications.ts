@@ -1,18 +1,28 @@
 export type NotificationCategoryKey =
+  | 'ventes'
   | 'chargements'
   | 'versements'
   | 'pdv'
   | 'peremption'
   | 'cadeaux';
 
+export type SalePushScope = 'all' | 'mine' | 'above_threshold';
+
 export interface NotificationPreferences {
   enabled: boolean;
   types: Record<NotificationCategoryKey, boolean>;
+  hideAmountsOnLockScreen?: boolean;
+  minSaleAmount?: number;
+  saleScope?: SalePushScope;
+  quietHoursEnabled?: boolean;
+  quietHoursStart?: string;
+  quietHoursEnd?: string;
 }
 
 export type PushPreferences = NotificationPreferences;
 
 export const DEFAULT_NOTIFICATION_TYPES: Record<NotificationCategoryKey, boolean> = {
+  ventes: true,
   chargements: true,
   versements: true,
   pdv: true,
@@ -20,11 +30,28 @@ export const DEFAULT_NOTIFICATION_TYPES: Record<NotificationCategoryKey, boolean
   cadeaux: true,
 };
 
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  enabled: true,
+  types: { ...DEFAULT_NOTIFICATION_TYPES },
+  hideAmountsOnLockScreen: true,
+  minSaleAmount: 0,
+  saleScope: 'all',
+  quietHoursEnabled: false,
+  quietHoursStart: '22:00',
+  quietHoursEnd: '06:00',
+};
+
 export const NOTIFICATION_CATEGORY_LABELS: Array<{
   key: NotificationCategoryKey;
   label: string;
   description: string;
 }> = [
+  {
+    key: 'ventes',
+    label: 'Notifications push de vente & Commandes en gros',
+    description:
+      'Enregistrement de ventes, commandes en gros, annulations, demandes d\'annulation et ventes à régulariser.',
+  },
   {
     key: 'chargements',
     label: 'Chargements & Retours',
@@ -277,9 +304,11 @@ export async function getActivePushSubscription(userId?: string): Promise<PushSu
   return null;
 }
 
+const displayedClientEventIds = new Set<string>();
+
 /**
  * Affiche une notification système locale via le Service Worker (ou l'API Notification)
- * afin que l'utilisateur reçoive immédiatement l'alerte sur son téléphone.
+ * avec déduplication par identifiant d'événement, tag unique et requireInteraction pour les actions.
  */
 export async function showDeviceSystemNotification(params: {
   title: string;
@@ -288,18 +317,33 @@ export async function showDeviceSystemNotification(params: {
   url?: string;
   tab?: string;
   notificationId?: string;
+  requireInteraction?: boolean;
 }): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window)) return false;
   if (Notification.permission !== 'granted') return false;
 
+  const eventKey = params.notificationId || params.tag || `evt-${Date.now()}`;
+  if (params.notificationId && displayedClientEventIds.has(params.notificationId)) {
+    return true;
+  }
+  if (params.notificationId) {
+    displayedClientEventIds.add(params.notificationId);
+    if (displayedClientEventIds.size > 500) {
+      const oldest = displayedClientEventIds.values().next().value;
+      if (oldest) displayedClientEventIds.delete(oldest);
+    }
+  }
+
   const title = params.title || 'Baobab Distribution';
+  const uniqueTag = params.tag || `baobab-evt-${eventKey}`;
   const options: NotificationOptions & Record<string, any> = {
     body: params.body,
     icon: '/logo.png',
     badge: '/badge-72x72.png',
-    tag: params.tag || 'baobab-notif',
+    tag: uniqueTag,
     renotify: true,
-    vibrate: [180, 80, 180],
+    requireInteraction: Boolean(params.requireInteraction),
+    vibrate: params.requireInteraction ? [200, 80, 200] : [140, 70, 140],
     data: {
       url: params.url || '/?tab=dashboard',
       tab: params.tab || 'dashboard',
@@ -321,7 +365,7 @@ export async function showDeviceSystemNotification(params: {
     new Notification(title, {
       body: params.body,
       icon: '/logo.png',
-      tag: params.tag || 'baobab-notif',
+      tag: uniqueTag,
     });
     return true;
   } catch {
@@ -623,12 +667,82 @@ export async function updateUserPushPreferences(
   }
 }
 
+export interface PushDeliveryLogItem {
+  id: string;
+  event_id: string;
+  user_id: string;
+  user_role: string;
+  device_label: string;
+  endpoint: string;
+  title: string;
+  urgency: 'high' | 'normal';
+  created_at: string;
+  sent_at: string;
+  latency_ms: number;
+  status_code: number;
+  attempts: number;
+  status: 'succes' | 'echec' | 'abonnement_supprime';
+  error_message?: string | null;
+}
+
+export interface PushDiagnosticsResponse {
+  logs: PushDeliveryLogItem[];
+  totalSent: number;
+  successCount: number;
+  failedCount: number;
+  removedSubscriptionsCount: number;
+  avgLatencyMs: number;
+  activeSubscriptionsCount: number;
+  connectedSseClientsCount: number;
+}
+
+export async function fetchPushDiagnostics(
+  userId: string,
+  userRole: string
+): Promise<PushDiagnosticsResponse | null> {
+  try {
+    const token = await ensureUserAuthToken(userId, userRole);
+    const res = await fetch('/api/push/diagnostics?limit=50', {
+      headers: {
+        'x-user-id': userId,
+        'x-user-role': userRole,
+        ...(token ? { Authorization: `Bearer ${token}`, 'x-auth-token': token } : {}),
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.success) return null;
+    return {
+      logs: Array.isArray(data.logs) ? data.logs : [],
+      totalSent: Number(data.totalSent || 0),
+      successCount: Number(data.successCount || 0),
+      failedCount: Number(data.failedCount || 0),
+      removedSubscriptionsCount: Number(data.removedSubscriptionsCount || 0),
+      avgLatencyMs: Number(data.avgLatencyMs || 0),
+      activeSubscriptionsCount: Number(data.activeSubscriptionsCount || 0),
+      connectedSseClientsCount: Number(data.connectedSseClientsCount || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function triggerTestPushNotification(
   userId: string,
   userRole: string
-): Promise<{ success: boolean; ok: boolean; message: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  ok: boolean;
+  message: string;
+  latencyMs?: number;
+  statusCode?: number;
+  error?: string;
+}> {
+  const clientStartMs = Math.round(performance.now());
   try {
-    const token = (await ensureUserAuthToken(userId, userRole, true)) || (await ensureUserAuthToken(userId, userRole, false));
+    const token =
+      (await ensureUserAuthToken(userId, userRole, true)) ||
+      (await ensureUserAuthToken(userId, userRole, false));
     const res = await fetch('/api/push/test', {
       method: 'POST',
       headers: {
@@ -639,12 +753,14 @@ export async function triggerTestPushNotification(
       },
     });
     const data = await res.json().catch(() => ({}));
+    const roundTripMs = Math.max(1, Math.round(performance.now()) - clientStartMs);
+    const measuredMs = typeof data.latencyMs === 'number' ? data.latencyMs : roundTripMs;
 
-    // Afficher également la notification système sur l'appareil (dédupliquée via tag 'baobab-test')
+    const testTag = `baobab-evt-test-${Date.now()}`;
     const localShown = await showDeviceSystemNotification({
-      title: 'Baobab Distribution',
-      body: 'Notification de test : vos alertes système sont bien activées sur cet appareil.',
-      tag: 'baobab-test',
+      title: 'Baobab Distribution • Test',
+      body: `Notification de test reçue (délai mesuré : ${measuredMs} ms).`,
+      tag: testTag,
       url: '/?tab=dashboard',
       tab: 'dashboard',
     });
@@ -653,10 +769,10 @@ export async function triggerTestPushNotification(
     return {
       success: isOk,
       ok: isOk,
+      latencyMs: measuredMs,
+      statusCode: Number(data.statusCode || (res.ok ? 200 : 500)),
       message: isOk
-        ? data.message && data.sentCount > 0
-          ? data.message
-          : 'Notification de test envoyée avec succès sur cet appareil.'
+        ? `Notification de test reçue — Délai mesuré : ${measuredMs} ms (aller-retour client : ${roundTripMs} ms, code HTTP ${data.statusCode || 200}).`
         : data.message || "Erreur lors de l'envoi du test.",
       error: isOk ? undefined : data.message,
     };

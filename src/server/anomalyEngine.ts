@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from './db.js';
-import { dispatchPushForNotification } from './pushService.js';
+import { triggerImmediatePostCommitPush } from './pushService.js';
 
 export type AnomalyDomain = 'commercial' | 'stock' | 'caisse';
 export type AnomalySeverity = 'Info' | 'Attention' | 'Critique';
@@ -452,13 +452,14 @@ function registerOrUpdateAlert(candidate: CandidateAlert, sendPush = true): { is
       try {
         insNotif.run(notifId, role, notifTitle, notifMsg, alertId, nowIso);
         if (sendPush) {
-          void dispatchPushForNotification({
+          triggerImmediatePostCommitPush({
             notificationId: notifId,
             role,
             title: notifTitle,
             message: notifMsg,
             type: 'alerte_anomalie',
             reference: alertId,
+            createdAt: nowIso,
           });
         }
       } catch {

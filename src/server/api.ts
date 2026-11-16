@@ -11,7 +11,13 @@ import {
   getUserNotificationPreferences,
   saveUserNotificationPreferences,
   dispatchPushForNotification,
+  triggerImmediatePostCommitPush,
+  registerNotificationSseClient,
+  broadcastNotificationSseEvent,
+  getPushDiagnosticsData,
   sendTestPushToUser,
+  triggerImmediateSalePush,
+  dispatchSaleEventNotifications,
 } from './pushService.js';
 import { initSearchEngine, handleGlobalSearch } from './searchEngine.js';
 import {
@@ -1089,8 +1095,8 @@ function sendNotification(
       now
     );
 
-    // Envoi asynchrone de la notification Web Push aux appareils du destinataire uniquement
-    void dispatchPushForNotification({
+    // Envoi immédiat juste après le commit (sans bloquer la réponse HTTP, en parallèle vers tous les appareils + SSE)
+    triggerImmediatePostCommitPush({
       notificationId: id,
       role,
       targetUserId,
@@ -1098,6 +1104,7 @@ function sendNotification(
       message,
       type,
       reference: refVal || undefined,
+      createdAt: now,
     });
 
     return id;
@@ -1111,6 +1118,12 @@ function markNotificationsReadByReference(role: string, reference?: string | nul
   if (!reference) return;
   try {
     db.prepare('UPDATE notifications SET is_read = 1 WHERE role = ? AND reference = ? AND is_read = 0').run(role, reference);
+    setImmediate(() => {
+      broadcastNotificationSseEvent({
+        event: 'notification:read',
+        role,
+      });
+    });
   } catch {
     // ignore
   }
@@ -3074,6 +3087,112 @@ apiRouter.post('/invoices', (req, res) => {
   }
 });
 
+// GET /api/sales/:id : Consultation d'une vente (ou commande en gros) avec contrôle strict des droits côté serveur (403 sinon)
+apiRouter.get('/sales/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const authUser = deduceUserFromToken(req);
+    const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+    const userId = authUser?.id || headerUserId;
+    const userRole = authUser?.role || getUserRole(req) || '';
+
+    // Le Magasinier (Gestionnaire de stock) n'a aucun droit d'accès aux ventes
+    if (
+      !userRole ||
+      userRole === 'Magasinier' ||
+      userRole === 'Gestionnaire de stock'
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: "Accès refusé (403) : le rôle Magasinier / Gestionnaire de stock n'est pas autorisé à consulter les ventes.",
+      });
+    }
+
+    // Rechercher d'abord dans sales
+    const sale = db
+      .prepare(
+        `
+        SELECT s.*, u.name as vendor_name, u.code as vendor_code, u.phone as vendor_phone,
+               p.name as pdv_name, p.code as pdv_code, p.neighborhood as pdv_neighborhood,
+               p.manager_name as pdv_manager, p.phone as pdv_phone
+        FROM sales s
+        LEFT JOIN users u ON s.vendor_id = u.id
+        LEFT JOIN points_de_vente p ON s.pdv_id = p.id
+        WHERE s.id = ? OR s.number = ?
+      `
+      )
+      .get(id, id) as any;
+
+    if (sale) {
+      // Un Vendeur ne peut consulter que ses propres ventes (403 sinon)
+      if (userRole === 'Vendeur' && userId && sale.vendor_id !== userId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Accès refusé (403) : vous ne pouvez consulter que vos propres ventes.',
+        });
+      }
+      // Le Gestionnaire grossiste n'a accès qu'à ses commandes en gros
+      if (userRole === 'Gestionnaire grossiste') {
+        return res.status(403).json({
+          success: false,
+          error: 'Accès refusé (403) : cette vente détail PDV ne relève pas du périmètre grossiste.',
+        });
+      }
+
+      let parsedItems: any[] = [];
+      try {
+        parsedItems = JSON.parse(sale.items || '[]');
+      } catch {
+        parsedItems = [];
+      }
+
+      return res.json({
+        success: true,
+        sale: {
+          ...sale,
+          items: parsedItems,
+        },
+      });
+    }
+
+    // Sinon rechercher dans wholesale_orders (commandes en gros)
+    const wholesaleOrder = db
+      .prepare('SELECT * FROM wholesale_orders WHERE id = ? OR reference = ?')
+      .get(id, id) as any;
+
+    if (wholesaleOrder) {
+      if (userRole === 'Vendeur') {
+        return res.status(403).json({
+          success: false,
+          error: "Accès refusé (403) : un Vendeur n'a pas accès aux commandes en gros.",
+        });
+      }
+      let parsedItems: any[] = [];
+      try {
+        parsedItems = JSON.parse(wholesaleOrder.items_json || '[]');
+      } catch {
+        parsedItems = [];
+      }
+      return res.json({
+        success: true,
+        sale: {
+          ...wholesaleOrder,
+          number: wholesaleOrder.reference,
+          pdv_name: wholesaleOrder.client_name,
+          vendor_name: wholesaleOrder.created_by,
+          items: parsedItems,
+          isWholesale: true,
+        },
+      });
+    }
+
+    return res.status(404).json({ success: false, error: 'Vente introuvable.' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
 apiRouter.post('/sales', requireVendeur, (req, res) => {
   try {
     const {
@@ -3085,6 +3204,8 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       pdv_id,
       items,
       payment_type,
+      status: requestedStatus,
+      needs_regularization,
       recorded_offline,
       offline_recorded_at,
       latitude,
@@ -3096,6 +3217,55 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
     }
 
     const total = items.reduce((sum: number, it: any) => sum + (Number(it.qtyBoxes) * Number(it.unitPrice)), 0);
+    const itemsJsonStr = JSON.stringify(items);
+
+    // Déduplication côté serveur : vérifier si l'identifiant de vente existe déjà ou si le vendeur vient de soumettre la même vente en double (< 15 secondes)
+    if (clientSaleId) {
+      const existingById = db
+        .prepare('SELECT id, number, thermal_ticket_number, date, sale_time FROM sales WHERE id = ?')
+        .get(clientSaleId) as any;
+      if (existingById) {
+        return res.json({
+          success: true,
+          duplicate: true,
+          message: `Vente ${existingById.number} déjà enregistrée (doublon ignoré, aucune notification envoyée en double).`,
+          saleId: existingById.id,
+          number: existingById.number,
+          thermal_ticket_number: existingById.thermal_ticket_number,
+          date: existingById.date,
+          sale_time: existingById.sale_time,
+        });
+      }
+    }
+
+    const recentSameVendorSale = db
+      .prepare(
+        `
+        SELECT id, number, thermal_ticket_number, date, sale_time, created_at
+        FROM sales
+        WHERE vendor_id = ? AND pdv_id = ? AND total_amount = ? AND items = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+      )
+      .get(vendor_id, pdv_id, total, itemsJsonStr) as any;
+
+    if (recentSameVendorSale && recentSameVendorSale.created_at) {
+      const prevTs = new Date(recentSameVendorSale.created_at).getTime();
+      if (!Number.isNaN(prevTs) && Date.now() - prevTs < 15000 && !req.body.allowBurstDuplicate) {
+        return res.json({
+          success: true,
+          duplicate: true,
+          message: `Vente identique déjà enregistrée (${recentSameVendorSale.number}) — doublon ignoré.`,
+          saleId: recentSameVendorSale.id,
+          number: recentSameVendorSale.number,
+          thermal_ticket_number: recentSameVendorSale.thermal_ticket_number,
+          date: recentSameVendorSale.date,
+          sale_time: recentSameVendorSale.sale_time,
+        });
+      }
+    }
+
     const nowObj = new Date();
     const nowIso = nowObj.toISOString();
     const date = clientDate || nowIso.split('T')[0];
@@ -3105,21 +3275,24 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
     const rand = Math.floor(10000 + Math.random() * 90000);
     const number = clientNumber || `VTE-2026-${rand}`;
     const thermalTicketNumber = String(number).replace(/^VTE-/, 'TKT-THERM-');
-    const id = clientSaleId || `sale-${Date.now()}`;
+    const id = clientSaleId || `sale-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const isOffline = recorded_offline ? 1 : 0;
+    const isRegularize = requestedStatus === 'a_regulariser' || Boolean(needs_regularization);
+    const saleStatus = isRegularize ? 'a_regulariser' : 'livree';
 
     const pdvRow = db.prepare('SELECT name, neighborhood, latitude, longitude FROM points_de_vente WHERE id = ?').get(pdv_id) as any;
+    const vendorRow = db.prepare('SELECT name, code FROM users WHERE id = ?').get(vendor_id) as { name: string; code: string } | undefined;
     const lat = Number.isFinite(Number(latitude)) ? Number(latitude) : Number(pdvRow?.latitude || 12.6392);
     const lng = Number.isFinite(Number(longitude)) ? Number(longitude) : Number(pdvRow?.longitude || -7.9850);
 
     // Note: invoice_generated = 0 because the Vendeur CANNOT create official invoices (only the Comptable can).
     // Instead, a Mini Facture Thermique (thermal_ticket_number) is automatically generated for the vendor's sales history.
-    db.prepare(`
+    const insertResult = db.prepare(`
       INSERT OR IGNORE INTO sales (
         id, number, thermal_ticket_number, date, sale_time, vendor_id, pdv_id, items, total_amount,
         payment_type, status, invoice_generated, recorded_offline, offline_recorded_at, synced_at, latitude, longitude, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'livree', 0, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       number,
@@ -3128,9 +3301,10 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       saleTime,
       vendor_id,
       pdv_id,
-      JSON.stringify(items),
+      itemsJsonStr,
       total,
       payment_type || 'Comptant',
+      saleStatus,
       isOffline,
       offline_recorded_at || null,
       nowIso,
@@ -3138,6 +3312,19 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       lng,
       nowIso
     );
+
+    if (insertResult.changes === 0) {
+      return res.json({
+        success: true,
+        duplicate: true,
+        message: `Vente ${number} déjà enregistrée (doublon ignoré).`,
+        saleId: id,
+        number,
+        thermal_ticket_number: thermalTicketNumber,
+        date,
+        sale_time: saleTime,
+      });
+    }
 
     // Record GPS point on sale delivery
     db.prepare(`
@@ -3159,13 +3346,25 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
     );
 
     recordAudit(
-      isOffline ? 'VENTE_PDV_SYNC_HORS_LIGNE' : 'VENTE_PDV',
+      isOffline ? 'VENTE_PDV_SYNC_HORS_LIGNE' : isRegularize ? 'VENTE_A_REGULARISER' : 'VENTE_PDV',
       'SALE',
       id,
       userRole,
       vendor_id,
       `Vente ${number} (${total.toLocaleString('fr-FR')} FCFA) ${isOffline ? 'enregistrée hors-ligne puis synchronisée' : 'effectuée par le vendeur'} à ${saleTime}. Mini facture thermique ${thermalTicketNumber} générée automatiquement.`
     );
+
+    // Envoi immédiat et asynchrone du push après commit (urgency "high", TTL 3600 s)
+    triggerImmediateSalePush({
+      eventKind: isRegularize ? 'vente_a_regulariser' : 'nouvelle_vente',
+      saleId: id,
+      saleNumber: number,
+      vendorId: vendor_id,
+      vendorName: vendorRow?.name || 'Vendeur',
+      pdvName: pdvRow?.name || 'Point de vente',
+      totalAmount: total,
+      createdAt: nowIso,
+    });
 
     res.json({
       success: true,
@@ -3175,6 +3374,68 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       thermal_ticket_number: thermalTicketNumber,
       date,
       sale_time: saleTime,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Marquer une vente comme "à régulariser" (déclenche un push distinct)
+apiRouter.post('/sales/:id/regularize', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userRole = getUserRole(req) || 'Sales Admin';
+
+    const sale = db
+      .prepare(
+        `
+        SELECT s.*, u.name as vendor_name, u.code as vendor_code, p.name as pdv_name
+        FROM sales s
+        JOIN users u ON s.vendor_id = u.id
+        JOIN points_de_vente p ON s.pdv_id = p.id
+        WHERE s.id = ? OR s.number = ?
+      `
+      )
+      .get(id, id) as any;
+
+    if (!sale) {
+      return res.status(404).json({ success: false, error: 'Vente introuvable.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const noteClean = String(reason || 'Vente signalée à régulariser').trim();
+
+    db.prepare(`UPDATE sales SET status = 'a_regulariser', cancel_request_reason = ? WHERE id = ?`).run(
+      noteClean,
+      sale.id
+    );
+
+    recordAudit(
+      'VENTE_A_REGULARISER',
+      'SALE',
+      sale.id,
+      userRole,
+      sale.vendor_id,
+      `Vente ${sale.number} marquée à régulariser (${noteClean}).`
+    );
+
+    triggerImmediateSalePush({
+      eventKind: 'vente_a_regulariser',
+      saleId: sale.id,
+      saleNumber: sale.number,
+      vendorId: sale.vendor_id,
+      vendorName: sale.vendor_name,
+      pdvName: sale.pdv_name,
+      totalAmount: Number(sale.total_amount || 0),
+      createdAt: nowIso,
+      reason: noteClean,
+    });
+
+    res.json({
+      success: true,
+      message: `La vente ${sale.number} a été marquée « à régulariser » et les destinataires autorisés ont été notifiés.`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -3237,21 +3498,18 @@ apiRouter.post('/sales/:id/cancel', requireCanCancelSale, (req, res) => {
 
     const invoiceRef = sale.invoice_number || `FAC-${sale.number.replace('VTE-', '')}`;
 
-    sendNotification(
-      'Vendeur',
-      `Facture client PDV annulée (${invoiceRef})`,
-      `La facture client ${invoiceRef} / vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}) a été annulée par ${cancelledByLabel}. Motif : ${reasonClean}. Les quantités sont réintégrées dans votre stock camionnette.`,
-      'ecart',
-      sale.number,
-      { targetUserId: sale.vendor_id }
-    );
-    sendNotification(
-      'Comptable',
-      `Facture PDV / Vente annulée (${invoiceRef})`,
-      `La facture ${invoiceRef} (${sale.number}) du client PDV ${sale.pdv_name} (vendeur ${sale.vendor_name}, ${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA) a été annulée par ${cancelledByLabel}. Motif : ${reasonClean}.`,
-      'ecart',
-      sale.number
-    );
+    // Push distinct d'annulation de vente à tous les rôles autorisés (Administrateur, DOV, Sales Admin, Comptable, Vendeur concerné ; Magasinier exclu)
+    triggerImmediateSalePush({
+      eventKind: 'annulation_vente',
+      saleId: sale.id,
+      saleNumber: sale.number,
+      vendorId: sale.vendor_id,
+      vendorName: sale.vendor_name,
+      pdvName: sale.pdv_name,
+      totalAmount: Number(sale.total_amount || 0),
+      createdAt: nowIso,
+      reason: reasonClean,
+    });
 
     recordAudit(
       'ANNULATION_VENTE',
@@ -3321,33 +3579,18 @@ apiRouter.post('/sales/:id/request-cancel', requireVendeur, (req, res) => {
       WHERE id = ?
     `).run(reasonClean, nowIso, requestedByLabel, id);
 
-    sendNotification(
-      'Directeur des opérations de vente',
-      `Demande d'annulation de vente (${sale.number}) — ${sale.vendor_name}`,
-      `Le vendeur ${sale.vendor_name} (${sale.vendor_code}) a soumis une demande d'annulation pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}, ${sale.pdv_neighborhood}). Motif déclaré : "${reasonClean}". En attente de votre validation.`,
-      'demande_annulation_vente',
-      sale.number,
-      {
-        metadataJson: JSON.stringify({
-          saleId: sale.id,
-          saleNumber: sale.number,
-          vendorId: sale.vendor_id,
-          vendorName: sale.vendor_name,
-          vendorCode: sale.vendor_code,
-          pdvName: sale.pdv_name,
-          totalAmount: sale.total_amount,
-          reason: reasonClean,
-        }),
-      }
-    );
-
-    sendNotification(
-      'Administrateur',
-      `Demande d'annulation de vente (${sale.number}) — ${sale.vendor_name}`,
-      `Le vendeur ${sale.vendor_name} (${sale.vendor_code}) a soumis une demande d'annulation au Directeur des opérations de vente pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}). Motif : "${reasonClean}".`,
-      'demande_annulation_vente',
-      sale.number
-    );
+    // Push distinct de demande d'annulation de vente (urgency "high", TTL 3600 s)
+    triggerImmediateSalePush({
+      eventKind: 'demande_annulation_vente',
+      saleId: sale.id,
+      saleNumber: sale.number,
+      vendorId: sale.vendor_id,
+      vendorName: sale.vendor_name,
+      pdvName: sale.pdv_name,
+      totalAmount: Number(sale.total_amount || 0),
+      createdAt: nowIso,
+      reason: reasonClean,
+    });
 
     recordAudit(
       'DEMANDE_ANNULATION_VENTE',
@@ -3423,22 +3666,17 @@ apiRouter.post('/sales/:id/review-cancel-request', requireAdminOrDirecteurOps, (
         WHERE id = ?
       `).run(finalReason, actorLabel, nowIso, nowIso, actorLabel, id);
 
-      sendNotification(
-        'Vendeur',
-        `Demande d'annulation approuvée (${sale.number})`,
-        `Votre demande d'annulation pour la vente ${sale.number} (${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA — PDV ${sale.pdv_name}) a été approuvée par ${actorLabel}. Les cartons sont réintégrés dans votre stock camionnette et votre solde est ajusté.`,
-        'demande_annulation_vente',
-        sale.number,
-        { targetUserId: sale.vendor_id }
-      );
-
-      sendNotification(
-        'Comptable',
-        `Vente ${sale.number} annulée sur demande vendeur (${invoiceRef})`,
-        `La vente ${sale.number} (${invoiceRef} — client PDV ${sale.pdv_name}, vendeur ${sale.vendor_name}, ${Number(sale.total_amount || 0).toLocaleString('fr-FR')} FCFA) a été annulée suite à la validation par ${actorLabel} de la demande d'annulation du vendeur. Motif : ${finalReason}.`,
-        'ecart',
-        sale.number
-      );
+      triggerImmediateSalePush({
+        eventKind: 'annulation_vente',
+        saleId: sale.id,
+        saleNumber: sale.number,
+        vendorId: sale.vendor_id,
+        vendorName: sale.vendor_name,
+        pdvName: sale.pdv_name,
+        totalAmount: Number(sale.total_amount || 0),
+        createdAt: nowIso,
+        reason: finalReason,
+      });
 
       recordAudit(
         'VALIDATION_DEMANDE_ANNULATION_VENTE',
@@ -4075,10 +4313,19 @@ apiRouter.get('/notifications', (req, res) => {
     } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
       notifs = db.prepare(`
         SELECT * FROM notifications
-        WHERE role IN ('Gestionnaire de stock', 'Magasinier') OR role = 'ALL'
+        WHERE (role IN ('Gestionnaire de stock', 'Magasinier') OR role = 'ALL')
+          AND type NOT IN ('vente', 'nouvelle_vente', 'commande_gros', 'annulation_vente', 'demande_annulation_vente', 'vente_a_regulariser')
         ORDER BY created_at DESC
         LIMIT 60
       `).all() as any[];
+    } else if (headerUserId) {
+      notifs = db.prepare(`
+        SELECT * FROM notifications
+        WHERE (role = ? OR role = 'ALL')
+          AND (target_user_id IS NULL OR target_user_id = '' OR target_user_id = ?)
+        ORDER BY created_at DESC
+        LIMIT 60
+      `).all(role, headerUserId) as any[];
     } else {
       notifs = db.prepare(`
         SELECT * FROM notifications
@@ -4136,6 +4383,13 @@ apiRouter.patch('/notifications/:id/read', (req, res) => {
 
     const unreadCount = computeUnreadCountForUser(userId, role);
 
+    broadcastNotificationSseEvent({
+      event: 'notification:read',
+      role,
+      targetUserId: userId || undefined,
+      notification: notifRow ? { ...notifRow, is_read: 1 } : null,
+    });
+
     res.json({
       success: true,
       message: 'Notification marquée comme lue.',
@@ -4185,6 +4439,12 @@ apiRouter.post('/notifications/read-all', (req, res) => {
       ).run(role);
     }
 
+    broadcastNotificationSseEvent({
+      event: 'notification:read-all',
+      role: role || 'ALL',
+      targetUserId: role === 'Vendeur' && userId ? userId : undefined,
+    });
+
     res.json({
       success: true,
       message: 'Toutes les notifications ont été marquées comme lues.',
@@ -4196,8 +4456,22 @@ apiRouter.post('/notifications/read-all', (req, res) => {
   }
 });
 
+// Flux temps réel Server-Sent Events (SSE) pour mise à jour instantanée de la cloche et de la liste
+apiRouter.get('/notifications/stream', (req, res) => {
+  const authUser = deduceUserFromToken(req);
+  const queryUserId = typeof req.query?.userId === 'string' ? req.query.userId.trim() : '';
+  const queryRole = typeof req.query?.role === 'string' ? req.query.role.trim() : '';
+  const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+  const headerRole = getUserRole(req);
+
+  const userId = authUser?.id || queryUserId || headerUserId || 'usr-adm-1';
+  const userRole = authUser?.role || queryRole || headerRole || 'Administrateur';
+
+  registerNotificationSseClient(req, res, userId, userRole);
+});
+
 // ---------------------------------------------------------------------------
-// 12A. ABONNEMENT PUSH, JETON UTILISATEUR, PRÉFÉRENCES & NOTIFICATION DE TEST
+// 12A. ABONNEMENT PUSH, JETON UTILISATEUR, PRÉFÉRENCES, DIAGNOSTIC & TEST
 // ---------------------------------------------------------------------------
 
 // Émission du jeton d'authentification signé pour l'utilisateur connecté
@@ -4421,6 +4695,12 @@ apiRouter.put('/push/preferences', (req, res) => {
     const updated = saveUserNotificationPreferences(authUser.id, {
       enabled: req.body?.enabled,
       types: req.body?.types,
+      hideAmountsOnLockScreen: req.body?.hideAmountsOnLockScreen,
+      minSaleAmount: req.body?.minSaleAmount,
+      saleScope: req.body?.saleScope,
+      quietHoursEnabled: req.body?.quietHoursEnabled,
+      quietHoursStart: req.body?.quietHoursStart,
+      quietHoursEnd: req.body?.quietHoursEnd,
     });
 
     res.json({
@@ -4434,7 +4714,7 @@ apiRouter.put('/push/preferences', (req, res) => {
   }
 });
 
-// Envoyer une notification de test aux appareils de l'utilisateur connecté
+// Envoyer une notification de test aux appareils de l'utilisateur connecté et mesurer le délai
 apiRouter.post('/push/test', async (req, res) => {
   try {
     const authUser = deduceUserFromToken(req);
@@ -4452,10 +4732,37 @@ apiRouter.post('/push/test', async (req, res) => {
       sentCount: result.sentCount,
       expiredRemoved: result.expiredRemoved,
       unreadCount: result.unreadCount,
+      latencyMs: result.latencyMs,
+      statusCode: result.statusCode,
       message:
         result.sentCount > 0
-          ? `Notification de test envoyée sur ${result.sentCount} appareil(s) enregistré(s).`
+          ? `Notification de test envoyée en ${result.latencyMs} ms (${result.sentCount} appareil(s), code HTTP ${result.statusCode}).`
           : 'Aucun appareil abonné actif trouvé. Cliquez sur « Activer les notifications » sur cet appareil.',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Journal de diagnostic des envois Push (visible par l'Administrateur dans Réglages > Notifications > Diagnostic)
+apiRouter.get('/push/diagnostics', (req, res) => {
+  try {
+    const authUser = deduceUserFromToken(req);
+    const role = authUser?.role || getUserRole(req);
+    if (role !== 'Administrateur') {
+      return res.status(403).json({
+        success: false,
+        error: 'Seul l\'Administrateur peut consulter le journal complet des envois Push.',
+      });
+    }
+
+    const limit = Math.min(100, Math.max(10, Number(req.query?.limit || 50)));
+    const diag = getPushDiagnosticsData(limit);
+
+    res.json({
+      success: true,
+      ...diag,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -7071,10 +7378,6 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
 
       if (syncedSalesCount > 0 || syncedGpsCount > 0) {
         const summaryMsg = `Synchronisation réseau effectuée : ${syncedSalesCount} vente(s) hors-ligne et ${syncedGpsCount} position(s) GPS hors-ligne synchronisées.`;
-        sendNotification('Administrateur', 'Synchronisation Hors-Ligne Vendeur', summaryMsg, 'info', `SYNC-${Date.now()}`);
-        if (syncedSalesCount > 0) {
-          sendNotification('Comptable', 'Ventes Hors-Ligne Synchronisées', summaryMsg, 'info', `SYNC-${Date.now()}`);
-        }
         recordAudit(
           'SYNCHRONISATION_HORS_LIGNE',
           'OFFLINE_SYNC',
@@ -7089,6 +7392,37 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
     } catch (txErr) {
       db.exec('ROLLBACK');
       throw txErr;
+    }
+
+    // Déclencher après le commit les notifications push de vente pour chaque nouvelle vente hors-ligne synchronisée
+    if (Array.isArray(offlineSales) && syncedSalesCount > 0) {
+      for (const s of offlineSales) {
+        if (!s.vendor_id || !s.pdv_id) continue;
+        const saleId = s.id || '';
+        const saleRow = saleId
+          ? (db
+              .prepare(
+                `SELECT s.id, s.number, s.vendor_id, s.total_amount, u.name as vendor_name, p.name as pdv_name
+                 FROM sales s
+                 LEFT JOIN users u ON s.vendor_id = u.id
+                 LEFT JOIN points_de_vente p ON s.pdv_id = p.id
+                 WHERE s.id = ?`
+              )
+              .get(saleId) as any)
+          : null;
+        if (saleRow) {
+          triggerImmediateSalePush({
+            eventKind: 'nouvelle_vente',
+            saleId: saleRow.id,
+            saleNumber: saleRow.number,
+            vendorId: saleRow.vendor_id,
+            vendorName: saleRow.vendor_name || 'Vendeur',
+            pdvName: saleRow.pdv_name || 'Point de vente',
+            totalAmount: Number(saleRow.total_amount || 0),
+            createdAt: nowIso,
+          });
+        }
+      }
     }
 
     res.json({
@@ -7464,21 +7798,18 @@ apiRouter.post('/wholesale/orders', requireGrossiste, (req, res) => {
       throw txErr;
     }
 
-    sendNotification(
-      'Administrateur',
-      `Nouvelle commande en gros : ${reference} (${totalAmount.toLocaleString('fr-FR')} FCFA)`,
-      `${creatorName} (${creatorCode}) a enregistré la commande en gros ${reference} pour "${client.company_name}" (${totalBoxes} cartons, net à payer : ${totalAmount.toLocaleString('fr-FR')} FCFA, mode : ${payment_mode}).`,
-      'info',
-      reference
-    );
-
-    sendNotification(
-      'Gestionnaire de stock',
-      `Commande en gros ${delivery_status === 'livree' ? 'livrée' : 'à préparer'} : ${reference}`,
-      `Commande grossiste ${reference} pour ${client.company_name} (${totalBoxes} cartons au total). Statut : ${delivery_status === 'livree' ? 'Livrée / Sortie dépôt' : 'En préparation au dépôt'}.`,
-      'info',
-      reference
-    );
+    // Envoi immédiat et asynchrone après commit aux rôles autorisés (Administrateur, DOV, Sales Admin, Comptable, Gestionnaire grossiste ; Magasinier exclu)
+    triggerImmediateSalePush({
+      eventKind: 'commande_gros',
+      saleId: id,
+      saleNumber: reference,
+      vendorId: headerUserId,
+      vendorName: creatorName,
+      pdvName: client.company_name,
+      totalAmount,
+      createdAt,
+      isWholesale: true,
+    });
 
     recordAudit(
       'CREATION_COMMANDE_GROS',
@@ -7642,6 +7973,19 @@ apiRouter.post('/wholesale/orders/:id/cancel', requireGrossiste, (req, res) => {
       db.exec('ROLLBACK');
       throw txErr;
     }
+
+    triggerImmediateSalePush({
+      eventKind: 'annulation_vente',
+      saleId: order.id,
+      saleNumber: order.reference,
+      vendorId: 'usr-grs',
+      vendorName: order.created_by || 'Grossiste',
+      pdvName: order.client_name,
+      totalAmount: Number(order.total_amount || 0),
+      createdAt: nowIso,
+      isWholesale: true,
+      reason: cancelReason,
+    });
 
     recordAudit(
       'ANNULATION_COMMANDE_GROS',

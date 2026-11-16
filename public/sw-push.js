@@ -1,4 +1,6 @@
-/* Service Worker — Notifications Système & Badge d'icône Baobab Distribution (v8) */
+/* Service Worker — Notifications Push Immédiates Baobab Distribution (v9) */
+
+const displayedEventIds = new Set();
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -16,19 +18,18 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', (event) => {
+  // Aucune requête réseau avant l'affichage : lecture synchrone du payload léger
   let payload = {
     title: 'Baobab Distribution',
     body: 'Nouvelle notification système',
-    icon: '/logo.png',
-    badge: '/badge-72x72.png',
-    timestamp: Date.now(),
-    tag: 'baobab-info',
-    type: 'info',
     url: '/?tab=dashboard',
     tab: 'dashboard',
     notificationId: null,
     reference: null,
     unreadCount: 1,
+    requireInteraction: false,
+    urgency: 'normal',
+    timestamp: Date.now(),
   };
 
   if (event.data) {
@@ -44,47 +45,75 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  // Déduplication par identifiant d'événement
+  const eventKey = payload.notificationId || payload.tag || ('evt-' + Date.now());
+  if (payload.notificationId && displayedEventIds.has(payload.notificationId)) {
+    return;
+  }
+  if (payload.notificationId) {
+    displayedEventIds.add(payload.notificationId);
+    if (displayedEventIds.size > 500) {
+      const oldest = displayedEventIds.values().next().value;
+      if (oldest) displayedEventIds.delete(oldest);
+    }
+  }
+
   const title = payload.title || 'Baobab Distribution';
-  const tag = payload.tag || ('baobab-' + (payload.type || 'info'));
+  // Tag unique par événement
+  const uniqueTag = payload.tag || ('baobab-evt-' + eventKey);
   const timestamp = Number(payload.timestamp) || Date.now();
-  const targetUrl = payload.url || (payload.tab ? '/?tab=' + encodeURIComponent(payload.tab) : '/?tab=dashboard');
+  const targetUrl =
+    payload.url ||
+    (payload.tab ? '/?tab=' + encodeURIComponent(payload.tab) : '/?tab=dashboard');
+  const isActionable =
+    Boolean(payload.requireInteraction) || payload.urgency === 'high';
 
   const notificationOptions = {
     body: payload.body || 'Nouvelle notification disponible',
-    icon: payload.icon || '/logo.png',
-    badge: payload.badge || '/badge-72x72.png',
+    icon: '/logo.png',
+    badge: '/badge-72x72.png',
     timestamp: timestamp,
-    tag: tag,
+    tag: uniqueTag,
     renotify: true,
-    vibrate: [150, 75, 150],
+    requireInteraction: isActionable,
+    vibrate: isActionable ? [200, 80, 200] : [120, 60, 120],
     data: {
       url: targetUrl,
       tab: payload.tab || 'dashboard',
       notificationId: payload.notificationId || null,
       reference: payload.reference || null,
-      type: payload.type || 'info',
-      tag: tag,
-      unreadCount: typeof payload.unreadCount === 'number' ? payload.unreadCount : undefined,
+      tag: uniqueTag,
+      unreadCount:
+        typeof payload.unreadCount === 'number' ? payload.unreadCount : undefined,
       userId: payload.userId || null,
       userRole: payload.userRole || null,
     },
   };
 
-  const applyBadgePromise = (async () => {
+  // Affichage immédiat dans event.waitUntil(showNotification) sans aucune requête réseau préalable
+  const showPromise = self.registration.showNotification(title, notificationOptions);
+
+  const badgeAndClientSync = (async () => {
     try {
       if (typeof payload.unreadCount === 'number') {
-        if (payload.unreadCount > 0 && 'setAppBadge' in self.navigator && typeof self.navigator.setAppBadge === 'function') {
+        if (
+          payload.unreadCount > 0 &&
+          'setAppBadge' in self.navigator &&
+          typeof self.navigator.setAppBadge === 'function'
+        ) {
           await self.navigator.setAppBadge(payload.unreadCount);
-        } else if (payload.unreadCount <= 0 && 'clearAppBadge' in self.navigator && typeof self.navigator.clearAppBadge === 'function') {
+        } else if (
+          payload.unreadCount <= 0 &&
+          'clearAppBadge' in self.navigator &&
+          typeof self.navigator.clearAppBadge === 'function'
+        ) {
           await self.navigator.clearAppBadge();
         }
       }
     } catch {
-      // Feature non supportée ou refusée silencieusement
+      // Ignore
     }
-  })();
 
-  const notifyClientsPromise = (async () => {
     try {
       const windowClients = await self.clients.matchAll({
         type: 'window',
@@ -97,17 +126,11 @@ self.addEventListener('push', (event) => {
         });
       }
     } catch {
-      // Ignore client broadcast errors
+      // Ignore
     }
   })();
 
-  event.waitUntil(
-    Promise.all([
-      self.registration.showNotification(title, notificationOptions),
-      applyBadgePromise,
-      notifyClientsPromise,
-    ])
-  );
+  event.waitUntil(Promise.all([showPromise, badgeAndClientSync]));
 });
 
 self.addEventListener('notificationclick', (event) => {
@@ -123,14 +146,16 @@ self.addEventListener('notificationclick', (event) => {
 
   let targetUrl = data.url || ('/?tab=' + encodeURIComponent(targetTab));
   if (notificationId && !targetUrl.includes('notifId=')) {
-    targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'notifId=' + encodeURIComponent(notificationId);
+    targetUrl +=
+      (targetUrl.includes('?') ? '&' : '?') +
+      'notifId=' +
+      encodeURIComponent(notificationId);
   }
 
   event.waitUntil(
     (async () => {
       let updatedUnreadCount = null;
 
-      // 1. Marquer la notification comme lue côté serveur
       if (notificationId) {
         try {
           const headers = {
@@ -139,16 +164,19 @@ self.addEventListener('notificationclick', (event) => {
           if (userRole) headers['x-user-role'] = userRole;
           if (userId) headers['x-user-id'] = userId;
 
-          const res = await fetch('/api/notifications/' + encodeURIComponent(notificationId) + '/read', {
-            method: 'PATCH',
-            headers: headers,
-            body: JSON.stringify({
-              fromServiceWorker: true,
-              userId: userId,
-              userRole: userRole,
-              reference: reference,
-            }),
-          });
+          const res = await fetch(
+            '/api/notifications/' + encodeURIComponent(notificationId) + '/read',
+            {
+              method: 'PATCH',
+              headers: headers,
+              body: JSON.stringify({
+                fromServiceWorker: true,
+                userId: userId,
+                userRole: userRole,
+                reference: reference,
+              }),
+            }
+          );
 
           if (res.ok) {
             const respData = await res.json();
@@ -161,19 +189,34 @@ self.addEventListener('notificationclick', (event) => {
         }
       }
 
-      // 2. Mettre à jour le badge de l'icône avec le nouveau compteur
       try {
         if (typeof updatedUnreadCount === 'number') {
-          if (updatedUnreadCount > 0 && 'setAppBadge' in self.navigator && typeof self.navigator.setAppBadge === 'function') {
+          if (
+            updatedUnreadCount > 0 &&
+            'setAppBadge' in self.navigator &&
+            typeof self.navigator.setAppBadge === 'function'
+          ) {
             await self.navigator.setAppBadge(updatedUnreadCount);
-          } else if (updatedUnreadCount <= 0 && 'clearAppBadge' in self.navigator && typeof self.navigator.clearAppBadge === 'function') {
+          } else if (
+            updatedUnreadCount <= 0 &&
+            'clearAppBadge' in self.navigator &&
+            typeof self.navigator.clearAppBadge === 'function'
+          ) {
             await self.navigator.clearAppBadge();
           }
         } else if (typeof data.unreadCount === 'number') {
           const nextCount = Math.max(0, data.unreadCount - 1);
-          if (nextCount > 0 && 'setAppBadge' in self.navigator && typeof self.navigator.setAppBadge === 'function') {
+          if (
+            nextCount > 0 &&
+            'setAppBadge' in self.navigator &&
+            typeof self.navigator.setAppBadge === 'function'
+          ) {
             await self.navigator.setAppBadge(nextCount);
-          } else if (nextCount <= 0 && 'clearAppBadge' in self.navigator && typeof self.navigator.clearAppBadge === 'function') {
+          } else if (
+            nextCount <= 0 &&
+            'clearAppBadge' in self.navigator &&
+            typeof self.navigator.clearAppBadge === 'function'
+          ) {
             await self.navigator.clearAppBadge();
           }
         }
@@ -181,7 +224,6 @@ self.addEventListener('notificationclick', (event) => {
         // Feature detection sans erreur
       }
 
-      // 3. Ouvrir ou réutiliser l'application sur l'écran concerné
       const windowClients = await self.clients.matchAll({
         type: 'window',
         includeUncontrolled: true,

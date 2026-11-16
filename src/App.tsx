@@ -8,7 +8,7 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { LoginScreen, UserSession } from './components/LoginScreen';
 import { DashboardView } from './components/DashboardView';
-import { VentesView } from './components/VentesView';
+import { VentesView, buildMiniThermalReceiptDoc } from './components/VentesView';
 import { PdvView } from './components/PdvView';
 import { DepotMagasinView } from './components/DepotMagasinView';
 import { ComptaView } from './components/ComptaView';
@@ -249,15 +249,41 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Gère l'ouverture depuis une notification système (URL ?tab=...&notifId=...)
+  const openSaleByIdWithServerRbac = React.useCallback(
+    async (saleIdOrNumber: string) => {
+      if (!currentUser || !saleIdOrNumber) return;
+      try {
+        const res = await fetch(`/api/sales/${encodeURIComponent(saleIdOrNumber)}`, {
+          headers: {
+            'x-user-id': currentUser.id,
+            'x-user-role': currentUser.role,
+          },
+        });
+        if (!res.ok) return; // 403 ou 404 bloqué côté serveur
+        const data = await res.json();
+        if (data?.success && data.sale && !data.sale.isWholesale) {
+          setSelectedDocument(buildMiniThermalReceiptDoc(data.sale));
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [currentUser]
+  );
+
+  // Gère l'ouverture depuis une notification système (URL ?tab=...&saleId=...&notifId=...)
   useEffect(() => {
     if (typeof window === 'undefined' || !currentUser) return;
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
+    const saleIdParam = params.get('saleId') || params.get('saleNumber');
     const notifIdParam = params.get('notifId');
 
     if (tabParam) {
       setActiveTab(resolveTabForRole(tabParam, currentUser.role));
+    }
+    if (saleIdParam) {
+      void openSaleByIdWithServerRbac(saleIdParam);
     }
     if (notifIdParam) {
       closeSystemNotifications({ notificationId: notifIdParam });
@@ -279,10 +305,10 @@ export default function App() {
         })
         .catch(() => {});
     }
-    if (tabParam || notifIdParam) {
+    if (tabParam || saleIdParam || notifIdParam) {
       window.history.replaceState({}, '', window.location.pathname);
     }
-  }, [currentUser]);
+  }, [currentUser, openSaleByIdWithServerRbac]);
 
   // Load all data in parallel to avoid 14 sequential re-renders and UI stutter on mobile
   const loadData = async () => {
@@ -458,6 +484,39 @@ export default function App() {
       window.removeEventListener('baobab-anomalies-updated', onAnomaliesUpdated);
     };
   }, [currentUser, loadAnomaliesForRole]);
+
+  // Mise à jour temps réel du tableau de bord et de la liste des ventes sur réception d'un événement de vente (SSE)
+  useEffect(() => {
+    const refreshSalesRealtime = async () => {
+      try {
+        const [sRes, woRes, balRes] = await Promise.all([
+          fetch('/api/sales').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetch('/api/wholesale/orders').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetch('/api/vendor-balances').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        ]);
+        if (sRes?.sales) setSales(sRes.sales);
+        if (woRes?.wholesaleOrders) setWholesaleOrders(woRes.wholesaleOrders);
+        if (balRes?.balances) setBalances(balRes.balances);
+      } catch {
+        // ignore
+      }
+    };
+
+    const handleOpenSaleEvent = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const targetId = detail?.saleId || detail?.saleNumber;
+      if (targetId) {
+        void openSaleByIdWithServerRbac(String(targetId));
+      }
+    };
+
+    window.addEventListener('baobab-sales-realtime-updated', refreshSalesRealtime);
+    window.addEventListener('baobab-open-sale-detail', handleOpenSaleEvent);
+    return () => {
+      window.removeEventListener('baobab-sales-realtime-updated', refreshSalesRealtime);
+      window.removeEventListener('baobab-open-sale-detail', handleOpenSaleEvent);
+    };
+  }, [openSaleByIdWithServerRbac]);
 
   // Sauvegarde automatique du cache local pour la recherche en mode hors ligne
   useEffect(() => {

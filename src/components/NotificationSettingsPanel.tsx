@@ -9,6 +9,9 @@ import {
   RefreshCw,
   Info,
   X,
+  Activity,
+  BatteryCharging,
+  Clock,
 } from 'lucide-react';
 import { UserSession } from './LoginScreen';
 import { InfoTooltip } from './InfoTooltip';
@@ -17,6 +20,7 @@ import {
   NotificationCategoryKey,
   NotificationPreferences,
   DEFAULT_NOTIFICATION_TYPES,
+  PushDiagnosticsResponse,
   getPushSupportInfo,
   getActivePushSubscription,
   requestAndSubscribePush,
@@ -24,6 +28,7 @@ import {
   fetchUserPushStatus,
   updateUserPushPreferences,
   triggerTestPushNotification,
+  fetchPushDiagnostics,
   getPushBannerDismissInfo,
   clearPushBannerDismissal,
 } from '../utils/pushNotifications';
@@ -41,6 +46,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
   isModal = false,
   hideHeader = false,
 }) => {
+  const isAdmin = currentUser.role === 'Administrateur';
   const [supportInfo, setSupportInfo] = useState(() => getPushSupportInfo());
   const [hasLocalSubscription, setHasLocalSubscription] = useState(false);
   const [devices, setDevices] = useState<
@@ -57,14 +63,31 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
   const [preferences, setPreferences] = useState<NotificationPreferences>({
     enabled: true,
     types: { ...DEFAULT_NOTIFICATION_TYPES },
+    hideAmountsOnLockScreen: true,
+    minSaleAmount: 0,
+    saleScope: 'all',
+    quietHoursEnabled: false,
+    quietHoursStart: '22:00',
+    quietHoursEnd: '06:00',
   });
+  const [diagnostics, setDiagnostics] = useState<PushDiagnosticsResponse | null>(null);
+  const [lastMeasuredLatencyMs, setLastMeasuredLatencyMs] = useState<number | null>(null);
+  const [lastTestStatusCode, setLastTestStatusCode] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busyAction, setBusyAction] = useState<'toggle' | 'test' | 'prefs' | null>(null);
+  const [busyAction, setBusyAction] = useState<'toggle' | 'test' | 'prefs' | 'diag' | null>(null);
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
   } | null>(null);
   const [dismissInfo, setDismissInfo] = useState(() => getPushBannerDismissInfo(currentUser.id));
+
+  const refreshDiagnostics = useCallback(async () => {
+    if (!isAdmin) return;
+    const diag = await fetchPushDiagnostics(currentUser.id, currentUser.role);
+    if (diag) {
+      setDiagnostics(diag);
+    }
+  }, [currentUser.id, currentUser.role, isAdmin]);
 
   const refreshState = useCallback(async () => {
     setLoading(true);
@@ -80,8 +103,11 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
         setHasLocalSubscription(true);
       }
     }
+    if (isAdmin) {
+      await refreshDiagnostics();
+    }
     setLoading(false);
-  }, [currentUser.id, currentUser.role]);
+  }, [currentUser.id, currentUser.role, isAdmin, refreshDiagnostics]);
 
   useEffect(() => {
     refreshState();
@@ -157,6 +183,21 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
     }
   };
 
+  const handleUpdateSalesPrefs = async (patch: Partial<NotificationPreferences>) => {
+    setFeedback(null);
+    const optimistic: NotificationPreferences = { ...preferences, ...patch };
+    setPreferences(optimistic);
+    setBusyAction('prefs');
+    try {
+      const saved = await updateUserPushPreferences(currentUser.id, currentUser.role, patch);
+      if (saved) {
+        setPreferences(saved);
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleSendTest = async () => {
     setFeedback(null);
     setBusyAction('test');
@@ -175,17 +216,41 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
         await refreshState();
       }
       const res = await triggerTestPushNotification(currentUser.id, currentUser.role);
+      if (typeof res.latencyMs === 'number') {
+        setLastMeasuredLatencyMs(res.latencyMs);
+      }
+      if (typeof res.statusCode === 'number') {
+        setLastTestStatusCode(res.statusCode);
+      }
       setFeedback({
         type: res.ok ? 'success' : 'error',
         message: res.message,
       });
+      if (isAdmin) {
+        await refreshDiagnostics();
+      }
     } finally {
       setBusyAction(null);
     }
   };
 
+  const formatTimeIso = (isoStr?: string) => {
+    if (!isoStr) return '—';
+    try {
+      const d = new Date(isoStr);
+      if (Number.isNaN(d.getTime())) return isoStr;
+      return d.toLocaleTimeString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    } catch {
+      return isoStr;
+    }
+  };
+
   const innerContent = (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {!hideHeader && (
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3.5">
           <div className="flex items-center gap-3 min-w-0">
@@ -198,7 +263,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
               </h2>
               <div className="flex items-center gap-1 mt-0.5">
                 <p className="text-[14px] text-slate-500 dark:text-slate-400 leading-snug">
-                  Alertes temps réel et pastille d&apos;application.
+                  Alertes temps réel, diagnostic et pastille d&apos;application.
                 </p>
                 <InfoTooltip
                   text={`Configurez les notifications système en temps réel et le badge d'icône pour ${currentUser.name} (${currentUser.role}).`}
@@ -271,7 +336,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
           >
             {isEffectiveActive ? 'Activées' : 'Désactivées'}
           </span>
-          <InfoTooltip text="Recevez les alertes même lorsque l'application Baobab Distribution est fermée ou en arrière-plan." />
+          <InfoTooltip text="Recevez les alertes immédiatement même lorsque l'application Baobab Distribution est fermée ou en arrière-plan." />
         </div>
 
         <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -325,39 +390,322 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
         </div>
       </div>
 
-      {/* Boutons principaux verts en bas de la section */}
-      <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
-        <button
-          type="button"
-          onClick={handleSendTest}
-          disabled={busyAction !== null || !supportInfo.supported}
-          className="h-[48px] min-h-[48px] px-4 rounded-xl border border-[#15803D] bg-[#DCFCE7] hover:bg-[#BBF7D0] dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-[#15803D] dark:text-emerald-300 font-bold text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
-        >
-          {busyAction === 'test' ? (
-            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
-          ) : (
-            <Send className="w-4 h-4 shrink-0" />
-          )}
-          <span>Tester la notification</span>
-        </button>
+      {/* RÉGLAGES PUSH DE VENTE (Masquage écran verrouillé, Périmètre, Seuil minimum, Heures silencieuses) */}
+      {currentUser.role !== 'Gestionnaire de stock' && currentUser.role !== 'Magasinier' && (
+        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Réglages des Notifications Push de Vente
+              </h3>
+              <InfoTooltip text="Personnalisez vos notifications push de vente (masquage des montants sur l'écran verrouillé, seuil minimum, périmètre et heures silencieuses). Vos choix ne modifient jamais vos droits d'accès." />
+            </div>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              Regroupement auto &gt; 5 ventes / 2 min
+            </span>
+          </div>
 
-        <button
-          type="button"
-          onClick={handleToggleMain}
-          disabled={busyAction !== null || !supportInfo.supported}
-          className="h-[48px] min-h-[48px] px-5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
-        >
-          {busyAction === 'toggle' ? (
-            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
-          ) : isEffectiveActive ? (
-            <BellOff className="w-4 h-4 shrink-0" />
-          ) : (
-            <Bell className="w-4 h-4 shrink-0" />
+          {/* Option : Masquer les montants sur l'écran verrouillé (activée par défaut) */}
+          <label className="flex items-start justify-between gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 cursor-pointer">
+            <div className="space-y-0.5 min-w-0">
+              <div className="text-xs font-bold text-slate-900 dark:text-white">
+                Masquer les montants sur l&apos;écran verrouillé
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                {(preferences.hideAmountsOnLockScreen ?? true)
+                  ? 'Activé (par défaut) : affiche « Nouvelle vente enregistrée » sur l’écran verrouillé (le détail complet reste dans la cloche).'
+                  : 'Désactivé : affiche « Oumar K. · Alimentation Générale Sotuba · 48 000 FCFA » dans la notification.'}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={preferences.hideAmountsOnLockScreen ?? true}
+              onChange={(e) => handleUpdateSalesPrefs({ hideAmountsOnLockScreen: e.target.checked })}
+              className="h-4 w-4 mt-0.5 rounded border-slate-300 text-[#15803D] focus:ring-[#15803D] cursor-pointer shrink-0"
+            />
+          </label>
+
+          {/* Périmètre et Seuil de montant minimum */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                Périmètre des ventes notifiées
+              </label>
+              <select
+                value={preferences.saleScope || 'all'}
+                onChange={(e) =>
+                  handleUpdateSalesPrefs({
+                    saleScope: e.target.value as 'all' | 'mine' | 'above_threshold',
+                  })
+                }
+                className="w-full h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-900 dark:text-white"
+              >
+                <option value="all">Toutes les ventes de mon périmètre</option>
+                <option value="mine">Seulement les miennes</option>
+                <option value="above_threshold">Seulement au-dessus d&apos;un montant</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                Seuil de montant minimum (FCFA)
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                value={preferences.minSaleAmount ?? 0}
+                onChange={(e) => {
+                  const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                  setPreferences((prev) => ({ ...prev, minSaleAmount: val }));
+                }}
+                onBlur={(e) => {
+                  const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                  void handleUpdateSalesPrefs({ minSaleAmount: val });
+                }}
+                className="w-full h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-slate-900 dark:text-white"
+                placeholder="0"
+              />
+            </div>
+          </div>
+
+          {/* Heures silencieuses (par défaut aucune) */}
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2.5">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white">
+                  Heures silencieuses
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {preferences.quietHoursEnabled
+                    ? `Actives de ${preferences.quietHoursStart || '22:00'} à ${preferences.quietHoursEnd || '06:00'} (les ventes restent enregistrées dans la cloche).`
+                    : 'Aucune heure silencieuse par défaut (notifications push reçues 24h/24).'}
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={Boolean(preferences.quietHoursEnabled)}
+                onChange={(e) => handleUpdateSalesPrefs({ quietHoursEnabled: e.target.checked })}
+                className="h-4 w-4 rounded border-slate-300 text-[#15803D] focus:ring-[#15803D] cursor-pointer shrink-0"
+              />
+            </label>
+
+            {preferences.quietHoursEnabled && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                    Début
+                  </label>
+                  <input
+                    type="time"
+                    value={preferences.quietHoursStart || '22:00'}
+                    onChange={(e) => handleUpdateSalesPrefs({ quietHoursStart: e.target.value })}
+                    className="w-full h-9 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                    Fin
+                  </label>
+                  <input
+                    type="time"
+                    value={preferences.quietHoursEnd || '06:00'}
+                    onChange={(e) => handleUpdateSalesPrefs({ quietHoursEnd: e.target.value })}
+                    className="w-full h-9 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION DIAGNOSTIC : Test de latence, Aide économie de batterie & Journal Administrateur */}
+      <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-[#008DA9] shrink-0" />
+            <h3 className="text-sm font-black text-slate-900 dark:text-white">
+              Diagnostic &amp; Latence des Notifications Push
+            </h3>
+          </div>
+          {lastMeasuredLatencyMs !== null && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-200 text-xs font-bold">
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                Délai mesuré : {lastMeasuredLatencyMs} ms
+                {lastTestStatusCode ? ` (HTTP ${lastTestStatusCode})` : ''}
+              </span>
+            </span>
           )}
-          <span>
-            {isEffectiveActive ? 'Désactiver les notifications' : 'Activer les notifications'}
-          </span>
-        </button>
+        </div>
+
+        {/* Message d'aide si l'appareil bloque les notifications (économie de batterie / arrière-plan) */}
+        <div className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-950/25 space-y-1.5 text-xs">
+          <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200">
+            <BatteryCharging className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span>
+              Aide : que faire si l&apos;appareil retarde ou bloque les notifications (économie de batterie) ?
+            </span>
+          </div>
+          <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+            Sur smartphone, le mode <strong>Économie d&apos;énergie / Optimisation de la batterie</strong> peut
+            suspendre la réception en arrière-plan lorsque l&apos;application est fermée :
+          </p>
+          <ul className="list-disc pl-4 space-y-1 text-slate-600 dark:text-slate-300 leading-snug">
+            <li>
+              <strong>Android (Chrome / PWA) :</strong> ouvrez <em>Paramètres &gt; Applications &gt; Chrome (ou Baobab Distribution) &gt; Batterie</em> et sélectionnez <strong>« Non restreinte »</strong>, puis désactivez l&apos;économiseur de données pour l&apos;application.
+            </li>
+            <li>
+              <strong>iPhone / iPad (iOS) :</strong> installez l&apos;application sur l&apos;écran d&apos;accueil, désactivez le <em>Mode économie d&apos;énergie</em> et autorisez les alertes immédiates dans <em>Réglages &gt; Notifications</em>.
+            </li>
+          </ul>
+        </div>
+
+        {/* Boutons d'action : Envoyer une notification de test & Activer/Désactiver */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
+          <button
+            type="button"
+            onClick={handleSendTest}
+            disabled={busyAction !== null || !supportInfo.supported}
+            className="h-[48px] min-h-[48px] px-4 rounded-xl border border-[#15803D] bg-[#DCFCE7] hover:bg-[#BBF7D0] dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-[#15803D] dark:text-emerald-300 font-bold text-sm inline-flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+          >
+            {busyAction === 'test' ? (
+              <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+            ) : (
+              <Send className="w-4 h-4 shrink-0" />
+            )}
+            <span>Envoyer une notification de test</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleToggleMain}
+            disabled={busyAction !== null || !supportInfo.supported}
+            className="h-[48px] min-h-[48px] px-5 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm inline-flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+          >
+            {busyAction === 'toggle' ? (
+              <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+            ) : isEffectiveActive ? (
+              <BellOff className="w-4 h-4 shrink-0" />
+            ) : (
+              <Bell className="w-4 h-4 shrink-0" />
+            )}
+            <span>
+              {isEffectiveActive ? 'Désactiver les notifications' : 'Activer les notifications'}
+            </span>
+          </button>
+        </div>
+
+        {/* Journal des envois Push & Délai moyen (visible par l'Administrateur) */}
+        {isAdmin && (
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                  Journal des envois Push (Administrateur)
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Heure de création, heure d&apos;envoi, code de réponse HTTP, réessais et délai moyen.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  setBusyAction('diag');
+                  await refreshDiagnostics();
+                  setBusyAction(null);
+                }}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-xs font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${busyAction === 'diag' ? 'animate-spin' : ''}`} />
+                <span>Actualiser</span>
+              </button>
+            </div>
+
+            {/* Indicateurs de latence et de fiabilité */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[10px] font-bold uppercase text-slate-500">Délai moyen</div>
+                <div className="text-base font-black text-[#008DA9] mt-0.5">
+                  {diagnostics ? `${diagnostics.avgLatencyMs} ms` : '0 ms'}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[10px] font-bold uppercase text-slate-500">Envois réussis</div>
+                <div className="text-base font-black text-emerald-600 mt-0.5">
+                  {diagnostics ? `${diagnostics.successCount} / ${diagnostics.totalSent}` : '0 / 0'}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[10px] font-bold uppercase text-slate-500">Clients SSE actifs</div>
+                <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">
+                  {diagnostics ? diagnostics.connectedSseClientsCount : 0}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="text-[10px] font-bold uppercase text-slate-500">404/410 purgés</div>
+                <div className="text-base font-black text-amber-600 mt-0.5">
+                  {diagnostics ? diagnostics.removedSubscriptionsCount : 0}
+                </div>
+              </div>
+            </div>
+
+            {/* Liste des envois enregistrés */}
+            {!diagnostics || diagnostics.logs.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-center text-xs text-slate-400">
+                Aucun envoi push enregistré pour le moment. Cliquez sur « Envoyer une notification de test » ou déclenchez une validation métier.
+              </div>
+            ) : (
+              <div className="max-h-[260px] overflow-y-auto space-y-2 pr-1">
+                {diagnostics.logs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-bold text-slate-900 dark:text-white">{log.title}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                          {log.user_role}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            log.urgency === 'high'
+                              ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          }`}
+                        >
+                          {log.urgency}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Création : <strong className="font-mono">{formatTimeIso(log.created_at)}</strong> &bull; Envoi :{' '}
+                        <strong className="font-mono">{formatTimeIso(log.sent_at)}</strong> &bull; Essais :{' '}
+                        <strong>{log.attempts}</strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                      <span className="font-mono font-bold text-[#008DA9]">{log.latency_ms} ms</span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-mono font-bold text-[11px] ${
+                          log.status === 'succes'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : log.status === 'abonnement_supprime'
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                        }`}
+                      >
+                        HTTP {log.status_code}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

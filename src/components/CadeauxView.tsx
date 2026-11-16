@@ -175,9 +175,9 @@ interface ConfettiParticle {
   vRot: number;
 }
 
-const CANVAS_WIDTH = 420;
-const CANVAS_HEIGHT = 280; // Format 3:2 exact (420 x 280)
-const BRUSH_SIZE = 32; // Pinceau 28-36 px
+const CANVAS_WIDTH = 520;
+const CANVAS_HEIGHT = 260; // Format 2:1 généreux (520 x 260) dédié uniquement à la zone à gratter
+const BRUSH_SIZE = 36; // Pinceau généreux et fluide
 const MAX_SPARKLES = 30; // 30 paillettes max
 const MEASURE_INTERVAL_MS = 150; // Mesure toutes les 150 ms
 const REVEAL_THRESHOLD = 0.55; // Révélation à 55 %
@@ -189,16 +189,18 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-// Interactive 3:2 Scratch Card Component (Dégradés autorisés ici seulement)
+// Interactive Scratch Card Component (Sélection préalable + Grattage verrouillé sans mouvement)
 const ScratchCardItem: React.FC<{
   bon: BonCadeau;
   logoUrl?: string;
   onRevealed: (updatedBon: BonCadeau) => void;
 }> = ({ bon, logoUrl, onRevealed }) => {
+  const cardWrapperRef = useRef<HTMLDivElement | null>(null);
   const scratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fxCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isRevealed, setIsRevealed] = useState<boolean>(bon.revealed);
+  const [isSelectedForScratch, setIsSelectedForScratch] = useState<boolean>(false);
   const [revealedAmount, setRevealedAmount] = useState<number | undefined>(bon.amount);
   const [isFadingOut, setIsFadingOut] = useState<boolean>(false);
   const [isRevealingServer, setIsRevealingServer] = useState<boolean>(false);
@@ -220,8 +222,56 @@ const ScratchCardItem: React.FC<{
       setRevealedAmount(bon.amount);
       revealTriggeredRef.current = true;
       setScratchPercent(100);
+      setIsSelectedForScratch(false);
     }
   }, [bon.revealed, bon.amount]);
+
+  // Lock page scroll when the card is selected for scratching so the card never moves under finger/mouse
+  useEffect(() => {
+    if (!isSelectedForScratch || isRevealed) return;
+
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverscroll = document.body.style.overscrollBehavior;
+
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overscrollBehavior = prevBodyOverscroll;
+    };
+  }, [isSelectedForScratch, isRevealed]);
+
+  // Prevent native touch scrolling/dragging on the canvas when selected
+  useEffect(() => {
+    const canvas = scratchCanvasRef.current;
+    if (!canvas || !isSelectedForScratch || isRevealed) return;
+
+    const preventTouchScroll = (e: TouchEvent) => {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    };
+
+    canvas.addEventListener('touchstart', preventTouchScroll, { passive: false });
+    canvas.addEventListener('touchmove', preventTouchScroll, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('touchstart', preventTouchScroll);
+      canvas.removeEventListener('touchmove', preventTouchScroll);
+    };
+  }, [isSelectedForScratch, isRevealed]);
+
+  const handleSelectCard = () => {
+    if (isRevealed) return;
+    setIsSelectedForScratch(true);
+    if (cardWrapperRef.current) {
+      cardWrapperRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   // Draw the initial metallic silver scratch layer with canvas grain, reflections, and "GRATTEZ ICI"
   const initSilverLayer = useCallback(() => {
@@ -264,19 +314,23 @@ const ScratchCardItem: React.FC<{
     ctx.putImageData(imgData, 0, 0);
 
     // 4. Inner border & "GRATTEZ ICI" typography
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
     ctx.lineWidth = 2;
-    ctx.strokeRect(14, 14, CANVAS_WIDTH - 28, CANVAS_HEIGHT - 28);
+    ctx.strokeRect(16, 16, CANVAS_WIDTH - 32, CANVAS_HEIGHT - 32);
 
-    ctx.fillStyle = '#1E293B';
-    ctx.font = '900 26px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#0F172A';
+    ctx.font = '900 28px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('GRATTEZ ICI', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 8);
+    ctx.fillText('GRATTEZ ICI', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 14);
 
     ctx.fillStyle = '#334155';
-    ctx.font = '700 12px system-ui, -apple-system, sans-serif';
-    ctx.fillText('Frottez avec le doigt ou la souris pour découvrir votre bon', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 22);
+    ctx.font = '700 14px system-ui, -apple-system, sans-serif';
+    ctx.fillText(
+      'Frottez avec le doigt ou la souris pour découvrir votre bon',
+      CANVAS_WIDTH / 2,
+      CANVAS_HEIGHT / 2 + 20
+    );
   }, [bon.revealed]);
 
   useEffect(() => {
@@ -439,6 +493,7 @@ const ScratchCardItem: React.FC<{
         triggerConfetti();
         setTimeout(() => {
           setIsRevealed(true);
+          setIsSelectedForScratch(false);
           setScratchPercent(100);
           onRevealed(data.bon);
         }, 300);
@@ -489,7 +544,7 @@ const ScratchCardItem: React.FC<{
     }
   }, [triggerServerReveal]);
 
-  // Interpolated brush stroke with destination-out (pinceau 28-36 px)
+  // Interpolated brush stroke with destination-out
   const scratchLine = useCallback(
     (fromX: number, fromY: number, toX: number, toY: number) => {
       const canvas = scratchCanvasRef.current;
@@ -501,7 +556,7 @@ const ScratchCardItem: React.FC<{
       ctx.globalCompositeOperation = 'destination-out';
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.lineWidth = BRUSH_SIZE; // 32 px (in 28-36 px range)
+      ctx.lineWidth = BRUSH_SIZE;
 
       // Tracé interpolé
       const dist = Math.hypot(toX - fromX, toY - fromY);
@@ -536,7 +591,9 @@ const ScratchCardItem: React.FC<{
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isRevealed || revealTriggeredRef.current) return;
+    if (!isSelectedForScratch || isRevealed || revealTriggeredRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     isDrawingRef.current = true;
     const pt = getCanvasCoords(e);
@@ -555,7 +612,9 @@ const ScratchCardItem: React.FC<{
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawingRef.current || isRevealed || revealTriggeredRef.current) return;
+    if (!isSelectedForScratch || !isDrawingRef.current || isRevealed || revealTriggeredRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
     const pt = getCanvasCoords(e);
     const prev = lastPointRef.current || pt;
     scratchLine(prev.x, prev.y, pt.x, pt.y);
@@ -564,6 +623,8 @@ const ScratchCardItem: React.FC<{
 
   const handlePointerUpOrCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
     isDrawingRef.current = false;
     lastPointRef.current = null;
     try {
@@ -576,127 +637,218 @@ const ScratchCardItem: React.FC<{
 
   const semesterDisplay =
     bon.semester === 'S1-2026'
-      ? '1er Semestre 2026 (Clôture 1er Juillet)'
+      ? '1er Semestre 2026 • Clôture 1er Juillet'
       : bon.semester === 'S2-2026'
-      ? '2e Semestre 2026 (Clôture 1er Janvier)'
+      ? '2e Semestre 2026 • Clôture 1er Janvier'
       : bon.semester;
 
   return (
-    <div className="w-full max-w-[420px] mx-auto space-y-3">
-      {/* CARTE À GRATTER : format 3:2, max 420 px, dégradés autorisés ici seulement */}
+    <div
+      ref={cardWrapperRef}
+      className="w-full max-w-[560px] mx-auto space-y-3"
+    >
+      {/* CARTE À GRATTER GRAND FORMAT : en-tête séparé + zone de grattage dédiée immobile */}
       <div
-        className="relative w-full max-w-[420px] aspect-[3/2] rounded-2xl overflow-hidden shadow-md border border-amber-300/80 select-none"
+        className={`relative w-full rounded-2xl overflow-hidden shadow-md border-2 transition-all select-none ${
+          isSelectedForScratch && !isRevealed
+            ? 'border-amber-400 ring-4 ring-amber-400/30 shadow-xl'
+            : 'border-amber-300/80'
+        }`}
         style={{
           backgroundImage: 'linear-gradient(135deg, #042f2e 0%, #0f766e 50%, #0369a1 100%)',
+          touchAction: isSelectedForScratch && !isRevealed ? 'none' : 'pan-y',
         }}
       >
-        {/* Top bar: Logo, Semestre, Note /20 */}
-        <div className="relative z-10 flex items-center justify-between px-4 py-2.5 bg-black/25 border-b border-white/15 text-white">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-white/95 p-0.5 flex items-center justify-center shrink-0">
-              <BaobabLogo logoUrl={logoUrl} size={22} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[11px] font-black tracking-wide uppercase text-amber-300 leading-tight">
+        {/* En-tête de la carte sur 2 lignes claires (jamais tronqué ni superposé au canvas) */}
+        <div className="relative z-10 px-4 py-3.5 bg-black/30 border-b border-white/15 text-white space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-white/95 p-0.5 flex items-center justify-center shrink-0">
+                <BaobabLogo logoUrl={logoUrl} size={24} />
+              </div>
+              <div className="text-xs sm:text-sm font-black tracking-wide uppercase text-amber-300 whitespace-nowrap">
                 Baobab Distribution
               </div>
-              <div className="text-[10px] text-white/90 font-semibold leading-tight">{semesterDisplay}</div>
+            </div>
+
+            <div className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-400 text-slate-950 font-black text-xs sm:text-sm shadow-xs">
+              <Award className="w-4 h-4 shrink-0" />
+              <span>Note : {bon.note} / 20</span>
             </div>
           </div>
 
-          <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 font-black text-xs">
-            <Award className="w-3.5 h-3.5" />
-            <span>Note : {bon.note} / 20</span>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-white/95 font-semibold">
+            <span>{semesterDisplay}</span>
+            <span className="font-mono text-[11px] text-amber-200">
+              Réf : {bon.reference} &bull; {bon.days_remaining} j restants
+            </span>
           </div>
         </div>
 
-        {/* Prize Zone Underneath (Montant absent du DOM et du réseau avant révélation !) */}
-        <div className="relative z-0 h-[calc(100%-48px)] flex flex-col items-center justify-center p-4 text-center text-white">
-          {typeof revealedAmount === 'number' ? (
-            <div className="space-y-1.5 animate-fade-in">
-              <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-400/20 border border-amber-300/40 text-amber-200 text-[11px] font-bold uppercase tracking-wider">
-                <Sparkles className="w-3.5 h-3.5" /> Bon Cadeau Semestriel Révélé
+        {/* Zone de grattage dédiée (hauteur généreuse, aucune superposition avec l'en-tête) */}
+        <div className="relative w-full h-[230px] sm:h-[260px]">
+          {/* Prize Zone Underneath (Montant absent du DOM et du réseau avant révélation !) */}
+          <div className="relative z-0 w-full h-full flex flex-col items-center justify-center p-5 text-center text-white">
+            {typeof revealedAmount === 'number' ? (
+              <div className="space-y-2 animate-fade-in">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-400/20 border border-amber-300/40 text-amber-200 text-xs font-bold uppercase tracking-wider">
+                  <Sparkles className="w-4 h-4 shrink-0" /> Bon Cadeau Semestriel Révélé
+                </div>
+                <div className="text-3xl sm:text-4xl font-black tracking-tight text-amber-300 drop-shadow-xs">
+                  {revealedAmount.toLocaleString('fr-FR')} FCFA
+                </div>
+                <div className="text-xs text-white/90 font-medium">
+                  Réf : <span className="font-mono font-bold">{bon.reference}</span> &bull; Valable 90 jours (jusqu&apos;au{' '}
+                  {bon.expires_at})
+                </div>
               </div>
-              <div className="text-3xl sm:text-4xl font-black tracking-tight text-amber-300 drop-shadow-xs">
-                {revealedAmount.toLocaleString('fr-FR')} FCFA
+            ) : (
+              <div className="space-y-1.5">
+                <Gift className="w-9 h-9 text-amber-300 mx-auto opacity-85" />
+                <div className="text-sm sm:text-base font-bold text-white/95">
+                  {isRevealingServer ? 'Révélation sécurisée en cours...' : 'Grattez la zone argentée'}
+                </div>
+                <div className="text-xs text-white/80">
+                  Réf : {bon.reference} &bull; Validité 90 jours ({bon.days_remaining} j restants)
+                </div>
               </div>
-              <div className="text-[11px] text-white/90 font-medium">
-                Réf : <span className="font-mono font-bold">{bon.reference}</span> &bull; Valable 90 jours (jusqu'au{' '}
-                {bon.expires_at})
+            )}
+          </div>
+
+          {/* Couche Argentée Canvas (active uniquement quand la carte est sélectionnée) */}
+          {!isRevealed && (
+            <canvas
+              ref={scratchCanvasRef}
+              width={CANVAS_WIDTH}
+              height={CANVAS_HEIGHT}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUpOrCancel}
+              onPointerCancel={handlePointerUpOrCancel}
+              style={{
+                touchAction: isSelectedForScratch ? 'none' : 'pan-y',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+              }}
+              className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
+                isFadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
+              } ${
+                isSelectedForScratch
+                  ? 'cursor-crosshair pointer-events-auto z-10'
+                  : 'pointer-events-none z-10'
+              }`}
+              aria-label={`Carte à gratter du semestre ${bon.semester}, note ${bon.note} sur 20`}
+            />
+          )}
+
+          {/* Étape 1 : Bandeau de sélection avant le grattage (évite tout mouvement ou grattage involontaire au défilement) */}
+          {!isRevealed && !isSelectedForScratch && (
+            <div
+              onClick={handleSelectCard}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleSelectCard();
+                }
+              }}
+              className="absolute inset-0 z-20 bg-slate-950/35 backdrop-blur-[1px] flex flex-col items-center justify-center p-4 text-center cursor-pointer transition hover:bg-slate-950/25"
+            >
+              <div className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs sm:text-sm shadow-lg flex items-center gap-2 transition transform active:scale-95">
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span>Sélectionner cette carte pour gratter</span>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              <Gift className="w-8 h-8 text-amber-300 mx-auto opacity-80" />
-              <div className="text-sm font-bold text-white/90">
-                {isRevealingServer ? 'Révélation sécurisée en cours...' : 'Grattez la zone argentée'}
-              </div>
-              <div className="text-[11px] text-white/75">
-                Réf : {bon.reference} &bull; Validité 90 jours ({bon.days_remaining} j restants)
-              </div>
+              <p className="mt-2 text-xs font-bold text-white drop-shadow-xs px-3 py-1 rounded-md bg-slate-900/60">
+                Cliquez ou touchez d&apos;abord pour verrouiller la carte, puis grattez sans qu&apos;elle ne bouge
+              </p>
             </div>
           )}
-        </div>
 
-        {/* Couche Argentée Canvas (touch-action: none SEULEMENT sur le canvas) */}
-        {!isRevealed && (
+          {/* Indicateur de carte sélectionnée et verrouillée */}
+          {!isRevealed && isSelectedForScratch && (
+            <div className="absolute top-2.5 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
+              <span className="px-2.5 py-1 rounded-md bg-emerald-600/95 text-white font-bold text-[11px] shadow-xs">
+                Carte verrouillée — Grattez maintenant
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSelectedForScratch(false);
+                }}
+                className="pointer-events-auto px-2.5 py-1 rounded-md bg-slate-900/85 hover:bg-slate-900 text-white font-bold text-[11px] shadow-xs cursor-pointer"
+              >
+                Déverrouiller
+              </button>
+            </div>
+          )}
+
+          {/* FX Canvas for Sparkles (max 30) & Confetti (60 particles, 2 s) */}
           <canvas
-            ref={scratchCanvasRef}
+            ref={fxCanvasRef}
             width={CANVAS_WIDTH}
             height={CANVAS_HEIGHT}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUpOrCancel}
-            onPointerCancel={handlePointerUpOrCancel}
-            style={{ touchAction: 'none' }}
-            className={`absolute inset-x-0 bottom-0 top-[48px] w-full h-[calc(100%-48px)] cursor-crosshair transition-opacity duration-300 ${
-              isFadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
-            }`}
-            aria-label={`Carte à gratter du semestre ${bon.semester}, note ${bon.note} sur 20`}
+            className="absolute inset-0 w-full h-full pointer-events-none z-30"
           />
-        )}
-
-        {/* FX Canvas for Sparkles (max 30) & Confetti (60 particles, 2 s) */}
-        <canvas
-          ref={fxCanvasRef}
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          className="absolute inset-0 w-full h-full pointer-events-none z-20"
-        />
+        </div>
       </div>
 
-      {/* Controls under card: Progress & Bouton "Révéler" 48 px + Clavier Entrée ou Espace */}
-      <div className="flex items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-        <div className="text-xs text-slate-600 dark:text-slate-300">
+      {/* Barre de contrôle sous la carte : progression + boutons non tronqués */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800">
+        <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 min-w-0">
           {isRevealed ? (
             <span className="inline-flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-400">
-              <CheckCircle2 className="w-4 h-4" />
-              Bon révélé ({revealedAmount?.toLocaleString('fr-FR')} FCFA) &bull; Valable {bon.days_remaining} j
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>
+                Bon révélé ({revealedAmount?.toLocaleString('fr-FR')} FCFA) &bull; Valable {bon.days_remaining} j
+              </span>
             </span>
           ) : (
-            <span>
-              Surface grattée : <strong>{scratchPercent}%</strong>{' '}
-              <span className="text-slate-400">(auto à 55%)</span>
-            </span>
+            <div>
+              <span>
+                Surface grattée : <strong>{scratchPercent}%</strong>{' '}
+                <span className="text-slate-400">(auto à 55%)</span>
+              </span>
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+                {isSelectedForScratch
+                  ? 'Mode grattage actif : frottez la carte (immobile)'
+                  : 'Sélectionnez la carte avant de commencer le grattage'}
+              </div>
+            </div>
           )}
         </div>
 
         {!isRevealed && (
-          <button
-            type="button"
-            disabled={isRevealingServer}
-            onClick={() => triggerServerReveal()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                triggerServerReveal();
-              }
-            }}
-            className="h-12 min-h-[48px] px-5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 transition focus:outline-none focus:ring-2 focus:ring-[#008DA9] focus:ring-offset-2 disabled:opacity-50 cursor-pointer"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Révéler</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            <button
+              type="button"
+              onClick={() => setIsSelectedForScratch((prev) => !prev)}
+              className={`h-11 min-h-[44px] px-3.5 rounded-xl font-bold text-xs whitespace-nowrap shrink-0 flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                isSelectedForScratch
+                  ? 'bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-700'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200'
+              }`}
+            >
+              <span>{isSelectedForScratch ? 'Carte sélectionnée' : 'Sélectionner'}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isRevealingServer}
+              onClick={() => triggerServerReveal()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  triggerServerReveal();
+                }
+              }}
+              className="h-11 min-h-[44px] px-4 rounded-xl bg-[#008DA9] hover:bg-[#00748C] active:scale-[0.99] text-white font-bold text-xs whitespace-nowrap shrink-0 flex items-center justify-center gap-1.5 transition focus:outline-none focus:ring-2 focus:ring-[#008DA9] focus:ring-offset-2 disabled:opacity-50 cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4 shrink-0" />
+              <span>Révéler</span>
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -1772,8 +1924,8 @@ export const CadeauxView: React.FC<CadeauxViewProps> = ({ currentUser, logoUrl, 
       {/* SECTION VENDEUR : CARTE À GRATTER + COMPOSITION DU PANIER APRÈS RÉVÉLATION */}
       {isVendeur && (
         <div className="space-y-6">
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 sm:p-6 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-5 px-1 sm:px-0">
               <div>
                 <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <Gift className="w-5 h-5 text-[#008DA9]" />
@@ -1802,11 +1954,11 @@ export const CadeauxView: React.FC<CadeauxViewProps> = ({ currentUser, logoUrl, 
                 </p>
               </div>
             ) : (
-              <div className="space-y-8">
+              <div className="space-y-6 sm:space-y-8">
                 {bons.map((bon) => (
                   <div
                     key={bon.id}
-                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/50 space-y-4"
+                    className="p-2.5 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/50 space-y-4"
                   >
                     <ScratchCardItem bon={bon} logoUrl={logoUrl} onRevealed={handleBonRevealed} />
 

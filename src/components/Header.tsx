@@ -45,6 +45,7 @@ import {
   getPushBannerDismissInfo,
   dismissPushBannerFor7Days,
   clearPushBannerDismissal,
+  showDeviceSystemNotification,
 } from '../utils/pushNotifications';
 
 interface HeaderProps {
@@ -169,16 +170,143 @@ export const Header: React.FC<HeaderProps> = ({
 
   React.useEffect(() => {
     fetchNotifs();
-    const interval = setInterval(fetchNotifs, 8000);
+
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let unmounted = false;
+    let retryDelayMs = 1500;
+
+    const connectSse = () => {
+      if (unmounted || typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+      try {
+        if (es) {
+          es.close();
+          es = null;
+        }
+        const streamUrl = `/api/notifications/stream?userId=${encodeURIComponent(
+          currentUser.id
+        )}&role=${encodeURIComponent(currentUser.role)}`;
+        es = new EventSource(streamUrl);
+
+        es.onopen = () => {
+          retryDelayMs = 1500;
+          fetchNotifs();
+        };
+
+        es.onmessage = (evt) => {
+          try {
+            const payload = JSON.parse(evt.data);
+            if (payload.event === 'notification:created') {
+              if (payload.notification && payload.notification.id) {
+                const incoming = payload.notification;
+                setNotifications((prev) => {
+                  if (prev.some((n) => n.id === incoming.id)) {
+                    return prev;
+                  }
+                  return [incoming, ...prev];
+                });
+              } else {
+                fetchNotifs();
+              }
+              if (typeof payload.unreadCount === 'number') {
+                syncAppBadge(payload.unreadCount);
+              }
+              if (payload.pushPayload) {
+                void showDeviceSystemNotification({
+                  title: payload.pushPayload.title,
+                  body: payload.pushPayload.body,
+                  tag: payload.pushPayload.tag,
+                  url: payload.pushPayload.url,
+                  notificationId: payload.pushPayload.notificationId,
+                  requireInteraction: payload.pushPayload.requireInteraction,
+                });
+              }
+              const notifType = String(payload.notification?.type || '');
+              const notifRef = String(payload.notification?.reference || '');
+              if (
+                notifType === 'nouvelle_vente' ||
+                notifType === 'commande_gros' ||
+                notifType === 'annulation_vente' ||
+                notifType === 'demande_annulation_vente' ||
+                notifType === 'vente_a_regulariser' ||
+                notifRef.startsWith('VTE-') ||
+                notifRef.startsWith('CMD-GROS-')
+              ) {
+                window.dispatchEvent(
+                  new CustomEvent('baobab-sales-realtime-updated', {
+                    detail: payload.notification || null,
+                  })
+                );
+              }
+            } else if (payload.event === 'notification:read') {
+              if (payload.notification?.id) {
+                const readId = payload.notification.id;
+                setNotifications((prev) =>
+                  prev.map((n) => (n.id === readId ? { ...n, is_read: 1 } : n))
+                );
+              } else {
+                fetchNotifs();
+              }
+              if (typeof payload.unreadCount === 'number') {
+                syncAppBadge(payload.unreadCount);
+              }
+            } else if (payload.event === 'notification:read-all') {
+              setNotifications((prev) => prev.map((n) => ({ ...n, is_read: 1 })));
+              syncAppBadge(0);
+            }
+          } catch {
+            // ignore malformed SSE message
+          }
+        };
+
+        es.onerror = () => {
+          if (es) {
+            es.close();
+            es = null;
+          }
+          if (!unmounted) {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(() => {
+              retryDelayMs = Math.min(10000, Math.round(retryDelayMs * 1.5));
+              connectSse();
+            }, retryDelayMs);
+          }
+        };
+      } catch {
+        // fallback reconnect
+      }
+    };
+
+    connectSse();
+
     const handleNotifsUpdated = () => {
       fetchNotifs();
     };
-    window.addEventListener('baobab-notifications-updated', handleNotifsUpdated);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('baobab-notifications-updated', handleNotifsUpdated);
+    const handleVisibilityOrOnline = () => {
+      if (document.visibilityState === 'visible') {
+        fetchNotifs();
+        if (!es || es.readyState === EventSource.CLOSED) {
+          connectSse();
+        }
+      }
     };
-  }, [fetchNotifs]);
+
+    window.addEventListener('baobab-notifications-updated', handleNotifsUpdated);
+    window.addEventListener('online', handleVisibilityOrOnline);
+    document.addEventListener('visibilitychange', handleVisibilityOrOnline);
+
+    return () => {
+      unmounted = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (es) {
+        es.close();
+        es = null;
+      }
+      window.removeEventListener('baobab-notifications-updated', handleNotifsUpdated);
+      window.removeEventListener('online', handleVisibilityOrOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityOrOnline);
+    };
+  }, [fetchNotifs, currentUser.id, currentUser.role]);
 
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
@@ -388,6 +516,28 @@ export const Header: React.FC<HeaderProps> = ({
       });
     }
     setShowNotifMenu(false);
+
+    const nType = String(n.type || '');
+    const nRef = String(n.reference || '');
+    if (
+      nType === 'nouvelle_vente' ||
+      nType === 'commande_gros' ||
+      nType === 'annulation_vente' ||
+      nType === 'demande_annulation_vente' ||
+      nType === 'vente_a_regulariser' ||
+      nRef.startsWith('VTE-') ||
+      nRef.startsWith('CMD-GROS-')
+    ) {
+      const targetSaleId = n.metadata?.saleId || nRef;
+      if (targetSaleId) {
+        window.dispatchEvent(
+          new CustomEvent('baobab-open-sale-detail', {
+            detail: { saleId: targetSaleId, saleNumber: nRef },
+          })
+        );
+      }
+    }
+
     const action = getNotificationActionTarget(n);
     if (action && onNavigateTab) {
       onNavigateTab(action.tab);
@@ -454,9 +604,16 @@ export const Header: React.FC<HeaderProps> = ({
       };
     }
 
+    if (type === 'commande_gros' || ref.startsWith('CMD-GROS-')) {
+      return {
+        tab: 'grossistes',
+        label: 'Ouvrir Commandes en gros',
+        icon: <ShoppingBag className="w-3.5 h-3.5" />,
+      };
+    }
+
     if (
       type === 'demande_annulation_vente' ||
-      ref.startsWith('VTE-') ||
       title.includes("demande d'annulation")
     ) {
       const isDovOrAdmin =
@@ -465,6 +622,20 @@ export const Header: React.FC<HeaderProps> = ({
       return {
         tab: isDovOrAdmin ? 'demandes-annulation-vente' : currentUser.role === 'Vendeur' ? 'mes-ventes' : 'ventes',
         label: isDovOrAdmin ? "Ouvrir Demandes d'annulation de vente" : 'Ouvrir Mes Ventes',
+        icon: <ShoppingBag className="w-3.5 h-3.5" />,
+      };
+    }
+
+    if (
+      type === 'nouvelle_vente' ||
+      type === 'annulation_vente' ||
+      type === 'vente_a_regulariser' ||
+      type === 'vente' ||
+      ref.startsWith('VTE-')
+    ) {
+      return {
+        tab: currentUser.role === 'Vendeur' ? 'mes-ventes' : 'ventes',
+        label: currentUser.role === 'Vendeur' ? 'Ouvrir Mes Ventes' : 'Ouvrir les Ventes',
         icon: <ShoppingBag className="w-3.5 h-3.5" />,
       };
     }
