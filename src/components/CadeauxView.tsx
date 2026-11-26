@@ -1039,13 +1039,35 @@ const BonBasketComposer: React.FC<{
     setValidatedLines((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  // Quick preset helper for 38 400 FCFA on a 40 000 FCFA bon (4 cartons Jus Cajoucy x 9 600 = 38 400 FCFA)
+  const handleUpdateLineQty = (idx: number, rawQty: number) => {
+    setBuilderError('');
+    setBuilderSuccess('');
+    setValidatedLines((prev) =>
+      prev.map((line, i) => {
+        if (i !== idx) return line;
+        const otherLinesTotal = prev.reduce((s, l, j) => (j === idx ? s : s + Number(l.lineTotal || 0)), 0);
+        const budgetForThisLine = Math.max(0, bonAmount - otherLinesTotal);
+        const maxByBudget = Math.max(1, Math.floor(budgetForThisLine / Math.max(1, Number(line.unitPrice || 1))));
+        const prod = fefoCatalog.find((p) => p.id === line.productId);
+        const maxFefo = prod ? prod.available_fefo_boxes : 9999;
+        const maxAllowed = Math.max(1, Math.min(maxByBudget, maxFefo));
+        const cleanQty = Math.min(maxAllowed, Math.max(1, Math.floor(Number(rawQty) || 1)));
+        return {
+          ...line,
+          cartons: cleanQty,
+          lineTotal: cleanQty * Number(line.unitPrice || 0),
+        };
+      })
+    );
+  };
+
+  // Quick preset helper for 4 cartons Jus Cajoucy on a 40 000 FCFA bon
   const handleQuickPreset38400 = () => {
     setBuilderError('');
     setBuilderSuccess('');
-    const caj = fefoCatalog.find((p) => p.code === 'JUS-CAJ-12' || p.id === 'prod-caj');
+    const caj = fefoCatalog.find((p) => p.gamme === 'Jus Cajoucy' && p.available_fefo_boxes >= 4);
     if (!caj || caj.available_fefo_boxes < 4) {
-      setBuilderError('Stock FEFO Jus Cajoucy insuffisant pour composer 4 cartons (38 400 FCFA).');
+      setBuilderError('Stock FEFO Jus Cajoucy insuffisant pour composer 4 cartons.');
       return;
     }
     setValidatedLines([
@@ -1271,7 +1293,39 @@ const BonBasketComposer: React.FC<{
                   )}
                 </div>
 
-                <div className="flex items-center gap-3 self-end sm:self-center">
+                <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-center">
+                  {isEditable && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateLineQty(idx, Number(line.cartons || 1) - 1)}
+                        className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        value={line.cartons}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (!Number.isNaN(val) && val >= 1) {
+                            handleUpdateLineQty(idx, val);
+                          }
+                        }}
+                        aria-label={`Quantité cartons ${line.name}`}
+                        className="w-16 min-w-[60px] h-8 px-1.5 rounded-lg border border-[#008DA9] bg-white dark:bg-slate-900 text-center font-mono font-black text-xs text-slate-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateLineQty(idx, Number(line.cartons || 1) + 1)}
+                        className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
                   <span className="font-black text-slate-900 dark:text-white">
                     {Number(line.lineTotal).toLocaleString('fr-FR')} FCFA
                   </span>
@@ -1334,14 +1388,43 @@ const BonBasketComposer: React.FC<{
                     <label className="block text-[10px] font-bold text-slate-500 mb-1">
                       Cartons (Max budget: {Math.max(0, maxAllowedCartons)})
                     </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max={Math.max(1, maxAllowedCartons)}
-                      value={currentCartons}
-                      onChange={(e) => setCurrentCartons(Number(e.target.value))}
-                      className="w-full px-2.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
-                    />
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentCartons((q) => Math.max(1, (Number(q) || 1) - 1))}
+                        className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center shrink-0 cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        max={Math.max(1, maxAllowedCartons)}
+                        placeholder="Qté"
+                        value={currentCartons === 0 ? '' : currentCartons}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            setCurrentCartons(0);
+                          } else {
+                            setCurrentCartons(Math.max(0, parseInt(raw, 10) || 0));
+                          }
+                        }}
+                        className="w-full min-w-[68px] h-9 px-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-black text-center text-slate-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCurrentCartons((q) =>
+                            Math.min(Math.max(1, maxAllowedCartons), (Number(q) || 0) + 1)
+                          )
+                        }
+                        className="w-9 h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center shrink-0 cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

@@ -68,15 +68,59 @@ interface VendorStockViewProps {
 
 const FALLBACK_PRODUCTS: Product[] = [
   {
-    id: 'prod-caj',
-    code: 'JUS-CAJ-12',
-    name: 'Jus Cajoucy',
-    gamme: 'Jus & Boissons',
+    id: 'prod-caj-ananas',
+    code: 'JUS-CAJ-ANA-12',
+    name: 'Cajoucy Ananas',
+    gamme: 'Jus Cajoucy',
     packaging: 'Carton de 12',
     units_per_box: 12,
-    price_box: 9600,
-    stock_depot: 850,
-    threshold_depot: 100,
+    price_box: 9000,
+    stock_depot: 220,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-cocktail',
+    code: 'JUS-CAJ-COC-12',
+    name: 'Cajoucy Cocktail',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 195,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-mangue',
+    code: 'JUS-CAJ-MAN-12',
+    name: 'Cajoucy Mangue',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 240,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-pomme',
+    code: 'JUS-CAJ-POM-12',
+    name: 'Cajoucy Pomme de Cajou',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 180,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-orange',
+    code: 'JUS-CAJ-ORA-12',
+    name: 'Cajoucy Orange',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 210,
+    threshold_depot: 40,
   },
   {
     id: 'prod-ben',
@@ -149,15 +193,17 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
 
   const catalogProducts = useMemo<Product[]>(() => {
     const raw = propProducts && propProducts.length > 0 ? propProducts : FALLBACK_PRODUCTS;
-    return raw.map((p) => ({
-      ...p,
-      gamme: p.gamme || 'Autres Produits',
-      packaging: p.packaging || 'Carton',
-      units_per_box: Number(p.units_per_box ?? 12),
-      price_box: Number(p.price_box ?? 10000),
-      stock_depot: Number(p.stock_depot ?? 500),
-      threshold_depot: Number(p.threshold_depot ?? 50),
-    }));
+    return raw
+      .filter((p: any) => Number(p.is_active ?? 1) === 1)
+      .map((p) => ({
+        ...p,
+        gamme: p.gamme || 'Autres Produits',
+        packaging: p.packaging || 'Carton',
+        units_per_box: Number(p.units_per_box ?? 12),
+        price_box: Number(p.price_box ?? 9000),
+        stock_depot: Number(p.stock_depot ?? 200),
+        threshold_depot: Number(p.threshold_depot ?? 40),
+      }));
   }, [propProducts]);
 
   // Fetch accurate theoretical stock for current vendor from backend
@@ -472,6 +518,22 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
   const handleRemoveValidatedLine = (idx: number) => {
     setValidatedLines((prev) => prev.filter((_, i) => i !== idx));
     setRequestError('');
+  };
+
+  const handleUpdateValidatedLineQty = (idx: number, rawQty: number) => {
+    setValidatedLines((prev) =>
+      prev.map((line, i) => {
+        if (i !== idx) return line;
+        const prod = vendorStockItems.find((p) => p.productId === line.productId);
+        const maxDepot = prod ? prod.stock_depot : 9999;
+        const cleanQty = Math.min(maxDepot, Math.max(1, Math.floor(Number(rawQty) || 1)));
+        return {
+          ...line,
+          requestedBoxes: cleanQty,
+          total: cleanQty * line.unitPrice,
+        };
+      })
+    );
   };
 
   const handleSubmitStockRequest = async (e: React.FormEvent) => {
@@ -1285,41 +1347,77 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                   Produits validés dans votre demande ({validatedLines.length})
                 </p>
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl h-auto">
-                  {validatedLines.map((line, idx) => (
-                    <div
-                      key={line.productId}
-                      className="p-3 bg-emerald-50/40 dark:bg-emerald-950/20 flex flex-col gap-2 text-xs"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 font-bold text-[10px]">
-                            {line.gamme}
-                          </span>
-                          <span className="font-bold text-slate-900 dark:text-white">
-                            {line.name}
-                          </span>
-                          <span className="font-mono text-slate-400">({line.code})</span>
+                  {validatedLines.map((line, idx) => {
+                    const prod = vendorStockItems.find((p) => p.productId === line.productId);
+                    const maxDepot = prod ? prod.stock_depot : 9999;
+                    return (
+                      <div
+                        key={line.productId}
+                        className="p-3 bg-emerald-50/40 dark:bg-emerald-950/20 flex flex-col gap-2 text-xs"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 font-bold text-[10px]">
+                              {line.gamme}
+                            </span>
+                            <span className="font-bold text-slate-900 dark:text-white">
+                              {line.name}
+                            </span>
+                            <span className="font-mono text-slate-400">({line.code})</span>
+                          </div>
+                          <div className="text-slate-500 mt-1">
+                            Quantité demandée :{' '}
+                            <strong className="text-emerald-700 dark:text-emerald-400">
+                              {line.requestedBoxes} {line.requestedBoxes > 1 ? 'cartons' : 'carton'}
+                            </strong>{' '}
+                            &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA ={' '}
+                            <strong className="text-slate-800 dark:text-slate-200 baobab-amount">
+                              {line.total.toLocaleString('fr-FR')} FCFA
+                            </strong>
+                          </div>
                         </div>
-                        <div className="text-slate-500 mt-1">
-                          Quantité demandée :{' '}
-                          <strong className="text-emerald-700 dark:text-emerald-400">
-                            {line.requestedBoxes} {line.requestedBoxes > 1 ? 'cartons' : 'carton'}
-                          </strong>{' '}
-                          &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA ={' '}
-                          <strong className="text-slate-800 dark:text-slate-200 baobab-amount">
-                            {line.total.toLocaleString('fr-FR')} FCFA
-                          </strong>
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateValidatedLineQty(idx, line.requestedBoxes - 1)}
+                              className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min={1}
+                              max={maxDepot}
+                              value={line.requestedBoxes}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                if (!Number.isNaN(val) && val >= 1) {
+                                  handleUpdateValidatedLineQty(idx, val);
+                                }
+                              }}
+                              aria-label={`Quantité cartons ${line.name}`}
+                              className="w-20 min-w-[68px] h-8 px-1.5 rounded-lg border border-teal-600 bg-white dark:bg-slate-900 text-center font-mono font-black text-xs text-slate-900 dark:text-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateValidatedLineQty(idx, line.requestedBoxes + 1)}
+                              className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                            >
+                              +
+                            </button>
+                            <span className="text-[11px] font-semibold text-slate-500">ctn</span>
+                          </div>
+                          <ConfirmDestructiveButton
+                            label="Supprimer"
+                            confirmLabel="Supprimer ?"
+                            onConfirm={() => handleRemoveValidatedLine(idx)}
+                          />
                         </div>
                       </div>
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-                        <ConfirmDestructiveButton
-                          label="Supprimer"
-                          confirmLabel="Supprimer ?"
-                          onConfirm={() => handleRemoveValidatedLine(idx)}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1412,15 +1510,20 @@ export const VendorStockView: React.FC<VendorStockViewProps> = ({
                                   </button>
                                   <input
                                     type="number"
+                                    inputMode="numeric"
                                     min={1}
                                     max={p.stock_depot}
-                                    value={currentLineQty}
+                                    placeholder="Qté"
+                                    value={currentLineQty === 0 ? '' : currentLineQty}
                                     onChange={(e) => {
-                                      const val = parseInt(e.target.value, 10);
-                                      if (Number.isNaN(val)) {
+                                      const raw = e.target.value;
+                                      if (raw === '') {
                                         setCurrentLineQty(0);
                                       } else {
-                                        setCurrentLineQty(Math.min(p.stock_depot, Math.max(0, val)));
+                                        const val = parseInt(raw, 10);
+                                        if (!Number.isNaN(val)) {
+                                          setCurrentLineQty(Math.min(p.stock_depot, Math.max(0, val)));
+                                        }
                                       }
                                     }}
                                     className="w-full min-w-[76px] h-10 px-2 text-base font-mono font-black text-center rounded-lg border-2 border-[var(--marque-fonce)] bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"

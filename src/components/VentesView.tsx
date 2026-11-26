@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Plus,
   Store,
@@ -37,6 +37,8 @@ import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
 import { CardList } from './CardList';
 import { ExportViewButton } from './ExtractionsView';
+import { CartePdv } from './CartePdv';
+import { getPdvStorefrontImageUrl } from '../utils/malianStorefrontImages';
 import {
   PaymentMethodSelector,
   FORM_LABEL_CLASS,
@@ -143,6 +145,13 @@ export function buildMiniThermalReceiptDoc(sale: any): InvoiceData {
   const ticketNo = getThermalTicketNumber(sale);
   const isCancelled = sale.status === 'annulee';
   const totalHt = Number(sale.subtotal_ht || sale.total_amount || 0);
+  const buyerType = sale.buyer_type || sale.buyerType || undefined;
+  const wholesaleDiscountAmount = Number(
+    sale.wholesale_discount_amount ?? sale.wholesaleDiscountAmount ?? 0
+  );
+  const cajoucyBoxesCount = Number(
+    sale.cajoucy_boxes_count ?? sale.cajoucyBoxesCount ?? 0
+  );
   const withTva = Boolean(sale.with_tva);
   const tvaRate = withTva ? Number(sale.tva_rate || 18) : 0;
   const tvaAmt = Number(sale.tva_amount || (withTva ? Math.round(totalHt * (tvaRate / 100)) : 0));
@@ -174,6 +183,9 @@ export function buildMiniThermalReceiptDoc(sale: any): InvoiceData {
     pdvNeighborhood: sale.pdv_neighborhood,
     pdvManager: sale.pdv_manager,
     pdvPhone: sale.pdv_phone || '+223 76 00 00 00',
+    buyerType,
+    wholesaleDiscountAmount,
+    cajoucyBoxesCount,
     withTva,
     subtotalHt: totalHt,
     tvaRate,
@@ -204,6 +216,13 @@ export function buildA4ClientInvoiceDoc(sale: any): InvoiceData {
   const invoiceNo = sale.invoice_number || `FAC-${String(sale.number || '').replace('VTE-', '')}`;
   const isCancelled = sale.status === 'annulee';
   const totalHt = Number(sale.subtotal_ht || sale.total_amount || 0);
+  const buyerType = sale.buyer_type || sale.buyerType || undefined;
+  const wholesaleDiscountAmount = Number(
+    sale.wholesale_discount_amount ?? sale.wholesaleDiscountAmount ?? 0
+  );
+  const cajoucyBoxesCount = Number(
+    sale.cajoucy_boxes_count ?? sale.cajoucyBoxesCount ?? 0
+  );
   const withTva = Boolean(sale.with_tva);
   const tvaRate = withTva ? Number(sale.tva_rate || 18) : 0;
   const tvaAmt = Number(sale.tva_amount || (withTva ? Math.round(totalHt * (tvaRate / 100)) : 0));
@@ -235,6 +254,9 @@ export function buildA4ClientInvoiceDoc(sale: any): InvoiceData {
     pdvNeighborhood: sale.pdv_neighborhood,
     pdvManager: sale.pdv_manager,
     pdvPhone: sale.pdv_phone || '+223 76 00 00 00',
+    buyerType,
+    wholesaleDiscountAmount,
+    cajoucyBoxesCount,
     withTva,
     subtotalHt: totalHt,
     tvaRate,
@@ -276,6 +298,9 @@ export const VentesView: React.FC<VentesViewProps> = ({
   const canCreateSale = isVendeur || isAdmin;
 
   const handleOpenSaleInvoice = async (s: any) => {
+    if (isVendeur) {
+      return handleOpenSaleTicket(s);
+    }
     if (!s?.id || s.isPendingOffline || String(s.id).startsWith('off-')) {
       onOpenDocument(buildA4ClientInvoiceDoc(s));
       return;
@@ -340,7 +365,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
 
   // Sub-tabs for Directeur des opérations de vente & Admin ('globale' | 'demandes-annulation' | 'par-vendeur' | 'historique-sku' | 'nouvelle')
   const [directorSubTab, setDirectorSubTab] = useState<'globale' | 'demandes-annulation' | 'par-vendeur' | 'historique-sku' | 'nouvelle'>(() => {
-    if (initialTab === 'historique-sku') return 'historique-sku';
+    if (initialTab === 'historique-sku' && !isVendeur) return 'historique-sku';
     if (initialTab === 'demandes-annulation-vente') return 'demandes-annulation';
     if (initialTab === 'nouvelle-vente' && isAdmin) return 'nouvelle';
     return 'globale';
@@ -378,8 +403,10 @@ export const VentesView: React.FC<VentesViewProps> = ({
   const [selectedAdminVendorId, setSelectedAdminVendorId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (initialTab === 'historique-sku') {
+    if (initialTab === 'historique-sku' && !isVendeur) {
       setDirectorSubTab('historique-sku');
+    } else if (isVendeur && directorSubTab === 'historique-sku') {
+      setDirectorSubTab('globale');
     } else if (initialTab === 'demandes-annulation-vente' && (isDirecteurOps || isAdmin)) {
       setDirectorSubTab('demandes-annulation');
     } else if (initialTab === 'nouvelle-vente' && isAdmin) {
@@ -389,12 +416,12 @@ export const VentesView: React.FC<VentesViewProps> = ({
     }
     if (!isVendeur) {
       setVendorSubTab('historique');
-    } else if (initialTab === 'mes-ventes') {
+    } else if (initialTab === 'mes-ventes' || initialTab === 'historique-sku') {
       setVendorSubTab('historique');
     } else if (initialTab === 'nouvelle-vente') {
       setVendorSubTab('nouvelle');
     }
-  }, [initialTab, isVendeur, isDirecteurOps, isAdmin]);
+  }, [initialTab, isVendeur, isDirecteurOps, isAdmin, directorSubTab]);
 
   const [selectedPdvId, setSelectedPdvId] = useState(pdvs.filter((p) => p.status === 'valide')[0]?.id || '');
   const [selectedSaleVendorId, setSelectedSaleVendorId] = useState<string>(
@@ -523,10 +550,139 @@ export const VentesView: React.FC<VentesViewProps> = ({
   }, [isVendeur, currentUser, usersList, selectedSaleVendorId]);
 
   const myChargement = chargements.find((c) => c.vendor_id === effectiveVendorUser.id);
-  const validPdvs = pdvs.filter((p) => p.status === 'valide');
+  const [activeRoutineDayInfo, setActiveRoutineDayInfo] = useState<{
+    activeDayIndex: number;
+    activeDayName: string;
+    activePdvCount: number;
+    targetPdvCount: number;
+    routineName: string;
+  }>({
+    activeDayIndex: 5,
+    activeDayName: 'Vendredi',
+    activePdvCount: 0,
+    targetPdvCount: 25,
+    routineName: 'Routine Vendredi',
+  });
+
+  useEffect(() => {
+    const vId = effectiveVendorUser?.id || 'usr-vnd-1';
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')}`;
+    fetch(
+      `/api/pdvs/routine-status?vendor_id=${encodeURIComponent(vId)}&client_date=${encodeURIComponent(
+        dateStr
+      )}`,
+      {
+        headers: {
+          'x-user-role': currentUser?.role || 'Vendeur',
+          'x-user-id': vId,
+        },
+      }
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.success && d.routineStatus) {
+          const dayName = String(d.routineStatus.activeDayName || 'Vendredi');
+          setActiveRoutineDayInfo({
+            activeDayIndex: Number(d.routineStatus.activeDayIndex || 5),
+            activeDayName: dayName,
+            activePdvCount: Number(d.routineStatus.activePdvCount || 0),
+            targetPdvCount: Math.max(25, Number(d.routineStatus.targetPdvCount || 25)),
+            routineName: String(
+              d.routineStatus.activeCycle?.routine_name || `Routine ${dayName}`
+            ),
+          });
+        }
+      })
+      .catch(() => {});
+  }, [effectiveVendorUser?.id, currentUser?.role, sales.length]);
+
+  // Quand le vendeur effectue une vente dans sa routine du jour actif (ex: Vendredi),
+  // active automatiquement la liste des PDV qu'il a créés pour cette routine afin qu'il sélectionne le PDV et fasse sa vente.
+  const validPdvs = useMemo(() => {
+    const baseValid = pdvs.filter((p) => p.status === 'valide');
+    const vendorFiltered = baseValid.filter(
+      (p) =>
+        p.vendor_id === effectiveVendorUser.id ||
+        p.created_by === effectiveVendorUser.name
+    );
+    const pool = vendorFiltered.length > 0 ? vendorFiltered : baseValid;
+    const dayFiltered = pool.filter((p) => {
+      const pIdx = Number(p.routine_day_index || 0);
+      const pDay = String(p.routine_day || '').trim().toLowerCase();
+      if (pIdx > 0) return pIdx === activeRoutineDayInfo.activeDayIndex;
+      if (pDay) return pDay === activeRoutineDayInfo.activeDayName.toLowerCase();
+      return true;
+    });
+    const list = dayFiltered.length > 0 ? [...dayFiltered] : [...pool];
+    // Si un PDV valide a été explicitement sélectionné depuis un autre module (PDV, Carte, Routine), s'assurer qu'il figure dans la liste
+    if (selectedPdvId && !list.some((p) => p.id === selectedPdvId)) {
+      const explicitPdv = baseValid.find((p) => p.id === selectedPdvId) || pdvs.find((p) => p.id === selectedPdvId);
+      if (explicitPdv) {
+        list.unshift(explicitPdv);
+      }
+    }
+    return list;
+  }, [pdvs, effectiveVendorUser.id, effectiveVendorUser.name, activeRoutineDayInfo, selectedPdvId]);
+
+  const activeRoutineNameForSale = useMemo(() => {
+    const fromPdv = validPdvs.find((p) => p.routine_name && String(p.routine_name).trim());
+    if (fromPdv?.routine_name) return String(fromPdv.routine_name).trim();
+    return activeRoutineDayInfo.routineName || `Routine ${activeRoutineDayInfo.activeDayName}`;
+  }, [validPdvs, activeRoutineDayInfo]);
+
+  useEffect(() => {
+    try {
+      const preselectedId = localStorage.getItem('baobab_preselected_sale_pdv_id');
+      if (preselectedId && pdvs.some((p) => p.id === preselectedId)) {
+        setSelectedPdvId(preselectedId);
+        localStorage.removeItem('baobab_preselected_sale_pdv_id');
+        return;
+      }
+    } catch {
+      // ignore storage errors
+    }
+
+    if (validPdvs.length > 0) {
+      if (!selectedPdvId || !pdvs.some((p) => p.id === selectedPdvId)) {
+        setSelectedPdvId(validPdvs[0].id);
+      }
+    } else if (pdvs.length > 0 && !selectedPdvId) {
+      setSelectedPdvId(pdvs[0].id);
+    }
+  }, [validPdvs, pdvs, selectedPdvId]);
+
+  useEffect(() => {
+    const onOpenSaleForPdv = (ev: Event) => {
+      const customEv = ev as CustomEvent<{ pdvId?: string }>;
+      const targetPdvId = customEv.detail?.pdvId;
+      if (targetPdvId) {
+        setSelectedPdvId(targetPdvId);
+      }
+    };
+    window.addEventListener('baobab-open-sale-for-pdv', onOpenSaleForPdv);
+    return () => window.removeEventListener('baobab-open-sale-for-pdv', onOpenSaleForPdv);
+  }, []);
+
+  const [buyerType, setBuyerType] = useState<'' | 'Grossiste' | 'Détaillant'>('');
+  const [thresholdDroppedNotice, setThresholdDroppedNotice] = useState<string | null>(null);
+  const [saleValidationError, setSaleValidationError] = useState<string | null>(null);
+  const prevCajoucyCartonsRef = useRef<number>(0);
+
+  const hasWholesalePrice = useCallback((p: any): boolean => {
+    return Boolean(
+      p &&
+        p.wholesale_price_box !== null &&
+        p.wholesale_price_box !== undefined &&
+        Number(p.wholesale_price_box) > 0
+    );
+  }, []);
 
   const addToCart = (productId: string, delta: number) => {
     if (!canCreateSale) return;
+    setSaleValidationError(null);
     setCart((prev) => {
       const current = prev[productId] || 0;
       const next = current + delta;
@@ -539,21 +695,87 @@ export const VentesView: React.FC<VentesViewProps> = ({
     });
   };
 
-  const cartItems = Object.entries(cart).map(([pId, qty]) => {
-    const p = products.find((prod) => prod.id === pId);
-    return {
-      productId: pId,
-      code: p ? p.code : pId,
-      name: p ? p.name : 'Produit',
-      qtyBoxes: qty,
-      unitPrice: p ? p.price_box : 0,
-      total: qty * (p ? p.price_box : 0),
-    };
-  });
+  const setCartQuantity = (productId: string, exactQty: number) => {
+    if (!canCreateSale) return;
+    setSaleValidationError(null);
+    const cleanQty = Math.max(0, Math.floor(Number(exactQty) || 0));
+    setCart((prev) => {
+      if (cleanQty <= 0) {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      }
+      return { ...prev, [productId]: cleanQty };
+    });
+  };
 
-  const cartTotal = cartItems.reduce((sum, item) => sum + item.total, 0);
+  // Comptage total des cartons de produits Cajoucy (ayant un Prix grossiste), toutes saveurs confondues
+  const cajoucyCartonsCount = useMemo(() => {
+    return Object.entries(cart).reduce((sum, [pId, qty]) => {
+      const p = products.find((prod) => prod.id === pId);
+      if (hasWholesalePrice(p)) {
+        return sum + Number(qty || 0);
+      }
+      return sum;
+    }, 0);
+  }, [cart, products, hasWholesalePrice]);
 
-  // Resolve GPS position (browser geolocation or fallback to PDV coordinates)
+  // Si le total repasse sous 50 cartons, la liste disparaît, la remise est retirée et un message le signale
+  useEffect(() => {
+    const prev = prevCajoucyCartonsRef.current;
+    if (prev >= 50 && cajoucyCartonsCount < 50) {
+      setBuyerType('');
+      setThresholdDroppedNotice(
+        cajoucyCartonsCount > 0
+          ? `Le total des produits Cajoucy est repassé sous 50 cartons (${cajoucyCartonsCount} cartons) : la liste « Type d'acheteur » a été retirée et la remise grossiste est annulée (prix détaillant 9 000 FCFA appliqué).`
+          : null
+      );
+    } else if (cajoucyCartonsCount >= 50) {
+      setThresholdDroppedNotice(null);
+    } else if (cajoucyCartonsCount === 0) {
+      setThresholdDroppedNotice(null);
+    }
+    prevCajoucyCartonsRef.current = cajoucyCartonsCount;
+  }, [cajoucyCartonsCount]);
+
+  const isWholesaleApplied = cajoucyCartonsCount >= 50 && buyerType === 'Grossiste';
+
+  const cartItems = useMemo(() => {
+    return Object.entries(cart).map(([pId, qty]) => {
+      const p = products.find((prod) => prod.id === pId);
+      const isCajoucy = hasWholesalePrice(p);
+      const retailUnitPrice = p ? Number(p.price_box || 0) : 0;
+      const wholesaleUnitPrice = isCajoucy ? Number(p.wholesale_price_box) : retailUnitPrice;
+      const unitPrice = isWholesaleApplied && isCajoucy ? wholesaleUnitPrice : retailUnitPrice;
+      const discountPerBox =
+        isWholesaleApplied && isCajoucy ? Math.max(0, retailUnitPrice - wholesaleUnitPrice) : 0;
+      const lineDiscount = qty * discountPerBox;
+      return {
+        productId: pId,
+        code: p ? p.code : pId,
+        name: p ? p.name : 'Produit',
+        qtyBoxes: qty,
+        unitPrice,
+        retailUnitPrice,
+        discountPerBox,
+        lineDiscount,
+        isCajoucy,
+        total: qty * unitPrice,
+      };
+    });
+  }, [cart, products, hasWholesalePrice, isWholesaleApplied]);
+
+  const wholesaleDiscountTotal = useMemo(
+    () => cartItems.reduce((sum, item) => sum + Number(item.lineDiscount || 0), 0),
+    [cartItems]
+  );
+
+  const cartTotal = useMemo(
+    () => cartItems.reduce((sum, item) => sum + item.total, 0),
+    [cartItems]
+  );
+
+  // Resolve GPS position (browser geolocation or fallback to PDV coordinates, with 500ms non-blocking guard)
   const resolveCurrentGps = (pdvObj: any): Promise<{ lat: number; lng: number; accuracy: number }> => {
     return new Promise((resolve) => {
       const fallbackLat = Number.isFinite(Number(pdvObj?.latitude)) ? Number(pdvObj.latitude) : 12.6392;
@@ -562,23 +784,44 @@ export const VentesView: React.FC<VentesViewProps> = ({
         resolve({ lat: fallbackLat, lng: fallbackLng, accuracy: 4.5 });
         return;
       }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          resolve({
-            lat: Number(pos.coords.latitude.toFixed(6)),
-            lng: Number(pos.coords.longitude.toFixed(6)),
-            accuracy: Number((pos.coords.accuracy || 4.5).toFixed(1)),
-          });
-        },
-        () => {
-          resolve({ lat: fallbackLat, lng: fallbackLng, accuracy: 4.5 });
-        },
-        { enableHighAccuracy: true, timeout: 2500, maximumAge: 15000 }
-      );
+      let settled = false;
+      const finish = (coords: { lat: number; lng: number; accuracy: number }) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(coords);
+        }
+      };
+      const timer = setTimeout(() => {
+        finish({ lat: fallbackLat, lng: fallbackLng, accuracy: 4.5 });
+      }, 500);
+
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            finish({
+              lat: Number(pos.coords.latitude.toFixed(6)),
+              lng: Number(pos.coords.longitude.toFixed(6)),
+              accuracy: Number((pos.coords.accuracy || 4.5).toFixed(1)),
+            });
+          },
+          () => {
+            finish({ lat: fallbackLat, lng: fallbackLng, accuracy: 4.5 });
+          },
+          { enableHighAccuracy: false, timeout: 450, maximumAge: 60000 }
+        );
+      } catch {
+        finish({ lat: fallbackLat, lng: fallbackLng, accuracy: 4.5 });
+      }
     });
   };
 
-  const saveSaleOfflineAndOpenReceipt = (pdvObj: any, gps: { lat: number; lng: number; accuracy: number }) => {
+  const saveSaleOfflineAndOpenReceipt = (
+    pdvObj: any,
+    gps: { lat: number; lng: number; accuracy: number },
+    resolvedPdvId?: string
+  ) => {
+    const targetPdvId = resolvedPdvId || pdvObj?.id || selectedPdvId || validPdvs[0]?.id || pdvs[0]?.id || 'pdv-1';
     const nowObj = new Date();
     const nowIso = nowObj.toISOString();
     const dateStr = nowIso.split('T')[0];
@@ -586,22 +829,29 @@ export const VentesView: React.FC<VentesViewProps> = ({
     const rand = Math.floor(10000 + Math.random() * 90000);
     const offlineSaleId = `sale-off-${Date.now()}`;
     const offlineNumber = `VTE-OFF-${rand}`;
+    const effectiveBuyerType =
+      cajoucyCartonsCount >= 50 && (buyerType === 'Grossiste' || buyerType === 'Détaillant')
+        ? buyerType
+        : null;
 
     const saleRecord: OfflineSaleRecord = {
       id: offlineSaleId,
       number: offlineNumber,
       date: dateStr,
       sale_time: saleTimeStr,
-      vendor_id: currentUser.id,
-      vendor_name: currentUser.name,
-      vendor_code: currentUser.code,
-      vendor_team: currentUser.team,
-      pdv_id: selectedPdvId,
+      vendor_id: effectiveVendorUser.id,
+      vendor_name: effectiveVendorUser.name,
+      vendor_code: effectiveVendorUser.code,
+      vendor_team: effectiveVendorUser.team,
+      pdv_id: targetPdvId,
       pdv_name: pdvObj?.name || 'PDV Client',
       pdv_neighborhood: pdvObj?.neighborhood || 'Bamako',
       pdv_phone: pdvObj?.phone || '+223 76 00 00 00',
       items: cartItems,
       total_amount: cartTotal,
+      buyer_type: effectiveBuyerType,
+      wholesale_discount_amount: wholesaleDiscountTotal,
+      cajoucy_boxes_count: cajoucyCartonsCount,
       payment_type: paymentType,
       latitude: gps.lat,
       longitude: gps.lng,
@@ -614,15 +864,15 @@ export const VentesView: React.FC<VentesViewProps> = ({
 
     enqueueOfflineGpsPosition({
       id: `gps-off-sale-${offlineSaleId}`,
-      vendor_id: currentUser.id,
-      vendor_name: currentUser.name,
-      vendor_code: currentUser.code,
+      vendor_id: effectiveVendorUser.id,
+      vendor_name: effectiveVendorUser.name,
+      vendor_code: effectiveVendorUser.code,
       latitude: gps.lat,
       longitude: gps.lng,
       accuracy: gps.accuracy,
       speed_kmh: 0,
       activity_label: `Vente hors-ligne ${offlineNumber} • ${pdvObj?.name || 'PDV'} (${cartTotal.toLocaleString('fr-FR')} FCFA)`,
-      pdv_id: selectedPdvId,
+      pdv_id: targetPdvId,
       recorded_offline: 1,
       recorded_at: nowIso,
       date: dateStr,
@@ -630,6 +880,9 @@ export const VentesView: React.FC<VentesViewProps> = ({
 
     refreshQueueState();
     setCart({});
+    setBuyerType('');
+    setThresholdDroppedNotice(null);
+    setSaleValidationError(null);
     setSyncBannerMsg({
       type: 'offline',
       text: `Vente ${offlineNumber} (${cartTotal.toLocaleString('fr-FR')} FCFA à ${saleTimeStr}) et position GPS enregistrées hors-ligne sur cet appareil. Elles seront synchronisées automatiquement dès que le réseau sera disponible.`,
@@ -644,16 +897,19 @@ export const VentesView: React.FC<VentesViewProps> = ({
       saleTime: saleTimeStr,
       type: 'mini_thermique',
       date: `${formatSaleDateFr(dateStr)} à ${saleTimeStr}`,
-      clientName: `${pdvObj?.name} (${pdvObj?.neighborhood})`,
+      clientName: `${pdvObj?.name || 'PDV Client'} (${pdvObj?.neighborhood || 'Bamako'})`,
       clientPhone: pdvObj?.phone,
-      vendorName: currentUser.name,
-      vendorCode: currentUser.code,
-      vendorTeam: currentUser.team,
-      pdvName: pdvObj?.name,
+      vendorName: effectiveVendorUser.name,
+      vendorCode: effectiveVendorUser.code,
+      vendorTeam: effectiveVendorUser.team,
+      pdvName: pdvObj?.name || 'PDV Client',
       pdvCode: pdvObj?.code,
-      pdvNeighborhood: pdvObj?.neighborhood,
+      pdvNeighborhood: pdvObj?.neighborhood || 'Bamako',
       pdvManager: pdvObj?.manager_name,
       pdvPhone: pdvObj?.phone,
+      buyerType: effectiveBuyerType || undefined,
+      wholesaleDiscountAmount: wholesaleDiscountTotal,
+      cajoucyBoxesCount: cajoucyCartonsCount,
       items: cartItems.map((it) => ({
         code: it.code,
         name: it.name,
@@ -670,14 +926,46 @@ export const VentesView: React.FC<VentesViewProps> = ({
 
   const handleCheckoutSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canCreateSale || cartItems.length === 0 || !selectedPdvId) return;
+    if (!canCreateSale) {
+      setSaleValidationError('Votre profil ne dispose pas des droits pour créer une vente.');
+      return;
+    }
+    if (cartItems.length === 0) {
+      setSaleValidationError('Veuillez ajouter au moins un carton au panier avant de valider la vente.');
+      return;
+    }
+
+    const effectivePdvId = selectedPdvId || validPdvs[0]?.id || pdvs[0]?.id || '';
+    if (!effectivePdvId) {
+      setSaleValidationError('Veuillez sélectionner un Point de Vente (PDV) client.');
+      return;
+    }
+    if (effectivePdvId !== selectedPdvId) {
+      setSelectedPdvId(effectivePdvId);
+    }
+
+    if (cajoucyCartonsCount >= 50 && buyerType !== 'Grossiste' && buyerType !== 'Détaillant') {
+      setSaleValidationError(
+        'À partir de 50 cartons Cajoucy, vous devez obligatoirement sélectionner le « Type d\'acheteur » (Grossiste ou Détaillant) avant d\'enregistrer la vente.'
+      );
+      if (typeof document !== 'undefined') {
+        const el = document.getElementById('sale-buyer-type-select');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.focus();
+        }
+      }
+      return;
+    }
+
+    setSaleValidationError(null);
     setIsSubmitting(true);
 
-    const pdvObj = pdvs.find((p) => p.id === selectedPdvId);
+    const pdvObj = pdvs.find((p) => p.id === effectivePdvId) || validPdvs[0] || pdvs[0];
     const gps = await resolveCurrentGps(pdvObj);
 
     if (!isAppOnline()) {
-      saveSaleOfflineAndOpenReceipt(pdvObj, gps);
+      saveSaleOfflineAndOpenReceipt(pdvObj, gps, effectivePdvId);
       setIsSubmitting(false);
       return;
     }
@@ -685,6 +973,10 @@ export const VentesView: React.FC<VentesViewProps> = ({
     const nowObj = new Date();
     const saleTimeStr = `${String(nowObj.getHours()).padStart(2, '0')}:${String(nowObj.getMinutes()).padStart(2, '0')}`;
     const dateStr = nowObj.toISOString().split('T')[0];
+    const effectiveBuyerType =
+      cajoucyCartonsCount >= 50 && (buyerType === 'Grossiste' || buyerType === 'Détaillant')
+        ? buyerType
+        : null;
 
     try {
       const res = await fetch('/api/sales', {
@@ -695,25 +987,45 @@ export const VentesView: React.FC<VentesViewProps> = ({
         },
         body: JSON.stringify({
           vendor_id: effectiveVendorUser.id,
-          pdv_id: selectedPdvId,
+          pdv_id: effectivePdvId,
           items: cartItems,
+          buyer_type: effectiveBuyerType,
+          wholesale_discount_amount: wholesaleDiscountTotal,
+          cajoucy_boxes_count: cajoucyCartonsCount,
+          total_amount: cartTotal,
           payment_type: paymentType,
           sale_time: saleTimeStr,
           date: dateStr,
           latitude: gps.lat,
           longitude: gps.lng,
+          allowBurstDuplicate: true,
         }),
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setCart({});
-        onRefreshData();
-
         const finalTime = data.sale_time || saleTimeStr;
         const finalDate = data.date || dateStr;
         const saleNum = data.number || `VTE-2026-${Math.floor(10000 + Math.random() * 90000)}`;
         const thermalNo = data.thermal_ticket_number || saleNum.replace(/^VTE-/, 'TKT-THERM-');
+        const finalBuyerType = data.buyer_type ?? effectiveBuyerType ?? undefined;
+        const finalDiscount = Number(data.wholesale_discount_amount ?? wholesaleDiscountTotal ?? 0);
+        const finalTotal = Number(data.total_amount ?? cartTotal);
+        const submittedItems = [...cartItems];
+
+        setCart({});
+        setBuyerType('');
+        setThresholdDroppedNotice(null);
+        setSaleValidationError(null);
+        setSyncBannerMsg({
+          type: 'success',
+          text:
+            data.message ||
+            `Vente ${saleNum} (${finalTotal.toLocaleString('fr-FR')} FCFA) validée et enregistrée avec succès.`,
+        });
+        onRefreshData();
+        window.dispatchEvent(new Event('baobab-sales-realtime-updated'));
+        window.dispatchEvent(new Event('baobab-vrs-updated'));
 
         onOpenDocument({
           id: data.saleId || `sale-${Date.now()}`,
@@ -723,33 +1035,40 @@ export const VentesView: React.FC<VentesViewProps> = ({
           saleTime: finalTime,
           type: 'mini_thermique',
           date: `${formatSaleDateFr(finalDate)} à ${finalTime}`,
-          clientName: `${pdvObj?.name} (${pdvObj?.neighborhood})`,
+          clientName: `${pdvObj?.name || 'PDV Client'} (${pdvObj?.neighborhood || 'Bamako'})`,
           clientPhone: pdvObj?.phone,
           vendorName: effectiveVendorUser.name,
           vendorCode: effectiveVendorUser.code,
           vendorTeam: effectiveVendorUser.team,
-          pdvName: pdvObj?.name,
+          pdvName: pdvObj?.name || 'PDV Client',
           pdvCode: pdvObj?.code,
-          pdvNeighborhood: pdvObj?.neighborhood,
+          pdvNeighborhood: pdvObj?.neighborhood || 'Bamako',
           pdvManager: pdvObj?.manager_name,
           pdvPhone: pdvObj?.phone,
-          items: cartItems.map((it) => ({
+          buyerType: finalBuyerType,
+          wholesaleDiscountAmount: finalDiscount,
+          cajoucyBoxesCount: cajoucyCartonsCount,
+          items: submittedItems.map((it) => ({
             code: it.code,
             name: it.name,
             qty: it.qtyBoxes,
             price: it.unitPrice,
             total: it.total,
           })),
-          total: cartTotal,
+          total: finalTotal,
           paymentMethod: paymentType,
           cashierName: `${currentUser.name} (${currentUser.code})`,
           status: 'Ticket Thermique Certifié (Preuve de vente)',
         });
+      } else if (res.status >= 400 && res.status < 500) {
+        setSaleValidationError(
+          data.error || 'Vente rejetée par le contrôle serveur.'
+        );
       } else {
-        saveSaleOfflineAndOpenReceipt(pdvObj, gps);
+        saveSaleOfflineAndOpenReceipt(pdvObj, gps, effectivePdvId);
       }
     } catch {
-      saveSaleOfflineAndOpenReceipt(pdvObj, gps);
+      saveSaleOfflineAndOpenReceipt(pdvObj, gps, effectivePdvId);
     } finally {
       setIsSubmitting(false);
     }
@@ -782,6 +1101,8 @@ export const VentesView: React.FC<VentesViewProps> = ({
       setCancellingSale(null);
       setCancelReason('');
       onRefreshData();
+      window.dispatchEvent(new Event('baobab-sales-realtime-updated'));
+      window.dispatchEvent(new Event('baobab-vrs-updated'));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erreur lors de l'annulation.";
       setCancelSaleFeedback({ type: 'error', text: msg });
@@ -819,6 +1140,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
       setRequestingCancelSale(null);
       setRequestCancelReason('');
       onRefreshData();
+      window.dispatchEvent(new Event('baobab-sales-realtime-updated'));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erreur lors de l'envoi de la demande.";
       setCancelSaleFeedback({ type: 'error', text: msg });
@@ -856,6 +1178,8 @@ export const VentesView: React.FC<VentesViewProps> = ({
       setRejectingCancelRequestSale(null);
       setRejectCancelReason('');
       onRefreshData();
+      window.dispatchEvent(new Event('baobab-sales-realtime-updated'));
+      window.dispatchEvent(new Event('baobab-vrs-updated'));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erreur lors du traitement.';
       setCancelSaleFeedback({ type: 'error', text: msg });
@@ -1414,7 +1738,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
           <div className="flex items-center gap-1.5 mt-1">
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
               {isVendeur
-                ? 'Vos ventes, livraisons et factures clients PDV.'
+                ? 'Vos ventes, livraisons et tickets thermiques (80 mm).'
                 : 'Suivi des ventes, livraisons et factures PDV.'}
             </p>
             <InfoTooltip
@@ -1434,14 +1758,14 @@ export const VentesView: React.FC<VentesViewProps> = ({
         </div>
 
         {isVendeur ? (
-          <div className="grid grid-cols-3 gap-2 w-full sm:w-auto">
+          <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
             <button
               onClick={() => {
                 setVendorSubTab('nouvelle');
                 setDirectorSubTab('nouvelle');
               }}
               className={`px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-center ${
-                vendorSubTab === 'nouvelle' && directorSubTab !== 'historique-sku'
+                vendorSubTab === 'nouvelle'
                   ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                   : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
               }`}
@@ -1454,25 +1778,12 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 setDirectorSubTab('globale');
               }}
               className={`px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-center ${
-                vendorSubTab === 'historique' && directorSubTab !== 'historique-sku'
+                vendorSubTab === 'historique'
                   ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
                   : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
               }`}
             >
               Mes ventes ({visibleSales.length})
-            </button>
-            <button
-              onClick={() => {
-                setDirectorSubTab('historique-sku');
-              }}
-              className={`px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-center flex items-center justify-center gap-1 ${
-                directorSubTab === 'historique-sku'
-                  ? 'bg-[var(--marque-fonce)] text-white shadow-xs'
-                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5 shrink-0" />
-              <span>Par SKU</span>
             </button>
           </div>
         ) : (
@@ -1784,17 +2095,26 @@ export const VentesView: React.FC<VentesViewProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {products.map((p) => {
+              {products.filter((p) => Number(p.is_active ?? 1) === 1).map((p) => {
                 const qtyInCart = cart[p.id] || 0;
                 const vendorBoxes =
                   myChargement?.items?.find((it: any) => it.productId === p.id)?.allocatedBoxes ?? 0;
+                const isCajoucy = hasWholesalePrice(p);
+                const appliedPrice =
+                  isCajoucy && isWholesaleApplied
+                    ? Number(p.wholesale_price_box)
+                    : Number(p.price_box);
                 return (
                   <div
                     key={p.id}
-                    className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col justify-between h-auto"
+                    className={`p-5 rounded-2xl border bg-white dark:bg-slate-900 shadow-xs flex flex-col justify-between h-auto ${
+                      qtyInCart > 0
+                        ? 'border-[#008DA9] ring-1 ring-[#008DA9]/30'
+                        : 'border-slate-200 dark:border-slate-800'
+                    }`}
                   >
                     <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-bold">
                           {p.code}
                         </span>
@@ -1813,37 +2133,61 @@ export const VentesView: React.FC<VentesViewProps> = ({
                         <div className="text-slate-500 dark:text-slate-400">
                           Dépôt : <strong>{p.stock_depot} ctn</strong>
                         </div>
+                        {isCajoucy && (
+                          <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 pt-0.5">
+                            Prix détaillant : {Number(p.price_box).toLocaleString('fr-FR')} FCFA &bull; Prix grossiste (≥ 50 ctn) : {Number(p.wholesale_price_box).toLocaleString('fr-FR')} FCFA
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="text-base font-black text-slate-900 dark:text-white">
-                          {p.price_box.toLocaleString('fr-FR')} <span className="text-xs text-[#008DA9]">FCFA</span>
+                          {appliedPrice.toLocaleString('fr-FR')} <span className="text-xs text-[#008DA9]">FCFA</span>
                         </div>
-                        <span className="text-[10px] text-slate-400">le carton</span>
+                        <span className="text-[10px] text-slate-400">
+                          {isCajoucy && isWholesaleApplied
+                            ? 'le carton (tarif grossiste)'
+                            : 'le carton (tarif détaillant)'}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {qtyInCart > 0 && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => addToCart(p.id, -1)}
-                              className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold flex items-center justify-center cursor-pointer"
-                            >
-                              -
-                            </button>
-                            <span className="w-7 text-center font-bold text-xs">{qtyInCart}</span>
-                          </>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => addToCart(p.id, -1)}
+                          disabled={qtyInCart <= 0}
+                          className="w-8 h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer disabled:opacity-40"
+                          title="Retirer 1 carton"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          placeholder="0"
+                          value={qtyInCart === 0 ? '' : qtyInCart}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === '') {
+                              setCartQuantity(p.id, 0);
+                            } else {
+                              setCartQuantity(p.id, parseInt(raw, 10));
+                            }
+                          }}
+                          aria-label={`Quantité en cartons pour ${p.name}`}
+                          className="w-16 min-w-[60px] h-9 px-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-center font-mono font-black text-sm text-slate-900 dark:text-white focus:outline-none focus:border-[#008DA9]"
+                        />
                         <button
                           type="button"
                           onClick={() => addToCart(p.id, 1)}
-                          className="px-2.5 py-1.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
+                          className="h-9 px-2.5 rounded-lg bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs flex items-center gap-1 cursor-pointer shrink-0"
+                          title="Ajouter 1 carton"
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>Ajouter</span>
+                          <span>{qtyInCart > 0 ? '+' : 'Ajouter'}</span>
                         </button>
                       </div>
                     </div>
@@ -1862,7 +2206,13 @@ export const VentesView: React.FC<VentesViewProps> = ({
               </h2>
               {cartItems.length > 0 && (
                 <button
-                  onClick={() => setCart({})}
+                  type="button"
+                  onClick={() => {
+                    setCart({});
+                    setBuyerType('');
+                    setThresholdDroppedNotice(null);
+                    setSaleValidationError(null);
+                  }}
                   className="text-xs text-rose-500 hover:text-rose-700 font-medium cursor-pointer"
                 >
                   Vider
@@ -1870,7 +2220,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
               )}
             </div>
 
-            <form onSubmit={handleCheckoutSale} className="space-y-4 text-xs">
+            <form onSubmit={handleCheckoutSale} noValidate className="space-y-4 text-xs">
               {isAdmin && (
                 <div>
                   <label className="block text-slate-500 mb-1 font-semibold">
@@ -1890,22 +2240,77 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 </div>
               )}
 
-              <div>
-                <label className="block text-slate-500 mb-1 font-semibold">
-                  Point de Vente Client (PDV)
-                </label>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <label className="block text-slate-600 dark:text-slate-300 font-extrabold">
+                    Point de Vente Client (PDV de la routine du {activeRoutineDayInfo.activeDayName})
+                  </label>
+                  <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 text-[10px] font-black">
+                    {activeRoutineNameForSale} • {validPdvs.length} PDV actif(s)
+                  </span>
+                </div>
+                <div className="p-2 rounded-xl bg-teal-50/80 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/70 text-[11px] text-teal-900 dark:text-teal-200 font-semibold">
+                  Liste activée automatiquement : PDV créés et validés pour la routine du{' '}
+                  <strong>{activeRoutineDayInfo.activeDayName}</strong> (
+                  <strong>{activeRoutineNameForSale}</strong>). Sélectionnez le PDV pour effectuer la
+                  vente.
+                </div>
                 <select
-                  value={selectedPdvId}
+                  value={selectedPdvId || validPdvs[0]?.id || ''}
                   onChange={(e) => setSelectedPdvId(e.target.value)}
-                  required
                   className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-semibold focus:outline-none transition-none"
                 >
                   {validPdvs.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} ({p.neighborhood}) - {p.manager_name}
+                      {p.name} ({p.neighborhood}) •{' '}
+                      {p.routine_name || `Routine ${p.routine_day || activeRoutineDayInfo.activeDayName}`}{' '}
+                      - {p.manager_name}
                     </option>
                   ))}
                 </select>
+
+                {(() => {
+                  const currentSelectedPdv =
+                    validPdvs.find((p) => String(p.id) === String(selectedPdvId)) || validPdvs[0];
+                  if (!currentSelectedPdv) return null;
+                  const dayLabel = (
+                    currentSelectedPdv.routine_day ||
+                    activeRoutineDayInfo.activeDayName ||
+                    'lundi'
+                  ).toLowerCase();
+                  const salesCnt = Number(currentSelectedPdv.sales_count || 0);
+                  const noSaleCnt = Number(currentSelectedPdv.no_sale_visits_count || 0);
+                  const totalVisitsCnt = Number(
+                    currentSelectedPdv.total_visits_count ??
+                      (salesCnt + noSaleCnt || (currentSelectedPdv.visited_today ? 1 : 0))
+                  );
+                  const dayVisitsCnt = Number(
+                    currentSelectedPdv.today_visits_count ??
+                      currentSelectedPdv.routine_day_visits_count ??
+                      (currentSelectedPdv.visited_today ? 1 : 0)
+                  );
+                  return (
+                    <div className="pt-2">
+                      <CartePdv
+                        pdv={{
+                          ...currentSelectedPdv,
+                          photo_url: getPdvStorefrontImageUrl(currentSelectedPdv),
+                        }}
+                        infoBadges={[
+                          ...(currentSelectedPdv.visited_today || dayVisitsCnt > 0
+                            ? ["Visité aujourd'hui"]
+                            : []),
+                          `Jour : ${dayLabel}`,
+                        ]}
+                        routineDayName={dayLabel}
+                        routineDayVisitsCount={dayVisitsCnt}
+                        totalVisitsCount={totalVisitsCnt}
+                        noSaleVisitsCount={noSaleCnt}
+                        salesCount={salesCnt}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>
@@ -1921,8 +2326,88 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 />
               </div>
 
+              {/* Compteur de cartons Cajoucy & Message si retour sous 50 cartons */}
+              {cajoucyCartonsCount > 0 && (
+                <div
+                  className={`p-3 rounded-xl border text-xs space-y-1 break-words ${
+                    cajoucyCartonsCount >= 50
+                      ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 text-emerald-950 dark:text-emerald-100'
+                      : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap font-bold">
+                    <span>Total produits Cajoucy (toutes saveurs) :</span>
+                    <span className="font-mono font-black text-sm">
+                      {cajoucyCartonsCount} {cajoucyCartonsCount > 1 ? 'cartons' : 'carton'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] opacity-90">
+                    {cajoucyCartonsCount < 50
+                      ? `Sous le seuil de 50 cartons (${50 - cajoucyCartonsCount} carton(s) restant(s) avant le seuil) : aucune remise, tarif détaillant 9 000 FCFA/carton.`
+                      : 'Seuil de 50 cartons Cajoucy atteint : veuillez obligatoirement sélectionner le type d\'acheteur ci-dessous.'}
+                  </div>
+                </div>
+              )}
+
+              {thresholdDroppedNotice && (
+                <div
+                  role="status"
+                  className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/45 border border-amber-300 dark:border-amber-700 text-xs text-amber-950 dark:text-amber-100 font-semibold flex items-start justify-between gap-2 break-words"
+                >
+                  <span className="leading-snug">{thresholdDroppedNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => setThresholdDroppedNotice(null)}
+                    className="font-mono text-sm shrink-0 cursor-pointer"
+                    aria-label="Fermer le message"
+                  >
+                    &times;
+                  </button>
+                </div>
+              )}
+
+              {/* Liste déroulante obligatoire "Type d'acheteur" (apparaît uniquement si cajoucyCartonsCount >= 50) */}
+              {cajoucyCartonsCount >= 50 && (
+                <div className="p-3.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/35 border-2 border-[#008DA9] space-y-2">
+                  <label
+                    htmlFor="sale-buyer-type-select"
+                    className="block text-sm font-black text-slate-900 dark:text-white break-words"
+                  >
+                    Type d&apos;acheteur <span className="text-rose-600 dark:text-rose-400">*</span>
+                  </label>
+                  <select
+                    id="sale-buyer-type-select"
+                    value={buyerType}
+                    onChange={(e) => {
+                      setBuyerType(e.target.value as '' | 'Grossiste' | 'Détaillant');
+                      setSaleValidationError(null);
+                    }}
+                    required
+                    className="w-full h-[48px] min-h-[48px] px-3.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white font-bold focus:outline-none focus:border-[#008DA9]"
+                  >
+                    <option value="">-- Sélectionner Grossiste ou Détaillant (obligatoire) --</option>
+                    <option value="Grossiste">Grossiste (8 500 FCFA / carton • Remise -500 FCFA)</option>
+                    <option value="Détaillant">Détaillant (9 000 FCFA / carton • Sans remise)</option>
+                  </select>
+                  {!buyerType && (
+                    <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300 break-words">
+                      Choix obligatoire (sans valeur par défaut) pour pouvoir enregistrer la vente.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {saleValidationError && (
+                <div
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/45 border border-rose-300 dark:border-rose-700 text-xs font-bold text-rose-900 dark:text-rose-100 break-words"
+                >
+                  {saleValidationError}
+                </div>
+              )}
+
               {/* Cart summary list */}
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pt-2 border-t border-slate-100 dark:border-slate-800">
                 {cartItems.length === 0 ? (
                   <div className="py-6 text-center text-slate-400">
                     Aucun carton sélectionné. Ajoutez des produits à gauche.
@@ -1935,30 +2420,56 @@ export const VentesView: React.FC<VentesViewProps> = ({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold text-slate-800 dark:text-slate-200 break-words">{it.name}</div>
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          <div className="font-bold text-slate-800 dark:text-slate-200 break-words">
+                            {it.name}
+                          </div>
+                          <div className="text-[11px] text-slate-600 dark:text-slate-300 font-semibold break-words">
                             {it.qtyBoxes} cartons &times; {it.unitPrice.toLocaleString('fr-FR')} FCFA
+                            {it.discountPerBox > 0 && (
+                              <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 text-[10px] font-black">
+                                Prix grossiste (-{it.discountPerBox.toLocaleString('fr-FR')} FCFA/ctn)
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="font-black text-slate-900 dark:text-white shrink-0">
                           {it.total.toLocaleString('fr-FR')} FCFA
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center justify-end gap-1.5 pt-2 border-t border-slate-200/80 dark:border-slate-700/60">
-                        <button
-                          type="button"
-                          onClick={() => addToCart(it.productId, -1)}
-                          className="h-[34px] px-2.5 rounded-lg border border-[#64748B] dark:border-[#94A3B8] bg-white dark:bg-slate-800 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                        >
-                          - 1 ctn
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addToCart(it.productId, 1)}
-                          className="h-[34px] px-2.5 rounded-lg border border-[#64748B] dark:border-[#94A3B8] bg-white dark:bg-slate-800 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                        >
-                          + 1 ctn
-                        </button>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-200/80 dark:border-slate-700/60">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => addToCart(it.productId, -1)}
+                            className="h-[34px] w-[34px] rounded-lg border border-[#64748B] dark:border-[#94A3B8] bg-white dark:bg-slate-800 text-xs font-black hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex items-center justify-center"
+                            title="Retirer 1 carton"
+                          >
+                            -
+                          </button>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            value={it.qtyBoxes}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (!Number.isNaN(val) && val >= 1) {
+                                setCartQuantity(it.productId, val);
+                              }
+                            }}
+                            aria-label={`Quantité cartons ${it.name}`}
+                            className="w-16 min-w-[60px] h-[34px] px-1.5 rounded-lg border border-[#64748B] dark:border-[#94A3B8] bg-white dark:bg-slate-900 text-center font-mono font-black text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#008DA9]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => addToCart(it.productId, 1)}
+                            className="h-[34px] w-[34px] rounded-lg border border-[#64748B] dark:border-[#94A3B8] bg-white dark:bg-slate-800 text-xs font-black hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex items-center justify-center"
+                            title="Ajouter 1 carton"
+                          >
+                            +
+                          </button>
+                          <span className="text-[11px] font-semibold text-slate-500 ml-0.5">ctn</span>
+                        </div>
                         <ConfirmDestructiveButton
                           onConfirm={() => addToCart(it.productId, -it.qtyBoxes)}
                           label="Supprimer"
@@ -1972,16 +2483,38 @@ export const VentesView: React.FC<VentesViewProps> = ({
               </div>
 
               {/* Total & Submit */}
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                {cajoucyCartonsCount >= 50 && buyerType && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      Type d&apos;acheteur :
+                    </span>
+                    <span className="font-black text-slate-900 dark:text-white">
+                      {buyerType}
+                    </span>
+                  </div>
+                )}
+
+                {wholesaleDiscountTotal > 0 && (
+                  <div className="flex justify-between items-center text-xs bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 rounded-xl border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 font-bold">
+                    <span>Remise grossiste :</span>
+                    <span className="font-mono font-black">
+                      - {wholesaleDiscountTotal.toLocaleString('fr-FR')} FCFA
+                    </span>
+                  </div>
+                )}
+
                 <div className="flex justify-between items-center mb-3">
-                  <span className="text-xs uppercase font-bold text-slate-500">Total Vente</span>
+                  <span className="text-xs uppercase font-bold text-slate-500">
+                    Total à payer
+                  </span>
                   <span className="text-xl font-black text-[#008DA9]">
                     {cartTotal.toLocaleString('fr-FR')} FCFA
                   </span>
                 </div>
 
                 <div className="mb-3 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 text-[11px] text-amber-900 dark:text-amber-200 leading-snug">
-                  <strong>Information facturation :</strong> Le vendeur ne peut pas créer de factures officielles (seul le Comptable y est autorisé). La validation de cette vente génère automatiquement votre <strong>Mini Facture Thermique (80mm)</strong> dans votre historique de ventes.
+                  <strong>Information ticket thermique :</strong> Le vendeur ne peut pas créer de factures (réservé au service Facturation). La validation de cette vente génère uniquement votre <strong>Ticket Thermique (80 mm)</strong> dans votre historique de ventes.
                 </div>
 
                 <button
@@ -1991,7 +2524,9 @@ export const VentesView: React.FC<VentesViewProps> = ({
                 >
                   <Receipt className="w-4 h-4 shrink-0" />
                   <span>
-                    {online
+                    {isSubmitting
+                      ? 'Validation en cours...'
+                      : online
                       ? 'Valider la vente'
                       : 'Enregistrer hors-ligne'}
                   </span>
@@ -2384,8 +2919,8 @@ export const VentesView: React.FC<VentesViewProps> = ({
         </div>
       )}
 
-      {/* HISTORIQUE DES VENTES PAR SKU SUR UNE PÉRIODE DONNÉE */}
-      {directorSubTab === 'historique-sku' && (
+      {/* HISTORIQUE DES VENTES PAR SKU SUR UNE PÉRIODE DONNÉE (Interdit au Vendeur) */}
+      {!isVendeur && directorSubTab === 'historique-sku' && (
         <div className="space-y-6">
           {/* Barre de filtres Période + SKU + Vendeur + Export PDF */}
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 shadow-xs space-y-4">
@@ -3145,7 +3680,11 @@ export const VentesView: React.FC<VentesViewProps> = ({
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10" />
               <input
                 type="search"
-                placeholder="Rechercher N° vente, facture, ticket, PDV, vendeur..."
+                placeholder={
+                  isVendeur
+                    ? 'Rechercher N° vente, ticket thermique, PDV...'
+                    : 'Rechercher N° vente, facture, ticket, PDV, vendeur...'
+                }
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full max-w-full min-w-0 box-border pl-11 pr-10 h-[48px] min-h-[48px] rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[16px] text-slate-900 dark:text-white focus:outline-none transition-none"
@@ -3341,15 +3880,50 @@ export const VentesView: React.FC<VentesViewProps> = ({
                       Hors-ligne &bull; Synchro
                     </span>
                   )}
+                  {s.buyer_type && (
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-black ${
+                        s.buyer_type === 'Grossiste'
+                          ? 'bg-cyan-100 text-cyan-900 dark:bg-cyan-950/70 dark:text-cyan-300'
+                          : 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
+                      }`}
+                    >
+                      Acheteur : {s.buyer_type}
+                    </span>
+                  )}
                 </>
               );
             }}
             fields={[
               {
                 key: 'pdv',
-                label: 'Point de vente',
+                label: 'Nom du PDV',
                 value: (s) =>
                   `${s.pdv_name || 'PDV'}${s.pdv_neighborhood ? ` (${s.pdv_neighborhood})` : ''}`,
+              },
+              {
+                key: 'routine',
+                label: 'Routine liée',
+                value: (s) => {
+                  const rName =
+                    s.routine_name || `Routine ${s.routine_day || 'Vendredi'}`;
+                  const rDay = s.routine_day ? ` (${s.routine_day})` : '';
+                  return (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-extrabold text-xs">
+                      {rName}
+                      {rDay}
+                    </span>
+                  );
+                },
+              },
+              {
+                key: 'date_time',
+                label: 'Date & Heure',
+                value: (s) => (
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {formatSaleDateFr(s.date)} à {getSaleTime(s)}
+                  </span>
+                ),
               },
               {
                 key: 'vendor',
@@ -3358,7 +3932,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
               },
               {
                 key: 'items',
-                label: 'Détail cartons',
+                label: 'Produit(s) & cartons achetés',
                 value: (s) => {
                   const totalBoxes = (s.items || []).reduce(
                     (acc: number, it: any) => acc + Number(it.qtyBoxes ?? it.qty ?? 0),
@@ -3367,7 +3941,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                   return (
                     <div className="space-y-1 text-right min-w-0 max-w-full">
                       <div className="font-bold text-slate-900 dark:text-white">
-                        {totalBoxes} {totalBoxes > 1 ? 'cartons' : 'carton'}
+                        {totalBoxes} {totalBoxes > 1 ? 'cartons achetés' : 'carton acheté'}
                       </div>
                       <div className="space-y-0.5 text-xs text-slate-600 dark:text-slate-300 font-medium">
                         {(s.items || []).map((it: any, idx: number) => (
@@ -3375,10 +3949,29 @@ export const VentesView: React.FC<VentesViewProps> = ({
                             key={`${it.code || idx}-${idx}`}
                             className="whitespace-normal [overflow-wrap:anywhere] break-words"
                           >
-                            {it.qtyBoxes ?? it.qty ?? 0} &times; {it.name}
+                            <strong>{it.name}</strong> : {it.qtyBoxes ?? it.qty ?? 0} carton(s)
+                            {it.unitPrice ? ` (${Number(it.unitPrice).toLocaleString('fr-FR')} FCFA)` : ''}
                           </div>
                         ))}
                       </div>
+                    </div>
+                  );
+                },
+              },
+              {
+                key: 'buyer_discount',
+                label: "Type d'acheteur / Remise",
+                value: (s) => {
+                  const discount = Number(s.wholesale_discount_amount || 0);
+                  const bType = s.buyer_type || 'Détaillant';
+                  return (
+                    <div className="text-right space-y-0.5">
+                      <div className="font-bold text-slate-800 dark:text-slate-200">{bType}</div>
+                      {discount > 0 && (
+                        <div className="text-xs font-black text-emerald-700 dark:text-emerald-400">
+                          Remise grossiste : - {discount.toLocaleString('fr-FR')} FCFA
+                        </div>
+                      )}
                     </div>
                   );
                 },
@@ -3391,6 +3984,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
               {
                 key: 'invoice_no',
                 label: 'N° de facture',
+                hidden: () => isVendeur,
                 value: (s) => (
                   <span className="font-mono font-bold [overflow-wrap:anywhere]">
                     {s.invoice_number || `FAC-${String(s.number || '').replace('VTE-', '')}`}
@@ -3476,15 +4070,17 @@ export const VentesView: React.FC<VentesViewProps> = ({
               const isCancelled = s.status === 'annulee';
               return (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => handleOpenSaleInvoice(s)}
-                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
-                    title="Ouvrir la Facture Client PDV au format A4"
-                  >
-                    <FileText className="w-4 h-4 shrink-0" />
-                    <span>Facture</span>
-                  </button>
+                  {!isVendeur && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenSaleInvoice(s)}
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                      title="Ouvrir la Facture Client PDV au format A4"
+                    >
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span>Facture</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleOpenSaleTicket(s)}
@@ -3492,7 +4088,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
                     title="Ouvrir le Ticket Thermique 80 mm (preuve de vente)"
                   >
                     <Receipt className="w-4 h-4 shrink-0" />
-                    <span>Ticket</span>
+                    <span>{isVendeur ? 'Ticket thermique' : 'Ticket'}</span>
                   </button>
                   {isVendeur &&
                     !isCancelled &&
@@ -3697,7 +4293,7 @@ export const VentesView: React.FC<VentesViewProps> = ({
             </div>
 
             <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-[11px] text-teal-950 dark:text-teal-200">
-              Votre demande sera transmise immédiatement à <strong>Ibrahim Sangaré (Directeur des opérations de vente)</strong>. Dès sa validation, la vente sera annulée et les cartons seront réintégrés dans votre stock camionnette.
+              Votre demande sera transmise immédiatement à <strong>Issa Koné (Directeur des opérations de vente)</strong>. Dès sa validation, la vente sera annulée et les cartons seront réintégrés dans votre stock camionnette.
             </div>
 
             <div>

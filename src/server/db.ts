@@ -10,14 +10,44 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'baobab.db');
-export const db = new DatabaseSync(dbPath);
-try {
-  db.exec('PRAGMA busy_timeout = 5000;');
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA synchronous = NORMAL;');
-} catch (_err) {
-  // Ignore pragma errors if any
+
+function removeCorruptedDbFiles() {
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    const target = `${dbPath}${suffix}`;
+    try {
+      if (fs.existsSync(target)) {
+        fs.unlinkSync(target);
+      }
+    } catch {
+      // Ignore unlink errors
+    }
+  }
 }
+
+function createConfiguredDatabase(): DatabaseSync {
+  const instance = new DatabaseSync(dbPath);
+  instance.exec('PRAGMA busy_timeout = 5000;');
+  instance.exec('PRAGMA journal_mode = WAL;');
+  instance.exec('PRAGMA synchronous = NORMAL;');
+  const check = instance.prepare('PRAGMA quick_check;').get() as { quick_check?: string } | undefined;
+  if (check && check.quick_check && check.quick_check.toLowerCase() !== 'ok') {
+    throw new Error(`SQLite quick_check failed: ${check.quick_check}`);
+  }
+  instance.prepare('SELECT count(*) as c FROM sqlite_master;').get();
+  return instance;
+}
+
+function openHealthyDatabase(): DatabaseSync {
+  try {
+    return createConfiguredDatabase();
+  } catch (err) {
+    console.warn('[DB] Base SQLite endommagée détectée au démarrage, recréation automatique...', err);
+    removeCorruptedDbFiles();
+    return createConfiguredDatabase();
+  }
+}
+
+export let db: DatabaseSync = openHealthyDatabase();
 
 export function initDatabase() {
   // 1. Settings table
@@ -292,6 +322,27 @@ export function initDatabase() {
     }
   };
 
+  runMigration("ALTER TABLE products ADD COLUMN wholesale_price_box INTEGER");
+  runMigration("ALTER TABLE products ADD COLUMN price_effective_date TEXT");
+  runMigration("ALTER TABLE products ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS product_price_history (
+      id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      product_code TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      old_price_box INTEGER,
+      new_price_box INTEGER NOT NULL,
+      old_wholesale_price_box INTEGER,
+      new_wholesale_price_box INTEGER,
+      effective_date TEXT NOT NULL,
+      changed_by TEXT NOT NULL,
+      motif TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+
   runMigration("ALTER TABLE lots ADD COLUMN initial_quantity INTEGER DEFAULT 0");
   runMigration("ALTER TABLE lots ADD COLUMN status TEXT DEFAULT 'actif'");
   runMigration("ALTER TABLE points_de_vente ADD COLUMN rejection_reason TEXT");
@@ -302,6 +353,30 @@ export function initDatabase() {
   runMigration("ALTER TABLE points_de_vente ADD COLUMN captured_at TEXT");
   runMigration("ALTER TABLE points_de_vente ADD COLUMN vendor_id TEXT");
   runMigration("ALTER TABLE points_de_vente ADD COLUMN created_by TEXT");
+  runMigration("ALTER TABLE points_de_vente ADD COLUMN routine_name TEXT");
+  runMigration("ALTER TABLE points_de_vente ADD COLUMN routine_day TEXT");
+  runMigration("ALTER TABLE points_de_vente ADD COLUMN routine_day_index INTEGER");
+  runMigration("ALTER TABLE points_de_vente ADD COLUMN routine_cycle_id TEXT");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pdv_routine_cycles (
+      id TEXT PRIMARY KEY,
+      vendor_id TEXT NOT NULL,
+      step_number INTEGER NOT NULL DEFAULT 1,
+      day_index INTEGER NOT NULL,
+      day_name TEXT NOT NULL,
+      routine_name TEXT NOT NULL DEFAULT '',
+      pdv_count INTEGER NOT NULL DEFAULT 0,
+      target_pdv_count INTEGER NOT NULL DEFAULT 25,
+      status TEXT NOT NULL DEFAULT 'actif',
+      started_date TEXT NOT NULL,
+      reached_target_date TEXT,
+      locked_at_midnight_date TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pdv_routine_cycles_vendor ON pdv_routine_cycles(vendor_id, step_number);
+  `);
   runMigration("ALTER TABLE chargements ADD COLUMN desired_date TEXT");
   runMigration("ALTER TABLE chargements ADD COLUMN rejection_reason TEXT");
   runMigration("ALTER TABLE chargements ADD COLUMN validated_by TEXT");
@@ -435,6 +510,9 @@ export function initDatabase() {
   try { db.exec("ALTER TABLE sales ADD COLUMN cancel_reviewed_at TEXT;"); } catch {}
   try { db.exec("ALTER TABLE sales ADD COLUMN cancel_reviewed_by TEXT;"); } catch {}
   try { db.exec("ALTER TABLE sales ADD COLUMN cancel_rejection_reason TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN buyer_type TEXT;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN wholesale_discount_amount INTEGER NOT NULL DEFAULT 0;"); } catch {}
+  try { db.exec("ALTER TABLE sales ADD COLUMN cajoucy_boxes_count INTEGER NOT NULL DEFAULT 0;"); } catch {}
 
   // 21. Clients en Gros (Gérés par le Gestionnaire grossiste / Administrateur)
   db.exec(`
@@ -514,6 +592,7 @@ export function initDatabase() {
     ensureSalesAdminProfileAndSampleData();
     ensureGrossisteProfileAndSampleData();
     ensureVendorSaleCancelRequestSampleData();
+    ensureJusCajoucyCatalogAndDemoData();
     return;
   }
 
@@ -961,6 +1040,8 @@ export function initDatabase() {
   ensureComptableInvoicesAndPurchaseRequests();
   ensureSalesAdminProfileAndSampleData();
   ensureGrossisteProfileAndSampleData();
+  ensureVendorSaleCancelRequestSampleData();
+  ensureJusCajoucyCatalogAndDemoData();
 }
 
 export function ensureZeroSalesPdvs() {
@@ -2327,5 +2408,391 @@ function ensureVendorSaleCancelRequestSampleData() {
   }
 }
 
-initDatabase();
+export function ensureJusCajoucyCatalogAndDemoData() {
+  try {
+    // 1. Renommer toute ancienne gamme "Jus" / "Jus & Boissons" en "Jus Cajoucy" (aucune gamme en double)
+    db.prepare(`
+      UPDATE products
+      SET gamme = 'Jus Cajoucy'
+      WHERE gamme IN ('Jus', 'Jus & Boissons', 'Jus & Boissons Naturelles')
+         OR id = 'prod-caj'
+         OR code LIKE 'JUS-CAJ%'
+    `).run();
+
+    // 2. Le produit existant "Jus Cajoucy" (prod-caj / JUS-CAJ-12) est renommé "Jus Cajoucy (ancien)",
+    //    rattaché à la gamme "Jus Cajoucy" et désactivé (is_active = 0). Son historique reste intact.
+    db.prepare(`
+      UPDATE products
+      SET name = 'Jus Cajoucy (ancien)',
+          gamme = 'Jus Cajoucy',
+          is_active = 0
+      WHERE id = 'prod-caj' OR code = 'JUS-CAJ-12'
+    `).run();
+
+    // 3. Les 5 produits actifs de la gamme "Jus Cajoucy" :
+    //    Unités par carton : 12 | Prix détaillant : 9 000 FCFA | Prix grossiste : 8 500 FCFA
+    const cajoucyFlavors = [
+      {
+        id: 'prod-caj-ananas',
+        code: 'JUS-CAJ-ANA-12',
+        name: 'Cajoucy Ananas',
+        stock_depot: 220,
+        threshold_depot: 40,
+      },
+      {
+        id: 'prod-caj-cocktail',
+        code: 'JUS-CAJ-COC-12',
+        name: 'Cajoucy Cocktail',
+        stock_depot: 195,
+        threshold_depot: 40,
+      },
+      {
+        id: 'prod-caj-mangue',
+        code: 'JUS-CAJ-MAN-12',
+        name: 'Cajoucy Mangue',
+        stock_depot: 240,
+        threshold_depot: 40,
+      },
+      {
+        id: 'prod-caj-pomme',
+        code: 'JUS-CAJ-POM-12',
+        name: 'Cajoucy Pomme de Cajou',
+        stock_depot: 180,
+        threshold_depot: 40,
+      },
+      {
+        id: 'prod-caj-orange',
+        code: 'JUS-CAJ-ORA-12',
+        name: 'Cajoucy Orange',
+        stock_depot: 210,
+        threshold_depot: 40,
+      },
+    ];
+
+    const insertFlavor = db.prepare(`
+      INSERT OR IGNORE INTO products (
+        id, code, name, gamme, packaging, units_per_box,
+        price_box, wholesale_price_box, price_effective_date,
+        stock_depot, threshold_depot, is_active
+      ) VALUES (?, ?, ?, 'Jus Cajoucy', 'Carton de 12', 12, 9000, 8500, '2026-10-01', ?, ?, 1)
+    `);
+
+    const syncFlavorMeta = db.prepare(`
+      UPDATE products
+      SET name = ?,
+          gamme = 'Jus Cajoucy',
+          packaging = 'Carton de 12',
+          units_per_box = 12,
+          price_box = COALESCE(NULLIF(price_box, 0), 9000),
+          wholesale_price_box = COALESCE(wholesale_price_box, 8500),
+          price_effective_date = COALESCE(price_effective_date, '2026-10-01'),
+          is_active = 1
+      WHERE id = ?
+    `);
+
+    for (const fl of cajoucyFlavors) {
+      insertFlavor.run(fl.id, fl.code, fl.name, fl.stock_depot, fl.threshold_depot);
+      syncFlavorMeta.run(fl.name, fl.id);
+    }
+
+    // 4. Données de démo (exécutées une seule fois de façon idempotente)
+    const checkSeed = db.prepare("SELECT value FROM settings WHERE key = 'seeded_jus_cajoucy_v1'").get() as { value: string } | undefined;
+    if (checkSeed && checkSeed.value) return;
+
+    // Ajuster le stock résiduel de "Jus Cajoucy (ancien)" à 45 cartons pour permettre à l'Administrateur
+    // de tester/utiliser le reclassement motivé vers une saveur, tout en conservant son historique
+    db.prepare(`
+      UPDATE products
+      SET stock_depot = 45
+      WHERE id = 'prod-caj' AND stock_depot > 100
+    `).run();
+
+    // Historique initial des tarifs (prix détaillant 9 000 FCFA / prix grossiste 8 500 FCFA)
+    const insertPriceHistory = db.prepare(`
+      INSERT OR IGNORE INTO product_price_history (
+        id, product_id, product_code, product_name,
+        old_price_box, new_price_box, old_wholesale_price_box, new_wholesale_price_box,
+        effective_date, changed_by, motif, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const fl of cajoucyFlavors) {
+      insertPriceHistory.run(
+        `pph-init-${fl.id}`,
+        fl.id,
+        fl.code,
+        fl.name,
+        null,
+        9000,
+        null,
+        8500,
+        '2026-10-01',
+        'Amadou Touré (Administrateur)',
+        'Tarif officiel initial — Gamme Jus Cajoucy (Détaillant 9 000 FCFA / Grossiste 8 500 FCFA)',
+        '2026-10-01T08:00:00.000Z'
+      );
+    }
+
+    // Lots de démo répartis sur les 5 saveurs (avec différentes dates de péremption FEFO)
+    const today = new Date();
+    const addDaysStr = (days: number) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() + days);
+      return formatDate(d);
+    };
+
+    const insertLot = db.prepare(`
+      INSERT OR IGNORE INTO lots (
+        id, product_id, lot_number, expiry_date, quantity, initial_quantity, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'actif', ?)
+    `);
+
+    const demoLots = [
+      { id: 'lot-caj-ana-1', product_id: 'prod-caj-ananas', lot_number: 'LOT-CAJ-ANA-26A', days: 195, qty: 140, init: 160, created: '2026-10-02' },
+      { id: 'lot-caj-ana-2', product_id: 'prod-caj-ananas', lot_number: 'LOT-CAJ-ANA-26B', days: 65, qty: 80, init: 100, created: '2026-09-15' },
+      { id: 'lot-caj-coc-1', product_id: 'prod-caj-cocktail', lot_number: 'LOT-CAJ-COC-26A', days: 210, qty: 135, init: 150, created: '2026-10-03' },
+      { id: 'lot-caj-coc-2', product_id: 'prod-caj-cocktail', lot_number: 'LOT-CAJ-COC-26B', days: 48, qty: 60, init: 80, created: '2026-09-12' },
+      { id: 'lot-caj-man-1', product_id: 'prod-caj-mangue', lot_number: 'LOT-CAJ-MAN-26A', days: 230, qty: 165, init: 180, created: '2026-10-04' },
+      { id: 'lot-caj-man-2', product_id: 'prod-caj-mangue', lot_number: 'LOT-CAJ-MAN-26B', days: 24, qty: 75, init: 90, created: '2026-09-05' },
+      { id: 'lot-caj-pom-1', product_id: 'prod-caj-pomme', lot_number: 'LOT-CAJ-POM-26A', days: 185, qty: 180, init: 200, created: '2026-10-05' },
+      { id: 'lot-caj-ora-1', product_id: 'prod-caj-orange', lot_number: 'LOT-CAJ-ORA-26A', days: 200, qty: 150, init: 170, created: '2026-10-06' },
+      { id: 'lot-caj-ora-2', product_id: 'prod-caj-orange', lot_number: 'LOT-CAJ-ORA-26B', days: 72, qty: 60, init: 75, created: '2026-09-18' },
+    ];
+
+    for (const l of demoLots) {
+      insertLot.run(l.id, l.product_id, l.lot_number, addDaysStr(l.days), l.qty, l.init, l.created);
+    }
+
+    // Chargements dépôt-vente répartis sur les 5 saveurs pour les 3 vendeurs
+    const insertChargement = db.prepare(`
+      INSERT OR IGNORE INTO chargements (
+        id, reference, vendor_id, date, items, total_amount, status, validated_by, validated_at, charged_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'valide', 'Moussa Diarra (Gestionnaire de stock)', ?, ?, ?)
+    `);
+
+    const flavorChargements = [
+      {
+        id: 'chg-caj-flav-v1',
+        ref: 'CHG-2026-CAJ-01',
+        vendor: 'usr-vnd-1',
+        date: '2026-10-20',
+        items: [
+          { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 35, unitPrice: 9000, total: 315000 },
+          { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 30, unitPrice: 9000, total: 270000 },
+          { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 40, unitPrice: 9000, total: 360000 },
+          { productId: 'prod-caj-pomme', code: 'JUS-CAJ-POM-12', name: 'Cajoucy Pomme de Cajou', qtyBoxes: 25, unitPrice: 9000, total: 225000 },
+          { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 30, unitPrice: 9000, total: 270000 },
+        ],
+      },
+      {
+        id: 'chg-caj-flav-v2',
+        ref: 'CHG-2026-CAJ-02',
+        vendor: 'usr-vnd-2',
+        date: '2026-10-20',
+        items: [
+          { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 30, unitPrice: 9000, total: 270000 },
+          { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 28, unitPrice: 9000, total: 252000 },
+          { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 32, unitPrice: 9000, total: 288000 },
+          { productId: 'prod-caj-pomme', code: 'JUS-CAJ-POM-12', name: 'Cajoucy Pomme de Cajou', qtyBoxes: 24, unitPrice: 9000, total: 216000 },
+          { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 28, unitPrice: 9000, total: 252000 },
+        ],
+      },
+      {
+        id: 'chg-caj-flav-v3',
+        ref: 'CHG-2026-CAJ-03',
+        vendor: 'usr-vnd-3',
+        date: '2026-10-21',
+        items: [
+          { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 25, unitPrice: 9000, total: 225000 },
+          { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 22, unitPrice: 9000, total: 198000 },
+          { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 28, unitPrice: 9000, total: 252000 },
+          { productId: 'prod-caj-pomme', code: 'JUS-CAJ-POM-12', name: 'Cajoucy Pomme de Cajou', qtyBoxes: 20, unitPrice: 9000, total: 180000 },
+          { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 25, unitPrice: 9000, total: 225000 },
+        ],
+      },
+    ];
+
+    for (const chg of flavorChargements) {
+      const total = chg.items.reduce((acc, it) => acc + it.total, 0);
+      insertChargement.run(
+        chg.id,
+        chg.ref,
+        chg.vendor,
+        chg.date,
+        JSON.stringify(chg.items),
+        total,
+        `${chg.date}T08:15:00`,
+        `${chg.date}T08:30:00`,
+        `${chg.date}T08:00:00`
+      );
+    }
+
+    // Ventes de démo réparties sur les 5 saveurs (avec conservation intacte des ventes de l'ancien produit)
+    const insertSale = db.prepare(`
+      INSERT OR IGNORE INTO sales (
+        id, number, date, sale_time, vendor_id, pdv_id, items, total_amount,
+        payment_type, status, thermal_ticket_number, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'livree', ?, ?)
+    `);
+
+    const demoFlavorSales = [
+      {
+        id: 'sale-caj-flav-01',
+        number: 'VTE-2026-CAJ01',
+        date: '2026-10-22',
+        time: '09:20',
+        vendor_id: 'usr-vnd-1',
+        pdv_id: 'pdv-01',
+        payment_type: 'Comptant',
+        items: [
+          { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 6, unitPrice: 9000, total: 54000 },
+          { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 8, unitPrice: 9000, total: 72000 },
+        ],
+      },
+      {
+        id: 'sale-caj-flav-02',
+        number: 'VTE-2026-CAJ02',
+        date: '2026-10-23',
+        time: '10:45',
+        vendor_id: 'usr-vnd-2',
+        pdv_id: 'pdv-02',
+        payment_type: 'Orange Money',
+        items: [
+          { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 5, unitPrice: 9000, total: 45000 },
+          { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 7, unitPrice: 9000, total: 63000 },
+        ],
+      },
+      {
+        id: 'sale-caj-flav-03',
+        number: 'VTE-2026-CAJ03',
+        date: '2026-10-24',
+        time: '11:30',
+        vendor_id: 'usr-vnd-3',
+        pdv_id: 'pdv-06',
+        payment_type: 'Comptant',
+        items: [
+          { productId: 'prod-caj-pomme', code: 'JUS-CAJ-POM-12', name: 'Cajoucy Pomme de Cajou', qtyBoxes: 6, unitPrice: 9000, total: 54000 },
+          { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 4, unitPrice: 9000, total: 36000 },
+        ],
+      },
+      {
+        id: 'sale-caj-flav-04',
+        number: 'VTE-2026-CAJ04',
+        date: '2026-10-25',
+        time: '14:15',
+        vendor_id: 'usr-vnd-1',
+        pdv_id: 'pdv-03',
+        payment_type: 'Comptant',
+        items: [
+          { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 5, unitPrice: 9000, total: 45000 },
+          { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 4, unitPrice: 9000, total: 36000 },
+          { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 5, unitPrice: 9000, total: 45000 },
+        ],
+      },
+      {
+        id: 'sale-caj-flav-05',
+        number: 'VTE-2026-CAJ05',
+        date: '2026-10-26',
+        time: '15:40',
+        vendor_id: 'usr-vnd-2',
+        pdv_id: 'pdv-04',
+        payment_type: 'Moov Money',
+        items: [
+          { productId: 'prod-caj-pomme', code: 'JUS-CAJ-POM-12', name: 'Cajoucy Pomme de Cajou', qtyBoxes: 5, unitPrice: 9000, total: 45000 },
+          { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 5, unitPrice: 9000, total: 45000 },
+          { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 6, unitPrice: 9000, total: 54000 },
+        ],
+      },
+      {
+        id: 'sale-caj-flav-06',
+        number: 'VTE-2026-CAJ06',
+        date: '2026-10-26',
+        time: '16:20',
+        vendor_id: 'usr-vnd-3',
+        pdv_id: 'pdv-07',
+        payment_type: 'Comptant',
+        items: [
+          { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 6, unitPrice: 9000, total: 54000 },
+          { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 5, unitPrice: 9000, total: 45000 },
+        ],
+      },
+    ];
+
+    for (const s of demoFlavorSales) {
+      const total = s.items.reduce((acc, it) => acc + it.total, 0);
+      insertSale.run(
+        s.id,
+        s.number,
+        s.date,
+        s.time,
+        s.vendor_id,
+        s.pdv_id,
+        JSON.stringify(s.items),
+        total,
+        s.payment_type,
+        `TKT-THERM-${s.number.replace(/^VTE-/, '')}`,
+        `${s.date}T${s.time}:00`
+      );
+    }
+
+    // Commande en gros de démo avec les 5 saveurs au prix grossiste (8 500 FCFA / carton)
+    const grsItems = [
+      { productId: 'prod-caj-ananas', code: 'JUS-CAJ-ANA-12', name: 'Cajoucy Ananas', qtyBoxes: 30, unitPrice: 8500, total: 255000 },
+      { productId: 'prod-caj-cocktail', code: 'JUS-CAJ-COC-12', name: 'Cajoucy Cocktail', qtyBoxes: 25, unitPrice: 8500, total: 212500 },
+      { productId: 'prod-caj-mangue', code: 'JUS-CAJ-MAN-12', name: 'Cajoucy Mangue', qtyBoxes: 35, unitPrice: 8500, total: 297500 },
+      { productId: 'prod-caj-pomme', code: 'JUS-CAJ-POM-12', name: 'Cajoucy Pomme de Cajou', qtyBoxes: 20, unitPrice: 8500, total: 170000 },
+      { productId: 'prod-caj-orange', code: 'JUS-CAJ-ORA-12', name: 'Cajoucy Orange', qtyBoxes: 30, unitPrice: 8500, total: 255000 },
+    ];
+    const grsTotalBoxes = grsItems.reduce((s, it) => s + it.qtyBoxes, 0);
+    const grsSubtotal = grsItems.reduce((s, it) => s + it.total, 0);
+
+    db.prepare(`
+      INSERT OR IGNORE INTO wholesale_orders (
+        id, reference, client_id, client_code, client_name, client_manager,
+        client_phone, client_neighborhood, client_city, date, order_time,
+        items_json, total_boxes, subtotal_ht, discount_percent, discount_amount,
+        total_amount, payment_mode, payment_status, delivery_status, notes,
+        created_by, created_by_code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'Virement Bancaire', 'paye', 'livree', ?, 'Cheick Oumar Diallo', 'BAO-GRS', ?)
+    `).run(
+      'grs-ord-caj-flav-01',
+      'CMD-GROS-2026-006',
+      'grs-cli-01',
+      'GRS-BKO-001',
+      'Établissements Simpara & Frères (Grand Marché)',
+      'Alhousseini Simpara',
+      '+223 76 20 31 42',
+      'Grand Marché Dabanani',
+      'Bamako',
+      '2026-10-26',
+      '11:20',
+      JSON.stringify(grsItems),
+      grsTotalBoxes,
+      grsSubtotal,
+      grsSubtotal,
+      'Assortiment complet des 5 saveurs Jus Cajoucy au tarif grossiste officiel (8 500 FCFA / carton).',
+      '2026-10-26T11:20:00'
+    );
+
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('seeded_jus_cajoucy_v1', ?)").run(new Date().toISOString());
+  } catch (e) {
+    console.warn('ensureJusCajoucyCatalogAndDemoData warning:', e);
+  }
+}
+
+try {
+  initDatabase();
+} catch (err) {
+  console.warn('[DB] Erreur lors de initDatabase, réinitialisation automatique de la base SQLite...', err);
+  try {
+    db.close();
+  } catch {
+    // Ignore close errors
+  }
+  removeCorruptedDbFiles();
+  db = openHealthyDatabase();
+  initDatabase();
+}
+
+
 

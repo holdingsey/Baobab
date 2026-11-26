@@ -240,7 +240,7 @@ const AVAILABLE_ROLES = [
   'Sales Admin',
   'Gestionnaire grossiste',
   'Gestionnaire de stock',
-  'Comptable',
+  'Facturation',
   'Vendeur',
 ] as const;
 

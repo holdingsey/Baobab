@@ -6,21 +6,21 @@
   --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Échelle typographique confortable et lisible sans débordement */
-  --text-xs: 0.85rem;
-  --text-xs--line-height: 1.3rem;
-  --text-sm: 0.95rem;
-  --text-sm--line-height: 1.45rem;
-  --text-base: 1.05rem;
-  --text-base--line-height: 1.6rem;
-  --text-lg: 1.1875rem;
-  --text-lg--line-height: 1.7rem;
-  --text-xl: 1.35rem;
-  --text-xl--line-height: 1.85rem;
-  --text-2xl: 1.6rem;
-  --text-2xl--line-height: 2.05rem;
-  --text-3xl: 1.95rem;
-  --text-3xl--line-height: 2.35rem;
+  /* Échelle typographique équilibrée sur mobile, tablette et ordinateur */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.15rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.35rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.65rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.95rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
 }
 
 @layer base {
@@ -103,12 +103,19 @@
     height: auto;
   }
 
-  /* 4. Tous les enfants de flex et de grid : min-width 0 */
-  :where(.flex, .inline-flex, .grid, .inline-grid) {
+  /* 4. Grille et conteneurs flex : min-width 0 sur les cellules de grille et les conteneurs div flexibles,
+        tout en préservant intacte la largeur des badges (span), boutons et éléments .shrink-0 */
+  :where(.grid, .inline-grid) {
     min-width: 0;
+    max-width: 100%;
   }
 
-  :where(.flex, .inline-flex, .grid, .inline-grid) > * {
+  :where(.grid, .inline-grid) > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :where(.flex) > :where(div, section, article, main, form, dl, ul, ol):not(.shrink-0):not(.flex-none) {
     min-width: 0;
   }
 
@@ -118,7 +125,7 @@
     min-width: 0;
   }
 
-  /* 5. Textes : overflow-wrap anywhere, word-break normal, max-width 100% */
+  /* 5. Textes : retour à la ligne entre les mots, et repli sécurisé sur les très longues chaînes (URL, UUID, e-mails) pour éviter tout débordement de bloc */
   p,
   h1,
   h2,
@@ -137,8 +144,17 @@
   em,
   a,
   div {
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     word-break: normal;
+    hyphens: none;
+  }
+
+  /* Empêche [overflow-wrap:anywhere] et .break-words de couper les mots courants au milieu d'une syllabe dans les cartes et flexboxes */
+  .\[overflow-wrap\:anywhere\],
+  .break-words {
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    hyphens: none !important;
   }
 
   /* 6. Nombres et montants : white-space nowrap uniquement pour les montants, avec police adaptative clamp() */
@@ -155,16 +171,17 @@
     font-size: clamp(0.95rem, 2.3vw + 0.35rem, 1.55rem);
   }
 
-  /* 7. Cartes et panneaux : aucune hauteur fixe, aucun overflow hidden sur du texte */
+  /* 7. Cartes et panneaux : aucune hauteur fixe, respect de .overflow-hidden lorsqu'il est défini */
   main {
     width: 100%;
     max-width: 100%;
     overflow-x: clip;
   }
 
-  :where(.rounded-2xl, .rounded-xl, .rounded-3xl):not(.overflow-y-auto):not(.overflow-x-auto):not(.baobab-notif-panel) {
+  :where(.rounded-2xl, .rounded-xl, .rounded-3xl):not(.overflow-y-auto):not(.overflow-x-auto):not(.overflow-hidden):not(.baobab-notif-panel) {
     overflow: visible;
     height: auto;
+    max-width: 100%;
   }
 
   button,
@@ -175,20 +192,21 @@
     touch-action: manipulation;
   }
 
-  /* Boutons : retour à la ligne autorisé, jamais de texte coupé */
+  /* Boutons : retour à la ligne entre les mots uniquement, jamais de mot coupé en deux */
   button {
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
     word-break: normal;
+    hyphens: none;
     height: auto;
-    min-width: 0;
     max-width: 100%;
   }
 
   button > span {
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
     word-break: normal;
+    hyphens: none;
   }
 
   input[type="checkbox"],
@@ -221,7 +239,7 @@
     line-height: 1.35 !important;
     border-radius: 12px !important;
     white-space: normal !important;
-    overflow-wrap: anywhere !important;
+    overflow-wrap: break-word !important;
     text-overflow: clip !important;
     opacity: 1 !important;
     transition: none !important;
@@ -247,7 +265,7 @@
   select option {
     white-space: normal !important;
     word-break: normal !important;
-    overflow-wrap: anywhere !important;
+    overflow-wrap: break-word !important;
     max-width: 100vw;
   }
 
@@ -472,12 +490,10 @@ textarea {
   will-change: auto !important;
 }
 
-/* Suppression globale de tout line-clamp et text-overflow ellipsis sur les textes */
-.truncate:not(.baobab-bottom-nav-label),
+/* Suppression de tout line-clamp sur les blocs multi-lignes tout en préservant .truncate sur une ligne */
 .line-clamp-1,
 .line-clamp-2,
-.line-clamp-3,
-.text-ellipsis {
+.line-clamp-3 {
   white-space: normal !important;
   overflow: visible !important;
   text-overflow: clip !important;
@@ -500,26 +516,44 @@ textarea {
   letter-spacing: -0.01em !important;
 }
 
-/* Rehaussement automatique des très petites tailles de texte (hors barre du bas) */
-.text-\[9px\] {
-  font-size: 0.76rem !important;
-  line-height: 1.15rem !important;
+/* Protection universelle contre le débordement des en-têtes flex justify-between, formulaires, cartes et tableaux sur PC, Tablette et Mobile */
+.flex.justify-between:not(.flex-nowrap):not(.items-stretch) {
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
 }
 
-.text-\[10px\] {
-  font-size: 0.8125rem !important;
-  line-height: 1.2rem !important;
+form,
+fieldset {
+  min-width: 0;
+  max-width: 100%;
 }
 
-.text-\[11px\]:not(.baobab-bottom-nav-label) {
-  font-size: 0.84rem !important;
-  line-height: 1.25rem !important;
+/* Optimisation globale de l'affichage Mobile (< 640px) partout dans l'application :
+   - Réduction des paddings imbriqués (p-5, p-6, p-8) pour maximiser la largeur utile des cartes et grilles
+   - Interdiction stricte de couper un mot court en deux dans les badges et cellules */
+@media (max-width: 639px) {
+  .p-5 {
+    padding: 0.75rem !important;
+  }
+
+  .p-6,
+  .p-8 {
+    padding: 0.875rem !important;
+  }
+
+  .px-5,
+  .px-6,
+  .px-8 {
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
 }
 
-/* Optimisation globale des tableaux sur Mobile & Tablette : préserver le scroll horizontal fluide et la lisibilité */
+/* Optimisation globale des tableaux sur PC, Mobile & Tablette : préserver le scroll horizontal fluide et la lisibilité */
 .overflow-x-auto {
   -webkit-overflow-scrolling: touch;
   max-width: 100%;
+  min-width: 0;
 }
 
 @media (max-width: 1023px) {
@@ -536,10 +570,10 @@ textarea {
   }
 }
 
-/* Empêche le découpage vertical lettre par lettre dans les en-têtes de tableaux */
+/* Empêche le découpage vertical lettre par lettre dans les en-têtes et cellules de tableaux */
 table th,
 table td {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   word-break: normal;
 }
 

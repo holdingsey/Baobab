@@ -41,6 +41,18 @@ export interface OsmTrajectoryPoint {
   colorHex?: string;
 }
 
+export interface OsmRouteOverlay {
+  originLat: number;
+  originLng: number;
+  originLabel: string;
+  destLat: number;
+  destLng: number;
+  destLabel: string;
+  polyline: [number, number][];
+  distanceKm?: number;
+  durationMin?: number;
+}
+
 interface OsmLeafletMapProps {
   centerLat: number;
   centerLng: number;
@@ -53,6 +65,7 @@ interface OsmLeafletMapProps {
   vendorMarkers?: OsmVendorMarkerItem[];
   trajectoryPoints?: OsmTrajectoryPoint[];
   trajectoryColor?: string;
+  routeOverlay?: OsmRouteOverlay | null;
   selectedId?: string;
   onSelectMarker?: (id: string) => void;
   onSelectVendor?: (vendorId: string) => void;
@@ -70,6 +83,7 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
   vendorMarkers,
   trajectoryPoints,
   trajectoryColor = '#008DA9',
+  routeOverlay,
   selectedId,
   onSelectMarker,
   onSelectVendor,
@@ -221,7 +235,100 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
     const hasCustomLayers =
       (markers && markers.length > 0) ||
       (vendorMarkers && vendorMarkers.length > 0) ||
-      (trajectoryPoints && trajectoryPoints.length > 0);
+      (trajectoryPoints && trajectoryPoints.length > 0) ||
+      Boolean(routeOverlay && routeOverlay.polyline && routeOverlay.polyline.length >= 2);
+
+    // 0. Draw GPS Itinerary Route Overlay (DOV -> PDV physical visit route) if present
+    if (routeOverlay && routeOverlay.polyline && routeOverlay.polyline.length >= 2) {
+      // Outer white casing for high contrast on map tiles
+      L.polyline(routeOverlay.polyline, {
+        color: '#ffffff',
+        weight: 9,
+        opacity: 0.9,
+      }).addTo(group);
+
+      // Main itinerary route line
+      L.polyline(routeOverlay.polyline, {
+        color: '#008DA9',
+        weight: 5,
+        opacity: 0.95,
+      }).addTo(group);
+
+      const createEndpointBadge = (badgeText: string, bgHex: string) =>
+        L.divIcon({
+          className: 'custom-osm-route-endpoint',
+          html: `
+            <div style="
+              transform: translate(-50%, -100%);
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              pointer-events: auto;
+            ">
+              <div style="
+                background: ${bgHex};
+                color: #ffffff;
+                border: 2.5px solid #ffffff;
+                border-radius: 10px;
+                padding: 4px 9px;
+                font-family: system-ui, sans-serif;
+                font-size: 10px;
+                font-weight: 900;
+                white-space: nowrap;
+                box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+              ">
+                ${badgeText}
+              </div>
+              <div style="
+                width: 12px;
+                height: 12px;
+                border-radius: 9999px;
+                background: ${bgHex};
+                border: 2.5px solid #ffffff;
+                margin-top: -3px;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+              "></div>
+            </div>
+          `,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+
+      const startMarker = L.marker([routeOverlay.originLat, routeOverlay.originLng], {
+        icon: createEndpointBadge('DÉPART DOV', '#0F172A'),
+      }).addTo(group);
+
+      startMarker.bindPopup(`
+        <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4;">
+          <div style="font-weight: 900; color: #0f172a;">Point de départ (DOV)</div>
+          <div style="color: #475569; font-size: 11px; margin-top: 2px;">${routeOverlay.originLabel}</div>
+          <div style="margin-top: 4px; font-family: monospace; font-size: 11px; color: #008DA9; font-weight: 700;">
+            GPS: ${routeOverlay.originLat.toFixed(6)}, ${routeOverlay.originLng.toFixed(6)}
+          </div>
+        </div>
+      `);
+
+      const destMarker = L.marker([routeOverlay.destLat, routeOverlay.destLng], {
+        icon: createEndpointBadge('PDV À VISITER', '#15803D'),
+      }).addTo(group);
+
+      destMarker.bindPopup(`
+        <div style="font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.4;">
+          <div style="font-weight: 900; color: #15803D;">Destination Visite Physique PDV</div>
+          <div style="color: #0f172a; font-weight: 700; font-size: 11px; margin-top: 2px;">${routeOverlay.destLabel}</div>
+          ${
+            routeOverlay.distanceKm
+              ? `<div style="margin-top: 3px; font-size: 11px; font-weight: 800; color: #008DA9;">Distance : ${routeOverlay.distanceKm} km ${
+                  routeOverlay.durationMin ? `• ~${routeOverlay.durationMin} min` : ''
+                }</div>`
+              : ''
+          }
+          <div style="margin-top: 3px; font-family: monospace; font-size: 11px; color: #475569;">
+            GPS: ${routeOverlay.destLat.toFixed(6)}, ${routeOverlay.destLng.toFixed(6)}
+          </div>
+        </div>
+      `);
+    }
 
     // 1. Draw trajectory polyline & numbered waypoints if present
     if (trajectoryPoints && trajectoryPoints.length > 0) {
@@ -355,7 +462,10 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
       });
     }
 
-    if (hasCustomLayers) {
+    if (routeOverlay && routeOverlay.polyline && routeOverlay.polyline.length >= 2) {
+      const bounds = L.latLngBounds(routeOverlay.polyline);
+      map.fitBounds(bounds, { padding: [42, 42], maxZoom: 16, animate: true });
+    } else if (hasCustomLayers) {
       map.setView([centerLat, centerLng], zoom, { animate: true });
     } else {
       // Single precise GPS point mode
@@ -383,14 +493,10 @@ export const OsmLeafletMap: React.FC<OsmLeafletMapProps> = ({
           </div>
         </div>
       `;
-      singleMarker.bindPopup(popupHtml).openPopup();
-      map.setView([centerLat, centerLng], zoom, { animate: true });
+      singleMarker.bindPopup(popupHtml, { autoPan: false });
+      map.setView([centerLat, centerLng], zoom, { animate: false });
     }
-
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 80);
-  }, [centerLat, centerLng, accuracy, zoom, label, sublabel, markers, vendorMarkers, trajectoryPoints, trajectoryColor, selectedId]);
+  }, [centerLat, centerLng, accuracy, zoom, markers, vendorMarkers, trajectoryPoints, trajectoryColor, routeOverlay, selectedId]);
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner bg-slate-100 dark:bg-slate-800">

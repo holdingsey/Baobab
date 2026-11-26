@@ -832,6 +832,10 @@ export function buildOfficialInvoiceA4PdfDoc(
 
   const subtotalHt = Number(invoice.subtotal ?? invoice.subtotalHt ?? invoice.total ?? 0);
   const discountAmount = Number(invoice.discountAmount || 0);
+  const wholesaleDiscountAmount = Number(
+    invoice.wholesaleDiscountAmount ?? invoice.wholesale_discount_amount ?? 0
+  );
+  const buyerTypeDisplay = sanitizePdfText(invoice.buyerType || invoice.buyer_type || '');
   const netHt = Math.max(0, subtotalHt - discountAmount);
   const withTva =
     withTvaParam !== undefined
@@ -1371,7 +1375,8 @@ export function buildOfficialInvoiceA4PdfDoc(
   const summaryBoxW = 80;
   const summaryBoxX = pageWidth - margin - summaryBoxW;
   const summaryBoxY = finalY + 4.5;
-  const summaryBoxH = discountAmount > 0 ? 33 : 28;
+  const extraDiscountRows = (discountAmount > 0 ? 1 : 0) + (wholesaleDiscountAmount > 0 ? 1 : 0);
+  const summaryBoxH = 28 + extraDiscountRows * 5.5;
   const totalTtcBarH = 9;
 
   doc.setFillColor(...RGB_BLANC);
@@ -1388,6 +1393,18 @@ export function buildOfficialInvoiceA4PdfDoc(
   });
 
   let lineY = summaryBoxY + 11.5;
+  if (wholesaleDiscountAmount > 0) {
+    doc.setFont(fontName, 'bold');
+    doc.text(
+      sanitizePdfText('Remise grossiste :'),
+      summaryBoxX + 3,
+      lineY
+    );
+    doc.text(`- ${formatFcfaPdf(wholesaleDiscountAmount)}`, summaryBoxX + summaryBoxW - 3, lineY, {
+      align: 'right',
+    });
+    lineY += 5.5;
+  }
   if (discountAmount > 0) {
     doc.setFont(fontName, 'bold');
     doc.text(
@@ -1449,7 +1466,11 @@ export function buildOfficialInvoiceA4PdfDoc(
     0
   );
   const modeQtyLines: string[] = doc.splitTextToSize(
-    sanitizePdfText(`Règlement : ${paymentMethod} • Quantité : ${totalBoxes} unité(s)/carton(s)`),
+    sanitizePdfText(
+      `Règlement : ${paymentMethod} • Quantité : ${totalBoxes} unité(s)/carton(s)${
+        buyerTypeDisplay ? ` • Acheteur : ${buyerTypeDisplay}` : ''
+      }`
+    ),
     leftBoxInnerW
   );
   modeQtyLines.slice(0, 2).forEach((l, idx) => {
@@ -1702,6 +1723,10 @@ export async function buildThermalTicket80mmPdfDoc(
 
   const computedHt = items.reduce((s: number, it: any) => s + it.total, 0);
   const subtotalHt = Number(ticket?.subtotal ?? ticket?.subtotalHt ?? computedHt ?? 0);
+  const wholesaleDiscountAmount = Number(
+    ticket?.wholesaleDiscountAmount ?? ticket?.wholesale_discount_amount ?? 0
+  );
+  const buyerTypeDisplay = String(ticket?.buyerType || ticket?.buyer_type || '').trim();
   const withTva =
     ticket?.withTva !== undefined
       ? Boolean(ticket.withTva)
@@ -1790,8 +1815,10 @@ export async function buildThermalTicket80mmPdfDoc(
       16 + // N° ticket, N° vente, Date/heure
       vendorLines.length * 3.5 +
       pdvLines.length * 3.5 +
+      (buyerTypeDisplay ? 3.8 : 0) +
       6 + // Séparateur + en-tête colonnes
       itemsHeightMm +
+      (wholesaleDiscountAmount > 0 ? 4.0 : 0) +
       (withTva ? 18 : 14) + // Totaux HT, TVA, TTC
       15 + // Mode de règlement + mention ACQUITTÉ / À PAYER
       wordsLines.length * 3.3 +
@@ -1887,6 +1914,9 @@ export async function buildThermalTicket80mmPdfDoc(
     doc.text(line, margin, y);
     y += 3.4;
   });
+  if (buyerTypeDisplay) {
+    drawMetaRow("Type d'acheteur :", buyerTypeDisplay, true);
+  }
 
   y += 0.8;
   // Ligne de séparation
@@ -1929,7 +1959,18 @@ export async function buildThermalTicket80mmPdfDoc(
   doc.line(margin, y, pageWidth - margin, y);
   y += 3.8;
 
-  // 6. Total HT, TVA 18 % si appliquée, TOTAL TTC en gras
+  // 6. Remise grossiste si appliquée, Total HT, TVA 18 % si appliquée, TOTAL TTC en gras
+  if (wholesaleDiscountAmount > 0) {
+    doc.setFont(activeFont, 'normal');
+    doc.setFontSize(7.8);
+    doc.text('Remise grossiste :', margin, y);
+    doc.setFont(activeFont, 'bold');
+    doc.text(sanitizePdfText(`- ${formatTicketNum(wholesaleDiscountAmount)} FCFA`), pageWidth - margin, y, {
+      align: 'right',
+    });
+    y += 3.8;
+  }
+
   doc.setFont(activeFont, 'normal');
   doc.setFontSize(7.8);
   doc.text('Total HT :', margin, y);

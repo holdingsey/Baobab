@@ -3,10 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "start": "NODE_ENV=production node --import tsx server.ts",
+    "start": "node --import tsx server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
@@ -17,6 +20,7 @@
     "@types/leaflet": "^1.9.22",
     "@types/pdfkit": "^0.17.7",
     "@types/web-push": "^3.6.4",
+    "@vis.gl/react-google-maps": "^1.10.2",
     "@vitejs/plugin-react": "^6.1.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
@@ -29,6 +33,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
+    "tesseract.js": "^7.0.0",
     "tsx": "^4.21.0",
     "vite": "^8.3.0",
     "vite-plugin-pwa": "^2.0.0",

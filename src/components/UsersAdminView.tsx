@@ -27,7 +27,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('+223 ');
-  const [role, setRole] = useState<'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur'>('Vendeur');
+  const [role, setRole] = useState<'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Facturation' | 'Comptable' | 'Vendeur'>('Vendeur');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -93,7 +93,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
             Accès réservé à l'Administrateur Unique
           </h2>
           <p className="mt-2 text-sm text-amber-700 dark:text-amber-300 max-w-md mx-auto">
-            La création et la gestion des comptes utilisateurs (Gestionnaires de stock, Comptables, Vendeurs, DOV, Sales Admin) est strictement réservée à l'Administrateur principal.
+            La création et la gestion des comptes utilisateurs (Gestionnaires de stock, Facturation, Vendeurs, DOV, Sales Admin) est strictement réservée à l'Administrateur principal.
           </p>
         </div>
       </div>
@@ -105,6 +105,9 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
     if (roleFilter === 'Gestionnaire de stock') {
       return u.role === 'Gestionnaire de stock' || u.role === 'Magasinier';
     }
+    if (roleFilter === 'Facturation') {
+      return u.role === 'Facturation' || u.role === 'Comptable';
+    }
     return u.role === roleFilter;
   });
 
@@ -113,7 +116,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
     (u) => u.role === 'Directeur des opérations de vente' || u.role === 'Sales Admin' || u.role === 'Administrateur'
   ).length;
   const stockComptaCount = users.filter(
-    (u) => u.role === 'Gestionnaire de stock' || u.role === 'Magasinier' || u.role === 'Comptable'
+    (u) => u.role === 'Gestionnaire de stock' || u.role === 'Magasinier' || u.role === 'Facturation' || u.role === 'Comptable'
   ).length;
 
   return (
@@ -174,7 +177,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
       </div>
 
       {/* Summary KPI Cards for All Accounts */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
           <span className="text-[10px] font-bold uppercase text-slate-400">Total des Comptes</span>
           <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
@@ -192,11 +195,11 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
         </div>
 
         <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-          <span className="text-[10px] font-bold uppercase text-slate-400">Stock &amp; Comptabilité</span>
+          <span className="text-[10px] font-bold uppercase text-slate-400">Stock &amp; Facturation</span>
           <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
             {stockComptaCount} <span className="text-xs font-bold">profils</span>
           </div>
-          <span className="text-[11px] text-slate-500 block mt-0.5">Gestionnaire de stock &amp; Comptable</span>
+          <span className="text-[11px] text-slate-500 block mt-0.5">Gestionnaire de stock &amp; Facturation</span>
         </div>
 
         <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
@@ -217,7 +220,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
           { id: 'Sales Admin', label: 'Sales Admin (Contrôleur)' },
           { id: 'Gestionnaire grossiste', label: 'Gestionnaire grossiste' },
           { id: 'Gestionnaire de stock', label: 'Gestionnaire de stock' },
-          { id: 'Comptable', label: 'Comptable' },
+          { id: 'Facturation', label: 'Facturation' },
           { id: 'Vendeur', label: `Vendeurs (${vendorsCount})` },
         ].map((tab) => (
           <button
@@ -307,7 +310,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                   : u.role === 'Gestionnaire de stock' || u.role === 'Magasinier'
                   ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                  : u.role === 'Comptable'
+                  : u.role === 'Facturation' || u.role === 'Comptable'
                   ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
                   : 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300'
               }`}
@@ -316,6 +319,8 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
                 ? 'Sales Admin (Contrôleur)'
                 : u.role === 'Magasinier'
                 ? 'Gestionnaire de stock'
+                : u.role === 'Comptable'
+                ? 'Facturation'
                 : u.role}
             </span>
             {u.must_change_password === 1 ? (
@@ -350,6 +355,8 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
                 ? 'Sales Admin (Contrôleur)'
                 : u.role === 'Magasinier'
                 ? 'Gestionnaire de stock'
+                : u.role === 'Comptable'
+                ? 'Facturation'
                 : u.role,
           },
           {
@@ -438,7 +445,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
               <option value="Sales Admin">Sales Admin / Contrôleur</option>
               <option value="Gestionnaire grossiste">Gestionnaire grossiste</option>
               <option value="Gestionnaire de stock">Gestionnaire de stock</option>
-              <option value="Comptable">Comptable</option>
+              <option value="Facturation">Facturation</option>
             </select>
             {(role as string) === 'Administrateur' && (
               <p className="text-[14px] text-slate-900 dark:text-white mt-2">

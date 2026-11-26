@@ -17,8 +17,14 @@ export interface OfflineSaleRecord {
     name: string;
     qtyBoxes: number;
     unitPrice: number;
+    retailUnitPrice?: number;
+    discountPerBox?: number;
+    lineDiscount?: number;
     total: number;
   }>;
+  buyer_type?: 'Grossiste' | 'Détaillant' | null;
+  wholesale_discount_amount?: number;
+  cajoucy_boxes_count?: number;
   total_amount: number;
   payment_type: string;
   latitude?: number;
@@ -205,5 +211,125 @@ export async function syncPendingOfflineData(userRole = 'Vendeur'): Promise<Sync
     return null;
   } finally {
     isSyncInProgress = false;
+  }
+}
+
+const OFFLINE_VRS_VISITS_KEY = 'baobab_offline_vrs_visits_queue_v1';
+
+export interface OfflineVrsVisitItem {
+  visit_uuid: string;
+  vendor_id: string;
+  pdv_id: string;
+  pdv_code: string;
+  pdv_name: string;
+  pdv_neighborhood: string;
+  latitude: number;
+  longitude: number;
+  gps_accuracy: number;
+  distance_m: number;
+  device_info: string;
+  visit_date: string;
+  client_recorded_at: string;
+}
+
+export function getOfflineVrsVisitsQueue(): OfflineVrsVisitItem[] {
+  try {
+    const raw = localStorage.getItem(OFFLINE_VRS_VISITS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function enqueueOfflineVrsVisit(visit: OfflineVrsVisitItem): OfflineVrsVisitItem[] {
+  const queue = getOfflineVrsVisitsQueue();
+  if (!queue.some((item) => item.visit_uuid === visit.visit_uuid)) {
+    queue.push(visit);
+    try {
+      localStorage.setItem(OFFLINE_VRS_VISITS_KEY, JSON.stringify(queue));
+    } catch {
+      // ignore storage errors
+    }
+    window.dispatchEvent(new CustomEvent('baobab-offline-queue-updated'));
+  }
+  return queue;
+}
+
+export function removeOfflineVrsVisit(visitUuid: string): void {
+  const queue = getOfflineVrsVisitsQueue().filter((item) => item.visit_uuid !== visitUuid);
+  try {
+    localStorage.setItem(OFFLINE_VRS_VISITS_KEY, JSON.stringify(queue));
+  } catch {
+    // ignore
+  }
+  window.dispatchEvent(new CustomEvent('baobab-offline-queue-updated'));
+}
+
+export async function syncOfflineVrsVisitsQueue(
+  userRole: string = 'Vendeur',
+  userId: string = ''
+): Promise<{
+  syncedCount: number;
+  results: Array<{
+    visit_uuid: string;
+    pdv_id: string;
+    httpStatus: number;
+    success: boolean;
+    deduplicated?: boolean;
+    isCounted?: boolean;
+    error?: string;
+  }>;
+}> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { syncedCount: 0, results: [] };
+  }
+  const queue = getOfflineVrsVisitsQueue();
+  if (queue.length === 0) {
+    return { syncedCount: 0, results: [] };
+  }
+
+  try {
+    const res = await fetch('/api/vrs/sync-offline', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': userRole,
+        ...(userId ? { 'x-user-id': userId } : {}),
+      },
+      body: JSON.stringify({ visits: queue }),
+    });
+    if (!res.ok) {
+      return { syncedCount: 0, results: [] };
+    }
+    const data = await res.json();
+    const results: Array<{
+      visit_uuid: string;
+      pdv_id: string;
+      httpStatus: number;
+      success: boolean;
+      deduplicated?: boolean;
+      isCounted?: boolean;
+      error?: string;
+    }> = Array.isArray(data?.results) ? data.results : [];
+
+    // Retirer de la file les visites validées ou définitivement rejetées par règle métier (400/403/409)
+    const processedUuids = new Set(
+      results
+        .filter((r) => r.success || r.httpStatus === 400 || r.httpStatus === 403 || r.httpStatus === 409)
+        .map((r) => r.visit_uuid)
+    );
+
+    const remaining = queue.filter((item) => !processedUuids.has(item.visit_uuid));
+    localStorage.setItem(OFFLINE_VRS_VISITS_KEY, JSON.stringify(remaining));
+    window.dispatchEvent(new CustomEvent('baobab-offline-queue-updated'));
+
+    return {
+      syncedCount: Number(data?.syncedCount || 0),
+      results,
+    };
+  } catch {
+    return { syncedCount: 0, results: [] };
   }
 }

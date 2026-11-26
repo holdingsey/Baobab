@@ -187,10 +187,11 @@ function tokenMatchesTarget(token: string, normalizedTarget: string, targetWords
 export function getAllowedTypesForRole(role: string): SearchEntityType[] {
   switch (role) {
     case 'Vendeur':
-      return ['ventes', 'factures', 'pdv', 'produits', 'chargements', 'versements', 'cadeaux', 'retours', 'soldes_vendeurs'];
+      return ['ventes', 'pdv', 'produits', 'chargements', 'versements', 'cadeaux', 'retours', 'soldes_vendeurs'];
     case 'Magasinier':
     case 'Gestionnaire de stock':
       return ['produits', 'lots', 'chargements', 'receptions', 'retours', 'inventaires'];
+    case 'Facturation':
     case 'Comptable':
       return ['versements', 'factures', 'soldes_vendeurs', 'ventes', 'pdv'];
     case 'Administrateur':
@@ -969,7 +970,7 @@ export function handleGlobalSearch(req: Request, res: Response) {
             status: statusKey,
             statusLabel,
             link: isVendeur
-              ? `/?tab=mes-factures&ref=${encodeURIComponent(invNum)}`
+              ? `/?tab=mes-ventes&ref=${encodeURIComponent(ticketNum)}`
               : `/?tab=factures&ref=${encodeURIComponent(invNum)}`,
           },
           exactCodes: [invNum, ticketNum, String(r.number || ''), String(r.pdv_code || '')],

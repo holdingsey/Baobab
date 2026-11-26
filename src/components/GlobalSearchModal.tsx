@@ -127,9 +127,10 @@ const ALL_QUICK_CHIPS: QuickChip[] = [
 ];
 
 const ROLE_ALLOWED_CHIPS: Record<string, Array<'' | SearchCategoryType>> = {
-  Vendeur: ['', 'factures', 'ventes', 'pdv', 'produits', 'versements'],
+  Vendeur: ['', 'ventes', 'pdv', 'produits', 'versements'],
   Magasinier: ['', 'produits', 'lots'],
   'Gestionnaire de stock': ['', 'produits', 'lots'],
+  Facturation: ['', 'factures', 'ventes', 'pdv', 'versements'],
   Comptable: ['', 'factures', 'ventes', 'pdv', 'versements'],
   Administrateur: ['', 'factures', 'ventes', 'pdv', 'produits', 'lots', 'versements'],
   'Directeur des opérations de vente': ['', 'factures', 'ventes', 'pdv', 'produits'],
@@ -141,6 +142,7 @@ const ROLE_SUGGESTIONS: Record<string, string[]> = {
   Vendeur: ['Mon solde', 'Mon stock', "Mes ventes d'aujourd'hui"],
   Magasinier: ['Lots à moins de 30 jours', 'Chargements en attente'],
   'Gestionnaire de stock': ['Lots à moins de 30 jours', 'Chargements en attente'],
+  Facturation: ['Versements en attente', 'Factures impayées'],
   Comptable: ['Versements en attente', 'Factures impayées'],
   Administrateur: ['PDV à valider', 'Vendeurs sans vente depuis 3 jours'],
   'Directeur des opérations de vente': ['PDV à valider', 'Vendeurs sans vente depuis 3 jours'],
@@ -476,8 +478,8 @@ function searchOfflineCache(
 
   const groups: SearchGroup[] = [];
 
-  // 1. Soldes vendeurs (pour "Mon solde" Vendeur ou Comptable/Admin)
-  if (canSearchType('soldes_vendeurs') && (role === 'Vendeur' || role === 'Comptable' || role === 'Administrateur')) {
+  // 1. Soldes vendeurs (pour "Mon solde" Vendeur ou Facturation/Admin)
+  if (canSearchType('soldes_vendeurs') && (role === 'Vendeur' || role === 'Facturation' || role === 'Comptable' || role === 'Administrateur')) {
     const balances: any[] = Array.isArray(cache.balances) ? cache.balances : [];
     const items: SearchResultItem[] = balances
       .filter((b) => (role === 'Vendeur' ? b.vendor_id === currentUser.id : true))
@@ -549,7 +551,7 @@ function searchOfflineCache(
           sous_titre: `${Number(total).toLocaleString('fr-FR')} FCFA • ${
             credit > 0 ? `Impayée (Reste ${credit.toLocaleString('fr-FR')} FCFA)` : 'Payée'
           } • Vendeur : ${s.vendor_name || ''}`,
-          url: role === 'Vendeur' ? '/?tab=mes-factures' : '/?tab=factures',
+          url: role === 'Vendeur' ? '/?tab=mes-ventes' : '/?tab=factures',
           date: s.date,
           montant: total,
           donnees: s,

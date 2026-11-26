@@ -24,6 +24,7 @@ import { DemandesAchatView } from './components/DemandesAchatView';
 import { GrossisteView } from './components/GrossisteView';
 import { ExtractionsView } from './components/ExtractionsView';
 import { AlertesView } from './components/AlertesView';
+import { RoutineVrsView } from './components/RoutineVrsView';
 import { isAppOnline, syncPendingOfflineData } from './utils/offlineSync';
 import {
   clearAppBadge,
@@ -35,24 +36,49 @@ import {
 function resolveTabForRole(tab: string, role: UserSession['role']): string {
   if (role === 'Vendeur') {
     if (tab === 'extractions' || tab === 'alertes') return 'dashboard';
-    if (tab === 'chargements') return 'mon-chargement';
+    if (tab === 'historique-sku' || tab === 'ventes' || tab === 'factures' || tab === 'mes-factures') return 'mes-ventes';
+    if (tab === 'chargements' || tab === 'mes-chargements') return 'mon-chargement';
     if (tab === 'versements') return 'mes-versements';
+    if (tab === 'soldes-vendeurs' || tab === 'caisse' || tab === 'compta') return 'mon-solde';
     if (tab === 'pdvs' || tab === 'validation-pdv') return 'mes-pdvs';
     if (tab === 'cadeaux' || tab === 'bons-a-remettre') return 'mes-cadeaux';
-    if (tab === 'factures') return 'mes-factures';
-    if (tab === 'retours') return 'mon-stock';
+    if (tab === 'retours' || tab === 'stock-depot' || tab === 'stocks' || tab === 'inventaire') return 'mon-stock';
   } else if (role === 'Sales Admin') {
     if (tab === 'mon-chargement' || tab === 'mes-chargements' || tab === 'chargements-lecture') return 'chargements';
     if (tab === 'mes-ventes' || tab === 'ventes-lecture' || tab === 'nouvelle-vente') return 'ventes';
-    if (tab === 'mon-stock') return 'inventaire';
+    if (tab === 'mon-stock' || tab === 'stock-depot') return 'inventaire';
+    if (tab === 'mes-versements' || tab === 'versements') return 'versements-lecture';
+    if (tab === 'pdvs' || tab === 'mes-pdvs' || tab === 'validation-pdv') return 'carte';
   } else if (role === 'Gestionnaire de stock' || role === 'Magasinier') {
+    if (tab === 'routine-vrs') return 'dashboard';
     if (tab === 'mon-chargement' || tab === 'mes-chargements') return 'chargements';
-    if (tab === 'mes-cadeaux') return 'bons-a-remettre';
-  } else if (role === 'Comptable') {
+    if (tab === 'mes-cadeaux' || tab === 'cadeaux') return 'bons-a-remettre';
+    if (tab === 'ventes' || tab === 'mes-ventes') return 'stock-depot';
+  } else if (role === 'Facturation' || role === 'Comptable') {
+    if (tab === 'routine-vrs') return 'dashboard';
     if (tab === 'mes-versements') return 'versements';
     if (tab === 'mes-factures') return 'factures';
-  } else if (role === 'Administrateur' || role === 'Directeur des opérations de vente') {
-    if (tab === 'mes-pdvs') return 'validation-pdv';
+    if (tab === 'mon-solde') return 'soldes-vendeurs';
+    if (tab === 'ventes' || tab === 'mes-ventes') return 'ventes-lecture';
+    if (tab === 'chargements' || tab === 'mon-chargement') return 'chargements-lecture';
+  } else if (role === 'Gestionnaire grossiste') {
+    if (tab === 'routine-vrs') return 'dashboard';
+    if (tab === 'ventes' || tab === 'mes-ventes') return 'commandes-gros';
+    if (tab === 'nouvelle-vente') return 'nouvelle-commande-gros';
+    if (tab === 'pdvs' || tab === 'mes-pdvs') return 'clients-gros';
+  } else if (role === 'Directeur des opérations de vente') {
+    if (tab === 'catalogue') return 'historique-sku';
+    if (tab === 'mes-pdvs') return 'pdvs';
+    if (tab === 'mes-ventes' || tab === 'nouvelle-vente') return 'ventes';
+    if (tab === 'chargements' || tab === 'mon-chargement') return 'demande-stock-vendeur';
+  } else if (role === 'Administrateur') {
+    if (tab === 'mes-pdvs') return 'pdvs';
+    if (tab === 'mes-ventes') return 'ventes';
+    if (tab === 'mon-stock') return 'stock-depot';
+    if (tab === 'mon-solde') return 'soldes-vendeurs';
+    if (tab === 'mes-versements') return 'versements';
+    if (tab === 'mon-chargement') return 'chargements';
+    if (tab === 'mes-cadeaux') return 'cadeaux';
   }
   return tab;
 }
@@ -82,7 +108,7 @@ export default function App() {
     {
       id: 'usr-dov',
       code: 'BAO-DOV',
-      name: 'Ibrahim Sangaré',
+      name: 'Issa Koné',
       email: 'dov@baobab.ml',
       role: 'Directeur des opérations de vente',
       phone: '+223 76 40 50 60',
@@ -124,9 +150,9 @@ export default function App() {
       code: 'BAO-CPT',
       name: 'Fatoumata Coulibaly',
       email: 'compta@baobab.ml',
-      role: 'Comptable',
+      role: 'Facturation',
       phone: '+223 70 98 76 54',
-      team: 'Service Comptabilité & Caisse',
+      team: 'Service Facturation & Caisse',
       must_change_password: 0,
     },
     {
@@ -170,6 +196,12 @@ export default function App() {
           if (parsed && parsed.id && parsed.role) {
             if (parsed.role === 'Magasinier' || parsed.code === 'BAO-MAG') {
               parsed.role = 'Gestionnaire de stock';
+            }
+            if (parsed.role === 'Comptable' || parsed.code === 'BAO-CPT') {
+              parsed.role = 'Facturation';
+            }
+            if (parsed.role === 'Directeur des opérations de vente' || parsed.code === 'BAO-DOV') {
+              parsed.name = 'Issa Koné';
             }
             return parsed;
           }
@@ -357,7 +389,16 @@ export default function App() {
       if (uRes?.users && uRes.users.length > 0) {
         const normalizedUsers = uRes.users.map((u: any) => ({
           ...u,
-          role: u.role === 'Magasinier' || u.code === 'BAO-MAG' ? 'Gestionnaire de stock' : u.role,
+          name:
+            u.role === 'Directeur des opérations de vente' || u.code === 'BAO-DOV'
+              ? 'Issa Koné'
+              : u.name,
+          role:
+            u.role === 'Magasinier' || u.code === 'BAO-MAG'
+              ? 'Gestionnaire de stock'
+              : u.role === 'Comptable' || u.code === 'BAO-CPT'
+              ? 'Facturation'
+              : u.role,
         }));
         setUsersList(normalizedUsers);
         setCurrentUser((prev) => {
@@ -378,6 +419,11 @@ export default function App() {
               prev.role === 'Magasinier' ||
               /gestionnaire|magas/i.test(prev.role || '') ||
               prev.code === 'BAO-MAG');
+          const isPrevCpt =
+            prev.role === 'Facturation' ||
+            prev.role === 'Comptable' ||
+            /factur|compt/i.test(prev.role || '') ||
+            prev.code === 'BAO-CPT';
           const matched =
             normalizedUsers.find((u: any) => u.id === prev.id) ||
             normalizedUsers.find((u: any) => u.code === prev.code) ||
@@ -399,11 +445,18 @@ export default function App() {
                   (u: any) => u.role === 'Gestionnaire de stock' || u.code === 'BAO-MAG'
                 )
               : null) ||
+            (isPrevCpt
+              ? normalizedUsers.find(
+                  (u: any) => u.role === 'Facturation' || u.role === 'Comptable' || u.code === 'BAO-CPT'
+                )
+              : null) ||
             normalizedUsers.find((u: any) => u.role === prev.role) ||
             prev;
           const nextUser =
             matched && (matched.role === 'Magasinier' || matched.code === 'BAO-MAG')
               ? { ...matched, role: 'Gestionnaire de stock' }
+              : matched && (matched.role === 'Comptable' || matched.code === 'BAO-CPT')
+              ? { ...matched, role: 'Facturation' }
               : matched;
           if (
             prev &&
@@ -472,7 +525,7 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [currentUser?.id, currentUser?.role]);
 
   useEffect(() => {
     loadAnomaliesForRole(currentUser);
@@ -510,10 +563,29 @@ export default function App() {
       }
     };
 
+    const refreshVrsAndPdvs = async () => {
+      try {
+        const [pRes, sRes, balRes] = await Promise.all([
+          fetch('/api/pdvs').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetch('/api/sales').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetch('/api/vendor-balances').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        ]);
+        if (pRes?.pdvs) setPdvs(pRes.pdvs);
+        if (sRes?.sales) setSales(sRes.sales);
+        if (balRes?.balances) setBalances(balRes.balances);
+      } catch {
+        // ignore
+      }
+    };
+
     window.addEventListener('baobab-sales-realtime-updated', refreshSalesRealtime);
+    window.addEventListener('baobab-vrs-updated', refreshVrsAndPdvs);
+    window.addEventListener('baobab-pdvs-updated', refreshVrsAndPdvs);
     window.addEventListener('baobab-open-sale-detail', handleOpenSaleEvent);
     return () => {
       window.removeEventListener('baobab-sales-realtime-updated', refreshSalesRealtime);
+      window.removeEventListener('baobab-vrs-updated', refreshVrsAndPdvs);
+      window.removeEventListener('baobab-pdvs-updated', refreshVrsAndPdvs);
       window.removeEventListener('baobab-open-sale-detail', handleOpenSaleEvent);
     };
   }, [openSaleByIdWithServerRbac]);
@@ -561,15 +633,25 @@ export default function App() {
     };
   }, [currentUser?.role]);
 
+  // Google Maps Platform Demo Key Quota Exceeded state
+  const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => setGmpQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+  }, []);
+
   const handleToggleTheme = () => {
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  const handleSwitchRole = (newRole: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur') => {
+  const handleSwitchRole = (newRole: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Facturation' | 'Comptable' | 'Vendeur') => {
     const isDov = newRole === 'Directeur des opérations de vente' || /directeur|op[eé]ration|dov/i.test(newRole);
     const isSad = newRole === 'Sales Admin' || /sales|contr/i.test(newRole);
     const isGrs = newRole === 'Gestionnaire grossiste' || /grossiste/i.test(newRole);
     const isMag = !isGrs && (newRole === 'Gestionnaire de stock' || newRole === 'Magasinier' || /gestionnaire|magas/i.test(newRole));
+    const isCpt = newRole === 'Facturation' || newRole === 'Comptable' || /factur|compt/i.test(newRole);
     const targetUser =
       usersList.find(u =>
         isDov
@@ -580,13 +662,18 @@ export default function App() {
           ? /grossiste/i.test(u.role || '') || u.code?.startsWith('BAO-GRS')
           : isMag
           ? u.role === 'Gestionnaire de stock' || u.role === 'Magasinier' || u.code === 'BAO-MAG'
+          : isCpt
+          ? u.role === 'Facturation' || u.role === 'Comptable' || u.code === 'BAO-CPT'
           : u.role === newRole
       ) ||
       usersList.find(u => u.role.toLowerCase() === newRole.toLowerCase()) ||
       usersList[0];
-    const normalized = (targetUser && (targetUser.role === 'Magasinier' || targetUser.code === 'BAO-MAG'))
-      ? { ...targetUser, role: 'Gestionnaire de stock' as const }
-      : targetUser;
+    const normalized =
+      targetUser && (targetUser.role === 'Magasinier' || targetUser.code === 'BAO-MAG')
+        ? { ...targetUser, role: 'Gestionnaire de stock' as const }
+        : targetUser && (targetUser.role === 'Comptable' || targetUser.code === 'BAO-CPT')
+        ? { ...targetUser, role: 'Facturation' as const }
+        : targetUser;
     setCurrentUser(normalized);
     setActiveTab('dashboard');
   };
@@ -605,19 +692,64 @@ export default function App() {
   // Login Screen
   if (!currentUser) {
     return (
-      <LoginScreen
-        logoUrl={logoUrl}
-        usersList={usersList}
-        onLogin={(user) => {
-          const normalized = (user && (user.role === 'Magasinier' || user.code === 'BAO-MAG'))
-            ? { ...user, role: 'Gestionnaire de stock' as const }
-            : user;
-          setCurrentUser(normalized);
-          setActiveTab('dashboard');
-        }}
-      />
+      <>
+        {gmpQuotaExceeded && (
+          <div className="sticky top-0 z-50 bg-amber-50 border-b border-amber-300 px-4 py-3 text-sm text-amber-900 flex items-center justify-between gap-4">
+            <span>
+              Google Maps Platform : le quota de la clé de démonstration gratuite a été atteint. Pour continuer à utiliser les cartes sans limite, passez à votre propre clé API Google Cloud.
+            </span>
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 font-medium underline hover:text-amber-700"
+            >
+              Comment mettre à niveau →
+            </a>
+          </div>
+        )}
+        <LoginScreen
+          logoUrl={logoUrl}
+          usersList={usersList}
+          onLogin={(user) => {
+            const normalized =
+              user && (user.role === 'Magasinier' || user.code === 'BAO-MAG')
+                ? { ...user, role: 'Gestionnaire de stock' as const }
+                : user && (user.role === 'Comptable' || user.code === 'BAO-CPT')
+                ? { ...user, role: 'Facturation' as const }
+                : user;
+            setCurrentUser(normalized);
+            setActiveTab('dashboard');
+          }}
+        />
+      </>
     );
   }
+
+  const handleNavigateTab = (tab: string) => {
+    const nextTab = currentUser ? resolveTabForRole(tab, currentUser.role) : tab;
+    setActiveTab(nextTab);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleStartSaleForPdv = (pdv: any) => {
+    const pdvId = typeof pdv === 'string' ? pdv : pdv?.id;
+    if (pdvId) {
+      try {
+        localStorage.setItem('baobab_preselected_sale_pdv_id', String(pdvId));
+      } catch {
+        // ignore
+      }
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('baobab-open-sale-for-pdv', { detail: { pdvId: String(pdvId) } })
+        );
+      }, 60);
+    }
+    handleNavigateTab(currentUser.role === 'Vendeur' ? 'nouvelle-vente' : 'ventes');
+  };
 
   const pendingPdvsCount = pdvs.filter(p => p.status === 'en_attente').length;
   const pendingPurchaseRequestsCount = purchaseRequests.filter(pr => pr.status === 'en_attente').length;
@@ -632,7 +764,7 @@ export default function App() {
       {/* Sidebar with Baobab logo & role modules */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleNavigateTab}
         currentUser={currentUser}
         logoUrl={logoUrl}
         onLogout={handleLogout}
@@ -646,6 +778,21 @@ export default function App() {
       />
 
       <div className="flex flex-col flex-1 min-w-0 w-full max-w-full overflow-x-clip">
+        {gmpQuotaExceeded && (
+          <div className="sticky top-0 z-50 bg-amber-50 border-b border-amber-300 px-4 py-3 text-sm text-amber-900 flex items-center justify-between gap-4">
+            <span>
+              Google Maps Platform : le quota de la clé de démonstration gratuite a été atteint. Pour continuer à utiliser les cartes sans limite, passez à votre propre clé API Google Cloud.
+            </span>
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 font-medium underline hover:text-amber-700"
+            >
+              Comment mettre à niveau →
+            </a>
+          </div>
+        )}
         {/* Header (32px logo, "Baobab" next to it on PC) */}
         <Header
           currentUser={currentUser}
@@ -656,21 +803,24 @@ export default function App() {
           onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
           onSwitchRole={handleSwitchRole}
           onSwitchUser={(user) => {
-            const normalized = (user && (user.role === 'Magasinier' || user.code === 'BAO-MAG'))
-              ? { ...user, role: 'Gestionnaire de stock' as const }
-              : user;
+            const normalized =
+              user && (user.role === 'Magasinier' || user.code === 'BAO-MAG')
+                ? { ...user, role: 'Gestionnaire de stock' as const }
+                : user && (user.role === 'Comptable' || user.code === 'BAO-CPT')
+                ? { ...user, role: 'Facturation' as const }
+                : user;
             setCurrentUser(normalized);
             setActiveTab('dashboard');
           }}
           onOpenDocument={(doc) => setSelectedDocument(doc)}
-          onNavigateTab={(tab) => setActiveTab(resolveTabForRole(tab, currentUser.role))}
+          onNavigateTab={handleNavigateTab}
           onSelectSearchResult={(item) => {
             if (item.url) {
               try {
                 const urlObj = new URL(item.url, window.location.origin);
                 const tab = urlObj.searchParams.get('tab');
                 if (tab) {
-                  setActiveTab(resolveTabForRole(tab, currentUser.role));
+                  handleNavigateTab(tab);
                 }
               } catch {
                 // ignore
@@ -678,7 +828,7 @@ export default function App() {
             }
             if (item.type === 'factures' || item.type === 'ventes') {
               const refStr = String(item.reference || '').toUpperCase();
-              const isTicketSearch = refStr.startsWith('TKT-');
+              const isTicketSearch = currentUser.role === 'Vendeur' || refStr.startsWith('TKT-');
               const matchedSale = sales.find(
                 (s) =>
                   String(s.id) === String(item.id) ||
@@ -771,7 +921,7 @@ export default function App() {
               newAnomaliesCount={newAnomaliesCount}
               logoUrl={logoUrl}
               onOpenDocument={(doc) => setSelectedDocument(doc)}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={handleNavigateTab}
             />
           )}
 
@@ -797,7 +947,7 @@ export default function App() {
               initialTab={activeTab}
               onOpenDocument={(doc) => setSelectedDocument(doc)}
               onRefreshData={loadData}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={handleNavigateTab}
             />
           )}
 
@@ -827,7 +977,7 @@ export default function App() {
               sales={sales}
               currentUser={currentUser}
               onRefreshData={loadData}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={handleNavigateTab}
             />
           )}
 
@@ -839,6 +989,7 @@ export default function App() {
               currentUser={currentUser}
               onRefreshPdvs={loadData}
               onPdvCreated={(newPdv) => setPdvs(prev => [newPdv, ...prev])}
+              onStartSaleForPdv={handleStartSaleForPdv}
               initialFilter="all"
             />
           )}
@@ -851,6 +1002,7 @@ export default function App() {
               currentUser={currentUser}
               onRefreshPdvs={loadData}
               onPdvCreated={(newPdv) => setPdvs(prev => [newPdv, ...prev])}
+              onStartSaleForPdv={handleStartSaleForPdv}
               initialFilter="en_attente"
             />
           )}
@@ -863,6 +1015,7 @@ export default function App() {
               currentUser={currentUser}
               onRefreshPdvs={loadData}
               onPdvCreated={(newPdv) => setPdvs(prev => [newPdv, ...prev])}
+              onStartSaleForPdv={handleStartSaleForPdv}
               initialOpenCreate={true}
             />
           )}
@@ -872,8 +1025,25 @@ export default function App() {
               pdvs={pdvs}
               sales={sales}
               currentUser={currentUser}
+              onStartSaleForPdv={handleStartSaleForPdv}
+              onNavigateTab={handleNavigateTab}
             />
           )}
+
+          {activeTab === 'routine-vrs' &&
+            (currentUser.role === 'Administrateur' ||
+              currentUser.role === 'Directeur des opérations de vente' ||
+              currentUser.role === 'Sales Admin' ||
+              currentUser.role === 'Vendeur') && (
+              <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+                <RoutineVrsView
+                  currentUser={currentUser}
+                  onStartSaleForPdv={handleStartSaleForPdv}
+                  onNavigateTab={handleNavigateTab}
+                  onRefreshData={loadData}
+                />
+              </div>
+            )}
 
           {(activeTab === 'stocks' ||
             activeTab === 'stock-depot' ||
@@ -894,7 +1064,7 @@ export default function App() {
               currentRole={currentUser.role}
               currentUser={currentUser}
               initialTab={activeTab}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={handleNavigateTab}
               onRefreshData={loadData}
               onOpenDocument={(doc) => setSelectedDocument(doc)}
             />
@@ -921,7 +1091,7 @@ export default function App() {
               initialTab={activeTab}
               externalRectificationSaleId={externalRectificationSaleId}
               onClearExternalRectification={() => setExternalRectificationSaleId(null)}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={handleNavigateTab}
               onOpenDocument={(doc) => setSelectedDocument(doc)}
               onRefreshData={loadData}
             />
@@ -956,6 +1126,8 @@ export default function App() {
                 const normalized =
                   targetUser && (targetUser.role === 'Magasinier' || targetUser.code === 'BAO-MAG')
                     ? { ...targetUser, role: 'Gestionnaire de stock' as const }
+                    : targetUser && (targetUser.role === 'Comptable' || targetUser.code === 'BAO-CPT')
+                    ? { ...targetUser, role: 'Facturation' as const }
                     : targetUser;
                 setCurrentUser(normalized);
                 setActiveTab('dashboard');
@@ -997,7 +1169,7 @@ export default function App() {
       <BottomNavBar
         currentUser={currentUser}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleNavigateTab}
       />
 
       {/* Printable Invoice / Receipt / Mini Thermal Receipt Modal */}
@@ -1007,12 +1179,16 @@ export default function App() {
           logoUrl={logoUrl}
           currentRole={currentUser.role}
           onClose={() => setSelectedDocument(null)}
-          onRequestRectification={(doc) => {
-            const cleanId = String(doc.id || '').replace(/^doc-sale-/, '');
-            setSelectedDocument(null);
-            setExternalRectificationSaleId(cleanId);
-            setActiveTab(currentUser.role === 'Vendeur' ? 'mes-factures' : 'factures');
-          }}
+          onRequestRectification={
+            currentUser.role === 'Vendeur'
+              ? undefined
+              : (doc) => {
+                  const cleanId = String(doc.id || '').replace(/^doc-sale-/, '');
+                  setSelectedDocument(null);
+                  setExternalRectificationSaleId(cleanId);
+                  setActiveTab('factures');
+                }
+          }
         />
       )}
     </div>

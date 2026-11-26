@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   TrendingUp,
   Package,
@@ -23,8 +23,8 @@ import {
   FileSpreadsheet,
   BarChart3,
   Download,
+  MapPin,
   X,
-  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -42,9 +42,11 @@ import { UserSession } from './LoginScreen';
 import { StockBadge } from './StockBadge';
 import { InfoTooltip } from './InfoTooltip';
 import { FormModal } from './FormModal';
+import { CardList } from './CardList';
 import { exportTableToCsv } from '../utils/csvExport';
 import { AdaptiveAmount } from '../utils/formatAmount';
 import { DataTable } from './DataTable';
+import { VendorPerformanceKpiDashboard } from './VendorPerformanceKpiDashboard';
 
 interface DashboardViewProps {
   currentUser: UserSession;
@@ -81,28 +83,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   newAnomaliesCount = 0,
 }) => {
   const [showPlusMenu, setShowPlusMenu] = useState(false);
-  const [activePlusModal, setActivePlusModal] = useState<'cadeaux' | 'tournee' | null>(null);
+  const [vrsVendorsSummary, setVrsVendorsSummary] = useState<any[]>([]);
 
   const role = currentUser.role;
   const isVendeur = role === 'Vendeur';
   const isMagasinier = role === 'Gestionnaire de stock' || role === 'Magasinier';
   const isSalesAdmin = role === 'Sales Admin';
   const isGrossiste = role === 'Gestionnaire grossiste' || /grossiste/i.test(role || '') || Boolean(currentUser?.code?.startsWith('BAO-GRS'));
-  const isComptable = role === 'Comptable';
+  const isComptable = role === 'Facturation' || role === 'Comptable';
   const isAdmin = role === 'Administrateur';
   const isDirecteurOps = role === 'Directeur des opérations de vente' || /directeur|op[eé]ration|dov/i.test(role || '') || currentUser?.code === 'BAO-DOV';
+  const isVrsSupervisor = isAdmin || isDirecteurOps || isSalesAdmin;
+
+  useEffect(() => {
+    if (!isVrsSupervisor) return;
+    let mounted = true;
+    const headers = {
+      'x-user-role': currentUser.role,
+      'x-user-id': currentUser.id,
+    };
+    const fetchSupervisorVrs = () => {
+      fetch('/api/vrs/state', { headers })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (mounted && data?.success && Array.isArray(data.allVendorsSummary)) {
+            setVrsVendorsSummary(data.allVendorsSummary);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchSupervisorVrs();
+    window.addEventListener('baobab-vrs-updated', fetchSupervisorVrs);
+    window.addEventListener('baobab-sales-realtime-updated', fetchSupervisorVrs);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener('baobab-vrs-updated', fetchSupervisorVrs);
+      window.removeEventListener('baobab-sales-realtime-updated', fetchSupervisorVrs);
+    };
+  }, [isVrsSupervisor, currentUser.role, currentUser.id, sales.length]);
+
+  const vrsValidatedCount = vrsVendorsSummary.filter((v) => v?.week?.status === 'Validé').length;
+  const vrsIncompleteVendors = vrsVendorsSummary.filter((v) => v?.week?.status === 'Incomplet');
+  const vrsInProgressCount = vrsVendorsSummary.filter((v) => v?.week?.status === 'En cours').length;
 
   const activeWholesaleOrders = wholesaleOrders.filter((o) => o.delivery_status !== 'annulee');
   const totalWholesaleCA = activeWholesaleOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
   const totalWholesaleBoxes = activeWholesaleOrders.reduce((sum, o) => sum + (Number(o.total_boxes) || 0), 0);
 
   // Calculations
-  const todayStr = '2026-10-26';
+  const activeSales = sales.filter((s) => s.status !== 'annulee');
+  const todayStr = (() => {
+    const dates = activeSales
+      .map((s) => String(s.date || '').split('T')[0])
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      .sort();
+    return dates.length > 0 ? dates[dates.length - 1] : '2026-10-26';
+  })();
   const pendingPdvsCount = pdvs.filter((p) => p.status === 'en_attente').length;
   const activePdvsCount = pdvs.filter((p) => p.status === 'valide').length;
   const pendingReceptionsCount = receptions.filter((r) => r.status === 'en_attente').length;
 
-  const activeSales = sales.filter((s) => s.status !== 'annulee');
   const cancelledSalesCount = sales.filter((s) => s.status === 'annulee').length;
   const pendingSaleCancelRequestsCount = sales.filter(
     (s) => s.cancel_request_status === 'en_attente' && s.status !== 'annulee'
@@ -116,18 +158,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalStockDepotBoxes = products.reduce((sum, p) => sum + p.stock_depot, 0);
 
   // Today sales
-  const todaySales = activeSales.filter((s) => s.date === todayStr);
+  const todaySales = activeSales.filter((s) => String(s.date || '').split('T')[0] === todayStr);
   const todaySalesTotal = todaySales.reduce((sum, s) => sum + s.total_amount, 0);
 
-  // Month sales (October 2026)
+  // Month sales
+  const currentMonthPrefix = todayStr.slice(0, 7) || '2026-10';
   const monthSalesTotal = activeSales
-    .filter((s) => s.date.startsWith('2026-10'))
+    .filter((s) => String(s.date || '').startsWith(currentMonthPrefix))
     .reduce((sum, s) => sum + s.total_amount, 0);
 
   // Vendor specific calculations
   const mySales = activeSales.filter((s) => s.vendor_id === currentUser.id);
   const mySalesTotal = mySales.reduce((sum, s) => sum + s.total_amount, 0);
-  const myTodaySales = mySales.filter((s) => s.date === todayStr);
+  const myTodaySales = mySales.filter((s) => String(s.date || '').split('T')[0] === todayStr);
   const myTodaySalesTotal = myTodaySales.reduce((sum, s) => sum + s.total_amount, 0);
   const myBalance = balances.find((b) => b.vendorId === currentUser.id) || {
     balanceDue: 714600,
@@ -162,6 +205,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         'Quartier',
         'Nom Vendeur',
         'Code Vendeur',
+        "Type d'acheteur",
+        'Remise grossiste (FCFA)',
         'Total Cartons',
         'Detail Produits',
         'Mode de Reglement',
@@ -181,6 +226,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           s.pdv_neighborhood || '',
           s.vendor_name || '',
           s.vendor_code || '',
+          s.buyer_type || s.buyerType || 'Détaillant',
+          Number(s.wholesale_discount_amount ?? s.wholesaleDiscountAmount ?? 0),
           boxes,
           detail,
           s.payment_type || 'Comptant',
@@ -328,7 +375,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {isSalesAdmin && <span>Sales Admin</span>}
               {isGrossiste && <span>Gestionnaire grossiste</span>}
               {isMagasinier && <span>Magasinier</span>}
-              {isComptable && <span>Comptable</span>}
+              {isComptable && <span>Facturation</span>}
               {isVendeur && <span>Vendeur</span>}
             </div>
 
@@ -814,7 +861,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               type="button"
                               onClick={() => {
                                 setShowPlusMenu(false);
-                                setActivePlusModal('cadeaux');
+                                onNavigateTab('mes-cadeaux');
                               }}
                               className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[var(--marque-clair)] border border-slate-200 dark:border-slate-700/60 flex items-center gap-3 transition cursor-pointer group"
                             >
@@ -826,7 +873,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   Mes cadeaux
                                 </div>
                                 <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                                  Échantillons et fidélité PDV.
+                                  Récompenses et fidélité PDV.
                                 </div>
                               </div>
                             </button>
@@ -835,7 +882,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               type="button"
                               onClick={() => {
                                 setShowPlusMenu(false);
-                                setActivePlusModal('tournee');
+                                onNavigateTab('routine-vrs');
                               }}
                               className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[var(--marque-clair)] border border-slate-200 dark:border-slate-700/60 flex items-center gap-3 transition cursor-pointer group"
                             >
@@ -844,10 +891,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="font-bold text-sm text-slate-900 dark:text-white">
-                                  Ma tournée
+                                  Ma routine VRS
                                 </div>
                                 <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                                  Itinéraire et points de vente.
+                                  Pointage GPS et cycle 25 PDV / jour.
+                                </div>
+                              </div>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowPlusMenu(false);
+                                onNavigateTab('carte');
+                              }}
+                              className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[var(--marque-clair)] border border-slate-200 dark:border-slate-700/60 flex items-center gap-3 transition cursor-pointer group"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] flex items-center justify-center shrink-0 shadow-xs">
+                                <MapPin className="w-5 h-5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-sm text-slate-900 dark:text-white">
+                                  Carte des PDV
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  Localisation et itinéraire GPS.
                                 </div>
                               </div>
                             </button>
@@ -871,28 +939,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           type="button"
                           onClick={() => {
                             setShowPlusMenu(false);
-                            setActivePlusModal('cadeaux');
+                            onNavigateTab('mes-cadeaux');
                           }}
                           className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 font-medium transition cursor-pointer text-slate-700 dark:text-slate-200"
                         >
                           <Gift className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-slate-900 dark:text-white">Mes cadeaux</div>
-                            <div className="text-[10px] text-slate-400">Échantillons et fidélité PDV.</div>
+                            <div className="text-[10px] text-slate-400">Récompenses et fidélité PDV.</div>
                           </div>
                         </button>
                         <button
                           type="button"
                           onClick={() => {
                             setShowPlusMenu(false);
-                            setActivePlusModal('tournee');
+                            onNavigateTab('routine-vrs');
                           }}
                           className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 font-medium transition cursor-pointer text-slate-700 dark:text-slate-200"
                         >
                           <Compass className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
                           <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-slate-900 dark:text-white">Ma tournée</div>
-                            <div className="text-[10px] text-slate-400">Itinéraire et points de vente.</div>
+                            <div className="font-semibold text-slate-900 dark:text-white">Ma routine VRS</div>
+                            <div className="text-[10px] text-slate-400">Pointage GPS et cycle 25 PDV / jour.</div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPlusMenu(false);
+                            onNavigateTab('carte');
+                          }}
+                          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 font-medium transition cursor-pointer text-slate-700 dark:text-slate-200"
+                        >
+                          <MapPin className="w-4 h-4 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-slate-900 dark:text-white">Carte des PDV</div>
+                            <div className="text-[10px] text-slate-400">Localisation et itinéraire GPS.</div>
                           </div>
                         </button>
                       </div>
@@ -905,131 +987,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* BLOC "À TRAITER" DU TABLEAU DE BORD (Détection d'anomalies — jamais pour Vendeur) */}
-      {(isAdmin || isDirecteurOps || isSalesAdmin || isComptable || isMagasinier) && (
-        <div className="p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3.5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/70 text-[#DC2626] dark:text-rose-400 flex items-center justify-center shrink-0">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
-                    À traiter
-                  </h2>
-                  {newAnomaliesCount > 0 && (
-                    <span
-                      className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-black text-white shadow-xs"
-                      style={{ backgroundColor: '#DC2626' }}
-                      title={`${newAnomaliesCount} nouvelle(s) alerte(s)`}
-                    >
-                      {newAnomaliesCount}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Détection d&apos;anomalies ({isComptable ? 'Caisse et versements' : isMagasinier ? 'Stock et lots' : 'Commerciales et stock'}) &bull; Aide à la décision non bloquante.
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => onNavigateTab('alertes')}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
-            >
-              <span>Voir toutes les alertes</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {(() => {
-            const pendingAnomalies = anomalyAlerts.filter(
-              (a) => a.status === 'Nouvelle' || a.status === 'En examen'
-            );
-            if (pendingAnomalies.length === 0) {
-              return (
-                <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60 flex items-center gap-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Aucune anomalie nouvelle ou en examen à traiter pour votre périmètre.</span>
-                </div>
-              );
-            }
-            return (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {pendingAnomalies.slice(0, 6).map((alert) => {
-                  const isCritique = alert.severity === 'Critique';
-                  const isAttention = alert.severity === 'Attention';
-                  return (
-                    <div
-                      key={alert.id}
-                      onClick={() => onNavigateTab('alertes')}
-                      className={`p-3.5 rounded-xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
-                        isCritique
-                          ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/70 hover:border-rose-400'
-                          : isAttention
-                          ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/70 hover:border-amber-400'
-                          : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 hover:border-teal-400'
-                      }`}
-                    >
-                      <div className="space-y-1.5 min-w-0">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                              isCritique
-                                ? 'bg-[#DC2626] text-white'
-                                : isAttention
-                                ? 'bg-amber-500 text-white'
-                                : 'bg-sky-600 text-white'
-                            }`}
-                          >
-                            {alert.severity}
-                          </span>
-                          <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300">
-                            {alert.status}
-                          </span>
-                        </div>
-                        <div className="text-xs font-extrabold text-slate-900 dark:text-white leading-snug">
-                          {alert.type_label}
-                        </div>
-                        <div className="text-[11px] font-semibold text-teal-700 dark:text-teal-300 leading-snug">
-                          {alert.target_label}
-                        </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">
-                          {alert.explanation}
-                        </p>
-                      </div>
-                      <div className="pt-1.5 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-between gap-2 text-[10.5px] text-slate-500 dark:text-slate-400">
-                        <span className="font-medium whitespace-normal break-words min-w-0 flex-1">
-                          {Array.isArray(alert.measured_values)
-                            ? alert.measured_values
-                                .slice(0, 2)
-                                .map((m: any) => `${m.label} : ${m.value}`)
-                                .join(' • ')
-                            : String(alert.measured_values || '')}
-                        </span>
-                        <span className="font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] shrink-0">
-                          Examiner &rarr;
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
       {/* 
         ROLE-SPECIFIC KPIS
       */}
 
+      {/* TABLEAU DE BORD DE PERFORMANCE (KPI) VENDEUR — AFFICHÉ EN HAUT CHEZ L'ADMIN ET LE DOV (SANS CRÉATION DE PDV NI CRÉATION DE VENTE) */}
+      {(isAdmin || isDirecteurOps) && (() => {
+        const targetVendorId = 'usr-vnd-1';
+        const targetVendorBalance = balances.find((b) => b.vendorId === targetVendorId) || balances[0] || {
+          balanceDue: 714600,
+          stockVanValue: 1023000,
+        };
+        const targetVendorChargement = chargements.find(
+          (c) => c.vendor_id === targetVendorId && c.status !== 'Annulée'
+        );
+        const targetVendorVanStockBoxes = (targetVendorChargement?.items || []).reduce(
+          (acc: number, it: any) => acc + (it.qtyBoxes || 0),
+          0
+        );
+        return (
+          <VendorPerformanceKpiDashboard
+            vendorId={targetVendorId}
+            vendorName="Oumar Konaté"
+            vendorRole={currentUser.role}
+            onNavigateTab={onNavigateTab}
+            externalRefreshTrigger={sales.length + pdvs.length}
+            vanStockBoxes={targetVendorVanStockBoxes}
+            balanceDueFCFA={targetVendorBalance.balanceDue}
+            hideCreationActions={true}
+          />
+        );
+      })()}
+
       {/* 1. KPIS & VUE GLOBALE DES OPÉRATIONS — ADMINISTRATEUR */}
       {isAdmin && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div
               onClick={() => onNavigateTab('ventes')}
               className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs hover:border-teal-400 transition cursor-pointer"
@@ -1128,6 +1121,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200"
                   aria-label="Période de reporting mensuel"
                 >
+                  <option value="2026-11">Novembre 2026</option>
                   <option value="2026-10">Octobre 2026 (Mois en cours)</option>
                   <option value="2026-09">Septembre 2026</option>
                   <option value="2026-08">Août 2026</option>
@@ -1173,37 +1167,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           (stock dépôt, chargements en attente, lots à risque, retours à confirmer)
       */}
       {isMagasinier && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div
+            onClick={() => onNavigateTab('stock-depot')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
             <span className="text-xs font-bold uppercase text-slate-400">Stock dépôt central</span>
             <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
               <AdaptiveAmount amount={totalStockDepotBoxes} unit="cartons" unitClassName="text-xs text-slate-500 font-bold" />
             </div>
-            <span className="text-xs text-emerald-600 mt-1 block">Couverture : 30-45 jours</span>
+            <span className="text-xs text-emerald-600 mt-1 block">Couverture : 30-45 jours &rarr;</span>
           </div>
 
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">Chargements en attente</span>
+          <div
+            onClick={() => onNavigateTab('chargements')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">Chargements actifs</span>
             <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-2">
-              <AdaptiveAmount amount={chargements.length} unit="camionnettes" unitClassName="text-xs font-bold text-slate-500" />
+              <AdaptiveAmount amount={chargements.filter((c) => c.status !== 'Annulée').length} unit="camionnettes" unitClassName="text-xs font-bold text-slate-500" />
             </div>
-            <span className="text-xs text-slate-500 mt-1 block">Dépôt-vente 3-7 jours</span>
+            <span className="text-xs text-slate-500 mt-1 block">Dépôt-vente 3-7 jours &rarr;</span>
           </div>
 
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">Lots à risque</span>
+          <div
+            onClick={() => onNavigateTab('lots')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">Lots &amp; Péremption</span>
             <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-              <AdaptiveAmount amount={0} unit="lot" unitClassName="text-xs font-bold text-emerald-600" />
+              <AdaptiveAmount amount={0} unit="lot à risque" unitClassName="text-xs font-bold text-emerald-600" />
             </div>
-            <span className="text-xs text-emerald-600 mt-1 block">Péremptions conformes</span>
+            <span className="text-xs text-emerald-600 mt-1 block">Péremptions conformes &rarr;</span>
           </div>
 
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">Retours à confirmer</span>
+          <div
+            onClick={() => onNavigateTab('inventaire')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">Inventaire &amp; Retours</span>
             <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-              <AdaptiveAmount amount={0} unit="retour" unitClassName="text-xs font-bold text-slate-500" />
+              <AdaptiveAmount amount={0} unit="écart" unitClassName="text-xs font-bold text-slate-500" />
             </div>
-            <span className="text-xs text-slate-500 mt-1 block">Aucune avarie en attente</span>
+            <span className="text-xs text-slate-500 mt-1 block">Contrôler les stocks &rarr;</span>
           </div>
         </div>
       )}
@@ -1212,7 +1218,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           (réceptions à valider, approvisionnements actifs, ventes contrôlées, stock dépôt & inventaires)
       */}
       {isSalesAdmin && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           <div
             onClick={() => onNavigateTab('receptions')}
             className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
@@ -1269,7 +1275,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 2B-BIS. KPIS GESTIONNAIRE GROSSISTE */}
       {isGrossiste && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           <div
             onClick={() => onNavigateTab('commandes-gros')}
             className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
@@ -1328,7 +1334,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           (CA global vendeurs, Historique SKU, Validation PDV, Demandes de stock vendeurs, Factures PDV)
       */}
       {isDirecteurOps && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
           <div
             onClick={() => onNavigateTab('ventes')}
             className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
@@ -1343,7 +1349,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div
-            onClick={() => onNavigateTab('catalogue')}
+            onClick={() => onNavigateTab('historique-sku')}
             className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
           >
             <span className="text-[10px] font-bold uppercase text-slate-400">Produits suivis</span>
@@ -1351,7 +1357,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <AdaptiveAmount amount={products.length} unit="références" unitClassName="text-[10px] text-teal-600 font-bold" />
             </div>
             <span className="text-[10px] text-teal-600 font-semibold mt-0.5 block">
-              Catalogue officiel &rarr;
+              Historique des ventes par produit &rarr;
             </span>
           </div>
 
@@ -1396,94 +1402,239 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* 3. KPIS COMPTABLE:
-          (encaissé, à verser, versements en attente, créances PDV)
-      */}
-      {isComptable && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">Encaissé</span>
-            <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-2">
-              <AdaptiveAmount amount={totalVersementsFCFA} unit="FCFA" unitClassName="text-xs font-bold" />
+      {/* 2D. CARTE "ROUTINE" ET BLOC "À TRAITER" — ADMINISTRATEUR, DOV, SALES ADMIN / CONTRÔLEUR */}
+      {isVrsSupervisor && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Carte "Routine" (vendeurs validés cette semaine, en retard) */}
+          <div
+            onClick={() => onNavigateTab('routine-vrs')}
+            className="lg:col-span-5 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs hover:border-teal-500 transition cursor-pointer flex flex-col justify-between gap-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Routine
+                </span>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5 leading-snug">
+                  Routine VRS — Semaine en cours
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Cycle Lundi à Samedi — 25 PDV / jour actif (déblocage séquentiel)
+                </p>
+              </div>
+              <span className="w-10 h-10 rounded-xl bg-[var(--marque-clair)] text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)] flex items-center justify-center shrink-0">
+                <MapPin className="w-5 h-5" />
+              </span>
             </div>
-            <span className="text-xs text-slate-500 mt-1 block">Total versements validés</span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-900/50">
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block">
+                  Validés cette semaine
+                </span>
+                <div className="text-xl font-black text-[#15803D] dark:text-emerald-400 mt-1">
+                  {vrsValidatedCount} / {vrsVendorsSummary.length || 3}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50">
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block">
+                  En cours
+                </span>
+                <div className="text-xl font-black text-[#92400E] dark:text-amber-400 mt-1">
+                  {vrsInProgressCount}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/50">
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block">
+                  En retard (Incomplets)
+                </span>
+                <div className="text-xl font-black text-[#B91C1C] dark:text-rose-400 mt-1">
+                  {vrsIncompleteVendors.length}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigateTab('routine-vrs');
+              }}
+              className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--marque-fonce)] hover:bg-[#00586B] text-white text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+            >
+              <span>Ouvrir Routine VRS</span>
+              <ArrowRight className="w-4 h-4 shrink-0" />
+            </button>
           </div>
 
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">À verser</span>
-            <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-2">
-              <AdaptiveAmount amount={totalBalanceDue} unit="FCFA" unitClassName="text-xs font-bold" />
+          {/* Bloc "À traiter" : Vendeurs incomplets */}
+          <div className="lg:col-span-7 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-[#B91C1C] text-white text-xs font-bold">
+                    À traiter
+                  </span>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white leading-snug">
+                    Vendeurs incomplets — Routine VRS ({vrsIncompleteVendors.length})
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Vendeurs n&apos;ayant pas atteint 25 PDV sur leur jour actif (dérogation requise).
+                </p>
+              </div>
             </div>
-            <span className="text-xs text-slate-500 mt-1 block">Soldes vendeurs en dépôt-vente</span>
-          </div>
 
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">Versements en attente</span>
-            <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-              <AdaptiveAmount amount={pendingVersementsCount} unit="quittance" unitClassName="text-xs font-bold text-slate-500" />
-            </div>
-            <span className="text-xs text-emerald-600 mt-1 block">Caisse à jour</span>
-          </div>
-
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-xs font-bold uppercase text-slate-400">Créances PDV</span>
-            <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-              <AdaptiveAmount amount={0} unit="FCFA" unitClassName="text-xs font-bold text-emerald-600" />
-            </div>
-            <span className="text-xs text-emerald-600 mt-1 block">Paiements comptant &amp; OM</span>
+            <CardList<any>
+              data={vrsIncompleteVendors}
+              rowKey={(v) => v?.vendor?.id || Math.random()}
+              emptyMessage="Aucun vendeur incomplet à traiter. Tous les vendeurs ayant terminé leur jour ont validé leur objectif Routine VRS."
+              title={(v) => `${v?.vendor?.name || 'Vendeur'} (${v?.vendor?.code || ''})`}
+              subtitle={(v) =>
+                `Jour actif : ${v?.week?.chosenDayName || 'Fixé'} (${v?.week?.activeDate || ''}) • Dernière visite : ${
+                  v?.week?.lastVisit
+                    ? `${v.week.lastVisit.pdvName} à ${String(v.week.lastVisit.visitTime || '').slice(0, 5)}`
+                    : 'Aucune'
+                }`
+              }
+              badges={(v) => (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-extrabold bg-[#B91C1C] text-white border border-[#B91C1C]">
+                  Incomplet ({v?.week?.countedVisitsCount || 0}/{v?.week?.targetPdvCount || 25} PDV)
+                </span>
+              )}
+              fields={[
+                {
+                  key: 'progression',
+                  label: 'Progression',
+                  value: (v) => `${v?.week?.countedVisitsCount || 0} / ${v?.week?.targetPdvCount || 25} PDV`,
+                },
+                {
+                  key: 'equipe',
+                  label: 'Équipe',
+                  value: (v) => v?.vendor?.team || 'Équipe Terrain Bamako',
+                },
+              ]}
+              actions={[
+                {
+                  key: 'derogation',
+                  label: 'Traiter / Accorder une dérogation',
+                  variant: 'primary',
+                  onClick: () => onNavigateTab('routine-vrs'),
+                },
+              ]}
+            />
           </div>
         </div>
       )}
 
-      {/* 4. KPIS VENDEUR:
-          (ventes du jour, CA, mon stock, à verser, PDV)
+      {/* 3. KPIS COMPTABLE:
+          (encaissé, à verser, versements en attente, créances PDV)
+      */}
+      {isComptable && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div
+            onClick={() => onNavigateTab('versements')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">Encaissé</span>
+            <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-2">
+              <AdaptiveAmount amount={totalVersementsFCFA} unit="FCFA" unitClassName="text-xs font-bold" />
+            </div>
+            <span className="text-xs text-slate-500 mt-1 block">Total versements validés &rarr;</span>
+          </div>
+
+          <div
+            onClick={() => onNavigateTab('soldes-vendeurs')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">À verser</span>
+            <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-2">
+              <AdaptiveAmount amount={totalBalanceDue} unit="FCFA" unitClassName="text-xs font-bold" />
+            </div>
+            <span className="text-xs text-slate-500 mt-1 block">Soldes vendeurs en dépôt-vente &rarr;</span>
+          </div>
+
+          <div
+            onClick={() => onNavigateTab('caisse')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">Versements en attente</span>
+            <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+              <AdaptiveAmount amount={pendingVersementsCount} unit="quittance" unitClassName="text-xs font-bold text-slate-500" />
+            </div>
+            <span className="text-xs text-emerald-600 mt-1 block">Ouvrir la caisse &rarr;</span>
+          </div>
+
+          <div
+            onClick={() => onNavigateTab('factures')}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+          >
+            <span className="text-xs font-bold uppercase text-slate-400">Facturation &amp; Quittances</span>
+            <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+              <AdaptiveAmount amount={activeSales.length} unit="factures" unitClassName="text-xs font-bold text-emerald-600" />
+            </div>
+            <span className="text-xs text-emerald-600 mt-1 block">Consulter les factures &rarr;</span>
+          </div>
+        </div>
+      )}
+
+      {/* 4. TABLEAU DE BORD DE PERFORMANCE (KPI) SPÉCIFIQUE AU VENDEUR (TEMPS RÉEL)
+          Objectifs de 25 PDV / jour, visites effectuées, ventes réalisées sur la journée en cours
       */}
       {isVendeur && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-[10px] font-bold uppercase text-slate-400">Ventes du jour</span>
-            <div className="text-lg font-black text-slate-900 dark:text-white mt-1">
-              <AdaptiveAmount amount={myTodaySalesTotal} unit="FCFA" unitClassName="text-[10px] text-teal-600 font-bold" />
-            </div>
-            <span className="text-[10px] text-slate-400 mt-0.5 block">{myTodaySales.length} livraisons</span>
-          </div>
+        <div className="space-y-4">
+          <VendorPerformanceKpiDashboard
+            vendorId={currentUser.id}
+            vendorName={currentUser.name}
+            vendorRole={currentUser.role}
+            onNavigateTab={onNavigateTab}
+            externalRefreshTrigger={sales.length + pdvs.length}
+            vanStockBoxes={myVanStockBoxes}
+            balanceDueFCFA={myBalance.balanceDue}
+            hideCreationActions={false}
+          />
 
-          <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-[10px] font-bold uppercase text-slate-400">CA Réalisé</span>
-            <div className="text-lg font-black text-teal-700 dark:text-teal-400 mt-1">
-              <AdaptiveAmount amount={mySalesTotal} unit="FCFA" unitClassName="text-[10px] font-bold" />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div
+              onClick={() => onNavigateTab('mes-ventes')}
+              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+            >
+              <span className="text-[10px] font-bold uppercase text-slate-400">Ventes du jour ({todayStr})</span>
+              <div className="text-lg font-black text-slate-900 dark:text-white mt-1">
+                <AdaptiveAmount amount={myTodaySalesTotal} unit="FCFA" unitClassName="text-[10px] text-teal-600 font-bold" />
+              </div>
+              <span className="text-[10px] text-teal-600 font-semibold mt-0.5 block">
+                {myTodaySales.length} livraison(s) &bull; Voir mes ventes &rarr;
+              </span>
             </div>
-            <span className="text-[10px] text-slate-400 mt-0.5 block">{mySales.length} ventes cumulées</span>
-          </div>
 
-          <div
-            onClick={() => onNavigateTab('mon-stock')}
-            className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
-          >
-            <span className="text-[10px] font-bold uppercase text-slate-400">Mon stock (van)</span>
-            <div className="text-lg font-black text-slate-900 dark:text-white mt-1">
-              <AdaptiveAmount amount={myVanStockBoxes} unit="cartons" unitClassName="text-[10px] text-slate-500 font-bold" />
+            <div
+              onClick={() => onNavigateTab('mes-ventes')}
+              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+            >
+              <span className="text-[10px] font-bold uppercase text-slate-400">CA Global Réalisé</span>
+              <div className="text-lg font-black text-teal-700 dark:text-teal-400 mt-1">
+                <AdaptiveAmount amount={mySalesTotal} unit="FCFA" unitClassName="text-[10px] font-bold" />
+              </div>
+              <span className="text-[10px] text-slate-500 mt-0.5 block">
+                {mySales.length} ventes cumulées &rarr;
+              </span>
             </div>
-            <span className="text-[10px] text-teal-600 mt-0.5 block">Stock 3-7 jours</span>
-          </div>
 
-          <div
-            onClick={() => onNavigateTab('mon-solde')}
-            className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-amber-500 transition"
-          >
-            <span className="text-[10px] font-bold uppercase text-slate-400">À verser (solde)</span>
-            <div className="text-lg font-black text-amber-600 dark:text-amber-400 mt-1">
-              <AdaptiveAmount amount={myBalance.balanceDue} unit="FCFA" unitClassName="text-[10px] font-bold" />
+            <div
+              onClick={() => onNavigateTab('mes-pdvs')}
+              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs cursor-pointer hover:border-teal-500 transition"
+            >
+              <span className="text-[10px] font-bold uppercase text-slate-400">PDV Desservis (Total)</span>
+              <div className="text-lg font-black text-indigo-600 dark:text-indigo-400 mt-1">
+                <AdaptiveAmount amount={myPdvsVisitedCount} unit="PDV" unitClassName="text-[10px] text-slate-500 font-bold" />
+              </div>
+              <span className="text-[10px] text-teal-600 font-semibold mt-0.5 block">
+                Ouvrir mon portefeuille PDV &rarr;
+              </span>
             </div>
-            <span className="text-[10px] text-slate-400 mt-0.5 block">À remettre en caisse</span>
-          </div>
-
-          <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-            <span className="text-[10px] font-bold uppercase text-slate-400">PDV Desservis</span>
-            <div className="text-lg font-black text-indigo-600 dark:text-indigo-400 mt-1">
-              <AdaptiveAmount amount={myPdvsVisitedCount} unit="PDV" unitClassName="text-[10px] text-slate-500 font-bold" />
-            </div>
-            <span className="text-[10px] text-slate-400 mt-0.5 block">Points de vente</span>
           </div>
         </div>
       )}
@@ -1763,6 +1914,179 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
+      {/* VENTES PAR GAMME & ANALYSE PRODUITS (Lu dynamiquement depuis la table des produits — Interdit au Vendeur) */}
+      {!isVendeur && (() => {
+        const prodById = new Map<string, any>();
+        const prodByCode = new Map<string, any>();
+        products.forEach((p) => {
+          if (p.id) prodById.set(p.id, p);
+          if (p.code) prodByCode.set(p.code, p);
+        });
+
+        const salesSource = isVendeur ? mySales : activeSales;
+        const gammeMap = new Map<
+          string,
+          { gamme: string; boxesSold: number; revenue: number; activeFlavorsCount: number; stockBoxes: number }
+        >();
+        const flavorStatsMap = new Map<
+          string,
+          { id: string; code: string; name: string; gamme: string; boxesSold: number; revenue: number; stockDepot: number; priceBox: number; wholesalePriceBox: number | null; isActive: boolean }
+        >();
+
+        products.forEach((p) => {
+          const g = String(p.gamme || 'Autres').trim();
+          const isAct = Number(p.is_active ?? 1) === 1;
+          const gEntry = gammeMap.get(g) || {
+            gamme: g,
+            boxesSold: 0,
+            revenue: 0,
+            activeFlavorsCount: 0,
+            stockBoxes: 0,
+          };
+          if (isAct) gEntry.activeFlavorsCount += 1;
+          gEntry.stockBoxes += Number(p.stock_depot || 0);
+          gammeMap.set(g, gEntry);
+
+          flavorStatsMap.set(p.id, {
+            id: p.id,
+            code: p.code,
+            name: p.name,
+            gamme: g,
+            boxesSold: 0,
+            revenue: 0,
+            stockDepot: Number(p.stock_depot || 0),
+            priceBox: Number(p.price_box || 0),
+            wholesalePriceBox: p.wholesale_price_box !== undefined && p.wholesale_price_box !== null ? Number(p.wholesale_price_box) : null,
+            isActive: isAct,
+          });
+        });
+
+        salesSource.forEach((s) => {
+          const items = Array.isArray(s.items) ? s.items : [];
+          items.forEach((it: any) => {
+            const p = prodById.get(it.productId) || prodByCode.get(it.code);
+            const g = String(p?.gamme || it.gamme || 'Jus Cajoucy').trim();
+            const qty = Number(it.qtyBoxes || it.boxes || 0);
+            const total = Number(it.total ?? qty * Number(it.unitPrice || p?.price_box || 0));
+
+            const gEntry = gammeMap.get(g) || {
+              gamme: g,
+              boxesSold: 0,
+              revenue: 0,
+              activeFlavorsCount: 0,
+              stockBoxes: 0,
+            };
+            gEntry.boxesSold += qty;
+            gEntry.revenue += total;
+            gammeMap.set(g, gEntry);
+
+            if (p && flavorStatsMap.has(p.id)) {
+              const fEntry = flavorStatsMap.get(p.id)!;
+              fEntry.boxesSold += qty;
+              fEntry.revenue += total;
+            }
+          });
+        });
+
+        const gammeRows = Array.from(gammeMap.values()).sort((a, b) => b.revenue - a.revenue);
+        const cajoucyFlavorsStats = Array.from(flavorStatsMap.values()).filter(
+          (f) => f.gamme === 'Jus Cajoucy' && f.isActive
+        );
+        const wholesaleSalesCount = salesSource.filter(
+          (s) => (s.buyer_type || s.buyerType) === 'Grossiste'
+        ).length;
+        const retailThresholdSalesCount = salesSource.filter(
+          (s) => (s.buyer_type || s.buyerType) === 'Détaillant'
+        ).length;
+        const totalWholesaleDiscountFCFA = salesSource.reduce(
+          (sum, s) => sum + Number(s.wholesale_discount_amount ?? s.wholesaleDiscountAmount ?? 0),
+          0
+        );
+
+        return (
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-6 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Package className="w-4 h-4 text-[#008DA9]" />
+                  Ventes par Gamme &amp; Analyse Produits (Gamme Jus Cajoucy)
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Répartition dynamique du chiffre d&apos;affaires (net de remise) et des volumes par gamme et par saveur.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 font-semibold text-slate-700 dark:text-slate-200">
+                  Acheteur Grossiste (≥ 50 ctn) : <strong>{wholesaleSalesCount}</strong> vente{wholesaleSalesCount > 1 ? 's' : ''}
+                </span>
+                {retailThresholdSalesCount > 0 && (
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 font-semibold text-slate-700 dark:text-slate-200">
+                    Acheteur Détaillant (≥ 50 ctn) : <strong>{retailThresholdSalesCount}</strong>
+                  </span>
+                )}
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 font-bold text-emerald-800 dark:text-emerald-300">
+                  Remise grossiste cumulée : - {totalWholesaleDiscountFCFA.toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {gammeRows.map((g) => (
+                <div
+                  key={g.gamme}
+                  className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+                      {g.gamme}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300">
+                      {g.activeFlavorsCount} produit{g.activeFlavorsCount > 1 ? 's' : ''} actif{g.activeFlavorsCount > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="text-base font-black text-[#008DA9] dark:text-teal-400">
+                    {g.revenue.toLocaleString('fr-FR')} FCFA
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                    <span>Vendus : <strong>{g.boxesSold.toLocaleString('fr-FR')} ctn</strong></span>
+                    <span>Stock dépôt : <strong>{g.stockBoxes.toLocaleString('fr-FR')} ctn</strong></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {cajoucyFlavorsStats.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Détail des {cajoucyFlavorsStats.length} saveurs actives — Gamme Jus Cajoucy (12 u/ctn • Détaillant 9 000 FCFA / Grossiste 8 500 FCFA)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                  {cajoucyFlavorsStats.map((fl) => (
+                    <div
+                      key={fl.id}
+                      className="p-3 rounded-xl border border-teal-200/70 dark:border-teal-900/60 bg-teal-50/30 dark:bg-teal-950/20 text-xs space-y-1"
+                    >
+                      <div className="font-mono text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                        {fl.code}
+                      </div>
+                      <div className="font-extrabold text-slate-900 dark:text-white">
+                        {fl.name}
+                      </div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                        Ventes : <strong>{fl.boxesSold} ctn</strong> ({fl.revenue.toLocaleString('fr-FR')} F)
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Stock dépôt : <strong className="text-teal-700 dark:text-teal-400">{fl.stockDepot} ctn</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* 
         STOCK TABLE WITH EXACT COLOR BADGES:
         - Surstock : gris #E2E8F0 texte noir
@@ -1775,10 +2099,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Package className="w-4 h-4 text-teal-600" />
-              État des Stocks &amp; Alertes Dépôt Central (Sotuba)
+              État des Stocks du Dépôt Central (Sotuba)
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center">
-              <span>Suivi des stocks et seuils d&apos;alerte du dépôt.</span>
+              <span>Suivi des stocks du dépôt par gamme.</span>
               <InfoTooltip text="Badges normés de suivi de niveau des références agroalimentaires au dépôt central de Sotuba." />
             </p>
           </div>
@@ -1812,7 +2136,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <DataTable<any>
-          data={products}
+          data={products.filter((p) => Number(p.is_active ?? 1) === 1)}
           rowKey={(p) => p.id}
           mobileTitle={(p) => (
             <span>
@@ -1820,7 +2144,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {p.name}
             </span>
           )}
-          mobileSubtitle={(p) => p.packaging}
+          mobileSubtitle={(p) => `${p.gamme} • ${p.packaging}`}
           mobileBadge={(p) => <StockBadge stock={p.stock_depot} threshold={p.threshold_depot} />}
           columns={[
             {
@@ -1836,24 +2160,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             },
             {
               key: 'name',
-              header: 'Désignation & Format',
+              header: 'Désignation & Gamme',
               hideInMobileCard: true,
               cell: (p) => (
                 <div>
                   <div className="font-semibold text-slate-900 dark:text-white">{p.name}</div>
-                  <div className="text-[11px] text-slate-500">{p.packaging}</div>
+                  <div className="text-[11px] text-slate-500">{p.gamme} • {p.packaging}</div>
                 </div>
               ),
             },
             {
               key: 'price_box',
-              header: 'Prix Carton',
+              header: 'Prix Détaillant / Grossiste',
               mobileLabel: 'Prix Carton',
               isNumeric: true,
               cell: (p) => (
-                <span className="font-black text-slate-900 dark:text-white">
-                  {p.price_box.toLocaleString('fr-FR')} FCFA
-                </span>
+                <div>
+                  <div className="font-black text-slate-900 dark:text-white">
+                    {p.price_box.toLocaleString('fr-FR')} FCFA
+                  </div>
+                  {p.wholesale_price_box ? (
+                    <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+                      Gros : {Number(p.wholesale_price_box).toLocaleString('fr-FR')} FCFA
+                    </div>
+                  ) : null}
+                </div>
               ),
             },
             {
@@ -1898,57 +2229,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           }
         />
       </div>
-
-      {/* Modals for "Mes cadeaux" et "Ma tournée" */}
-      {activePlusModal === 'cadeaux' && (
-        <FormModal
-          title="Mes Cadeaux & Gratuités PDV"
-          subtitle="Suivi des échantillons promotionnels et cartons de fidélité remis aux gérants de points de vente partenaires."
-          icon={<Gift className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />}
-          onClose={() => setActivePlusModal(null)}
-          submitLabel="Fermer"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setActivePlusModal(null);
-          }}
-        >
-          <div className="space-y-3 text-xs">
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border flex justify-between items-center">
-              <span>Échantillons Jus Cajoucy (Bouteilles 25cl)</span>
-              <span className="font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">12 remis</span>
-            </div>
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border flex justify-between items-center">
-              <span>Packs Nora 6x1.5L fidélité boutique</span>
-              <span className="font-bold text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]">3 packs</span>
-            </div>
-          </div>
-        </FormModal>
-      )}
-
-      {activePlusModal === 'tournee' && (
-        <FormModal
-          title="Ma Tournée de Livraison (Bamako)"
-          subtitle="Ordre de passage recommandé pour votre camionnette :"
-          icon={<Compass className="w-5 h-5 text-[var(--marque-fonce)] dark:text-[var(--marque-eclaircie)]" />}
-          onClose={() => setActivePlusModal(null)}
-          submitLabel="Fermer"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setActivePlusModal(null);
-          }}
-        >
-          <div className="space-y-3 text-xs">
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border">
-              <div className="font-bold text-slate-900 dark:text-white">1. Sotuba &rarr; Djélibougou (Matinée)</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">3 points de vente programmés</div>
-            </div>
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border">
-              <div className="font-bold text-slate-900 dark:text-white">2. Badalabougou &rarr; Faladié (Après-midi)</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">4 points de vente programmés</div>
-            </div>
-          </div>
-        </FormModal>
-      )}
     </div>
   );
 };

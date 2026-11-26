@@ -5,6 +5,7 @@ import zlib from 'node:zlib';
 import PDFDocument from 'pdfkit';
 import { db } from './db.js';
 import { deduceUserFromToken, type AuthenticatedUser } from './pushService.js';
+import { buildVendorMonthlyObjectiveSummary } from './vrsService.js';
 
 export type ExtractionFormat = 'csv' | 'xlsx' | 'pdf';
 
@@ -41,7 +42,8 @@ export type CanonicalExtractionDataset =
   | 'utilisateurs'
   | 'sauvegardes'
   | 'rapports_telechargeables'
-  | 'historique_extractions';
+  | 'historique_extractions'
+  | 'routine_vrs';
 
 export interface ExtractionColumnDef {
   key: string;
@@ -293,6 +295,12 @@ const DATASET_ALIASES: Record<string, CanonicalExtractionDataset> = {
   rapport: 'rapports_telechargeables',
   historique_extractions: 'historique_extractions',
   historique_des_extractions: 'historique_extractions',
+
+  // Routine VRS
+  routine_vrs: 'routine_vrs',
+  routine: 'routine_vrs',
+  vrs: 'routine_vrs',
+  visites_vrs: 'routine_vrs',
 };
 
 const ALL_CANONICAL_DATASETS: CanonicalExtractionDataset[] = [
@@ -329,6 +337,7 @@ const ALL_CANONICAL_DATASETS: CanonicalExtractionDataset[] = [
   'sauvegardes',
   'rapports_telechargeables',
   'historique_extractions',
+  'routine_vrs',
 ];
 
 const DATASET_SHEET_NAMES: Record<CanonicalExtractionDataset, string> = {
@@ -365,6 +374,7 @@ const DATASET_SHEET_NAMES: Record<CanonicalExtractionDataset, string> = {
   sauvegardes: 'Sauvegardes',
   rapports_telechargeables: 'Rapports Telechargeables',
   historique_extractions: 'Historique Extractions',
+  routine_vrs: 'Routine VRS',
 };
 
 const DATASET_PDF_TITLES: Record<CanonicalExtractionDataset, string> = {
@@ -401,6 +411,7 @@ const DATASET_PDF_TITLES: Record<CanonicalExtractionDataset, string> = {
   sauvegardes: 'Sauvegardes',
   rapports_telechargeables: 'Rapports téléchargeables',
   historique_extractions: 'Historique des extractions',
+  routine_vrs: 'Routine VRS — Visites Terrain',
 };
 
 /**
@@ -435,6 +446,27 @@ export function initExtractionPermissionsTable() {
     for (const roleLabel of ['Sales Admin', 'Sales Admin / Contrôleur', 'Contrôleur']) {
       ensureSadPerm.run(roleLabel, nowIso);
     }
+    const ensureVrsPerm = db.prepare(`
+      INSERT OR IGNORE INTO extraction_permissions (role, jeu, autorise, updated_by, updated_at)
+      VALUES (?, 'routine_vrs', 1, 'SYSTEM_DEFAULT', ?)
+    `);
+    for (const roleLabel of [
+      'Administrateur',
+      'Directeur des opérations de vente',
+      'DOV',
+      'Sales Admin',
+      'Sales Admin / Contrôleur',
+      'Contrôleur',
+    ]) {
+      ensureVrsPerm.run(roleLabel, nowIso);
+    }
+    // Synchronize Facturation with Comptable permissions in extraction_permissions
+    db.prepare(`
+      INSERT OR IGNORE INTO extraction_permissions (role, jeu, autorise, updated_by, updated_at)
+      SELECT 'Facturation', jeu, autorise, updated_by, updated_at
+      FROM extraction_permissions
+      WHERE role = 'Comptable'
+    `).run();
     return;
   }
 
@@ -451,7 +483,7 @@ export function initExtractionPermissionsTable() {
     upsertPerm.run('Administrateur', ds, 1, nowIso);
   }
 
-  // 2. DOV (BAO-DOV): ventes, factures PDV, annulations de vente, analyse produits, PDV, vendeurs, demandes de stock vendeur, stock dépôt, soldes vendeurs
+  // 2. DOV (BAO-DOV): ventes, factures PDV, annulations de vente, analyse produits, PDV, vendeurs, demandes de stock vendeur, stock dépôt, soldes vendeurs, routine_vrs
   const dovDatasets: CanonicalExtractionDataset[] = [
     'ventes',
     'factures_pdv',
@@ -463,6 +495,7 @@ export function initExtractionPermissionsTable() {
     'demandes_de_stock_vendeur',
     'stock_depot',
     'soldes_vendeurs',
+    'routine_vrs',
   ];
   for (const roleLabel of ['Directeur des opérations de vente', 'DOV']) {
     for (const ds of dovDatasets) {
@@ -470,7 +503,7 @@ export function initExtractionPermissionsTable() {
     }
   }
 
-  // 3. Sales Admin / Contrôleur (BAO-SAD): réceptions, approvisionnements, ventes, inventaires et écarts, stock dépôt, lots, retours, demandes d'achat
+  // 3. Sales Admin / Contrôleur (BAO-SAD): réceptions, approvisionnements, ventes, inventaires et écarts, stock dépôt, lots, retours, demandes d'achat, routine_vrs
   const salesAdminDatasets: CanonicalExtractionDataset[] = [
     'receptions',
     'approvisionnements',
@@ -481,6 +514,7 @@ export function initExtractionPermissionsTable() {
     'lots',
     'retours',
     'demandes_d_achat',
+    'routine_vrs',
   ];
   for (const roleLabel of ['Sales Admin', 'Sales Admin / Contrôleur', 'Contrôleur']) {
     for (const ds of salesAdminDatasets) {
@@ -518,7 +552,7 @@ export function initExtractionPermissionsTable() {
     }
   }
 
-  // 6. Comptable (BAO-CPT): ventes, versements, soldes vendeurs, factures, caisse, créances PDV, PDV, demandes d'achat, commandes en gros facturées
+  // 6. Facturation / Comptable (BAO-CPT): ventes, versements, soldes vendeurs, factures, caisse, créances PDV, PDV, demandes d'achat, commandes en gros facturées
   const comptableDatasets: CanonicalExtractionDataset[] = [
     'ventes',
     'versements',
@@ -531,8 +565,10 @@ export function initExtractionPermissionsTable() {
     'demandes_d_achat',
     'commandes_en_gros_facturees',
   ];
-  for (const ds of comptableDatasets) {
-    upsertPerm.run('Comptable', ds, 1, nowIso);
+  for (const roleLabel of ['Facturation', 'Comptable']) {
+    for (const ds of comptableDatasets) {
+      upsertPerm.run(roleLabel, ds, 1, nowIso);
+    }
   }
 
   // 7. Vendeur (BAO-VND): 0 permissions (always 403)
@@ -593,6 +629,8 @@ const ROLE_EQUIVALENT_LABELS: Record<string, string[]> = {
   Contrôleur: ['Sales Admin', 'Sales Admin / Contrôleur', 'Contrôleur'],
   'Gestionnaire de stock': ['Gestionnaire de stock', 'Magasinier'],
   Magasinier: ['Gestionnaire de stock', 'Magasinier'],
+  Facturation: ['Facturation', 'Comptable'],
+  Comptable: ['Facturation', 'Comptable'],
 };
 
 /**
@@ -1726,6 +1764,9 @@ function createDatasetBatchFetcher(
             s.pdv_id,
             s.items,
             s.total_amount,
+            s.buyer_type,
+            s.wholesale_discount_amount,
+            s.cajoucy_boxes_count,
             s.payment_type,
             s.status,
             COALESCE(u.code, s.vendor_id) AS vendor_code,
@@ -1747,6 +1788,8 @@ function createDatasetBatchFetcher(
           for (const s of saleBatch) {
             const invNum = s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-');
             const saleTotal = formatIntegerAmount(s.total_amount);
+            const buyerTypeLabel = s.buyer_type || 'Détaillant';
+            const saleWholesaleDiscount = formatIntegerAmount(s.wholesale_discount_amount || 0);
             let itemsArr: any[] = [];
             try {
               const parsed = JSON.parse(s.items || '[]');
@@ -1766,6 +1809,8 @@ function createDatasetBatchFetcher(
                 pdv_code: s.pdv_code,
                 pdv_name: s.pdv_name,
                 pdv_neighborhood: s.pdv_neighborhood,
+                buyer_type: buyerTypeLabel,
+                wholesale_discount_amount: saleWholesaleDiscount,
                 payment_type: s.payment_type || 'Comptant',
                 status: s.status || 'livree',
                 product_code: '-',
@@ -1780,6 +1825,7 @@ function createDatasetBatchFetcher(
                 const it = itemsArr[idx];
                 const qty = formatIntegerAmount(it.qtyBoxes ?? it.boxes ?? 0);
                 const unitPrice = formatIntegerAmount(it.unitPrice ?? it.price ?? 0);
+                const lineDiscount = formatIntegerAmount(it.lineDiscount ?? 0);
                 let lineTotal = formatIntegerAmount(
                   it.total !== undefined ? it.total : qty * unitPrice
                 );
@@ -1798,6 +1844,8 @@ function createDatasetBatchFetcher(
                   pdv_code: s.pdv_code,
                   pdv_name: s.pdv_name,
                   pdv_neighborhood: s.pdv_neighborhood,
+                  buyer_type: buyerTypeLabel,
+                  wholesale_discount_amount: lineDiscount > 0 ? lineDiscount : saleWholesaleDiscount,
                   payment_type: s.payment_type || 'Comptant',
                   status: s.status || 'livree',
                   product_code: it.code || it.productCode || '',
@@ -1829,6 +1877,8 @@ function createDatasetBatchFetcher(
           { key: 'pdv_code', header: 'Code PDV', type: 'text', width: 14 },
           { key: 'pdv_name', header: 'Point de Vente', type: 'text', width: 28 },
           { key: 'pdv_neighborhood', header: 'Quartier', type: 'text', width: 18 },
+          { key: 'buyer_type', header: "Type d'acheteur", type: 'text', width: 16 },
+          { key: 'wholesale_discount_amount', header: 'Remise grossiste (FCFA)', type: 'integer', width: 22 },
           { key: 'payment_type', header: 'Mode de Paiement', type: 'text', width: 18 },
           { key: 'status', header: 'Statut', type: 'text', width: 12 },
           { key: 'product_code', header: 'Code Produit', type: 'text', width: 15 },
@@ -1885,6 +1935,8 @@ function createDatasetBatchFetcher(
           { key: 'pdv_name', header: 'Client PDV', type: 'text', width: 28 },
           { key: 'vendor_code', header: 'Code Vendeur', type: 'text', width: 16 },
           { key: 'vendor_name', header: 'Vendeur', type: 'text', width: 22 },
+          { key: 'buyer_type', header: "Type d'acheteur", type: 'text', width: 16 },
+          { key: 'wholesale_discount_amount', header: 'Remise grossiste (FCFA)', type: 'integer', width: 22 },
           { key: 'payment_type', header: 'Mode de Règlement', type: 'text', width: 18 },
           { key: 'total_ht', header: 'Montant HT (FCFA)', type: 'integer', width: 20 },
           { key: 'tva_amount', header: 'TVA (FCFA)', type: 'integer', width: 16 },
@@ -1924,6 +1976,8 @@ function createDatasetBatchFetcher(
               pdv_name: r.pdv_name || '',
               vendor_code: r.vendor_code || r.vendor_id,
               vendor_name: r.vendor_name || '',
+              buyer_type: r.buyer_type || 'Détaillant',
+              wholesale_discount_amount: formatIntegerAmount(r.wholesale_discount_amount || 0),
               payment_type: r.payment_type || 'Comptant',
               total_ht: ht,
               tva_amount: tva,
@@ -2078,7 +2132,12 @@ function createDatasetBatchFetcher(
           code: p.code,
           name: p.name,
           gamme: p.gamme,
+          status: Number(p.is_active ?? 1) === 1 ? 'Actif' : 'Désactivé',
           price_box: formatIntegerAmount(p.price_box),
+          wholesale_price_box:
+            p.wholesale_price_box !== undefined && p.wholesale_price_box !== null
+              ? formatIntegerAmount(p.wholesale_price_box)
+              : '—',
           stock_depot: formatIntegerAmount(p.stock_depot),
           boxes_sold: st.boxesSold,
           orders_count: st.ordersCount,
@@ -2093,7 +2152,9 @@ function createDatasetBatchFetcher(
           { key: 'code', header: 'Code Produit', type: 'text', width: 16 },
           { key: 'name', header: 'Produit', type: 'text', width: 26 },
           { key: 'gamme', header: 'Gamme', type: 'text', width: 20 },
-          { key: 'price_box', header: 'Prix Carton (FCFA)', type: 'integer', width: 20 },
+          { key: 'status', header: 'Statut', type: 'text', width: 14 },
+          { key: 'price_box', header: 'Prix Détaillant (FCFA)', type: 'integer', width: 20 },
+          { key: 'wholesale_price_box', header: 'Prix Grossiste (FCFA)', type: 'text', width: 20 },
           { key: 'stock_depot', header: 'Stock Dépôt (Cartons)', type: 'integer', width: 22 },
           { key: 'boxes_sold', header: 'Cartons Vendus', type: 'integer', width: 18 },
           { key: 'orders_count', header: 'Nb Lignes Vente', type: 'integer', width: 18 },
@@ -2125,9 +2186,11 @@ function createDatasetBatchFetcher(
           { key: 'code', header: 'Code Produit', type: 'text', width: 16 },
           { key: 'name', header: 'Désignation', type: 'text', width: 26 },
           { key: 'gamme', header: 'Gamme', type: 'text', width: 22 },
+          { key: 'status', header: 'Statut', type: 'text', width: 14 },
           { key: 'packaging', header: 'Conditionnement', type: 'text', width: 20 },
           { key: 'units_per_box', header: 'Unités par Carton', type: 'integer', width: 18 },
-          { key: 'price_box', header: 'Prix Carton (FCFA)', type: 'integer', width: 20 },
+          { key: 'price_box', header: 'Prix Détaillant (FCFA)', type: 'integer', width: 20 },
+          { key: 'wholesale_price_box', header: 'Prix Grossiste (FCFA)', type: 'text', width: 20 },
           { key: 'stock_depot', header: 'Stock Dépôt (Cartons)', type: 'integer', width: 22 },
           { key: 'threshold_depot', header: 'Seuil Alerte (Cartons)', type: 'integer', width: 22 },
           { key: 'stock_value', header: 'Valeur Stock (FCFA)', type: 'integer', width: 22 },
@@ -2140,9 +2203,14 @@ function createDatasetBatchFetcher(
             code: p.code,
             name: p.name,
             gamme: p.gamme,
+            status: Number(p.is_active ?? 1) === 1 ? 'Actif' : 'Désactivé',
             packaging: p.packaging,
             units_per_box: formatIntegerAmount(p.units_per_box),
             price_box: formatIntegerAmount(p.price_box),
+            wholesale_price_box:
+              p.wholesale_price_box !== undefined && p.wholesale_price_box !== null
+                ? formatIntegerAmount(p.wholesale_price_box)
+                : '—',
             stock_depot: formatIntegerAmount(p.stock_depot),
             threshold_depot: formatIntegerAmount(p.threshold_depot),
             stock_value: formatIntegerAmount(
@@ -2620,8 +2688,8 @@ function createDatasetBatchFetcher(
       const params: (string | number)[] = [];
 
       // Server-side perimeter control (Directive 4):
-      // Comptable (or dataset 'commandes_en_gros_facturees') only extracts invoiced/billed wholesale orders
-      if (dataset === 'commandes_en_gros_facturees' || userRole === 'Comptable') {
+      // Facturation / Comptable (or dataset 'commandes_en_gros_facturees') only extracts invoiced/billed wholesale orders
+      if (dataset === 'commandes_en_gros_facturees' || userRole === 'Facturation' || userRole === 'Comptable') {
         clauses.push("COALESCE(delivery_status, 'livree') != 'annulee'");
         clauses.push("(payment_status = 'paye' OR delivery_status = 'livree')");
       }
@@ -2752,8 +2820,8 @@ function createDatasetBatchFetcher(
       // Directive 4: Un rôle n'extrait que les lignes de son périmètre, contrôlé côté serveur et non dans le filtre envoyé
       if (userRole === 'Magasinier' || userRole === 'Gestionnaire de stock') {
         clauses.push("requester_role IN ('Magasinier', 'Gestionnaire de stock')");
-      } else if (userRole === 'Comptable') {
-        clauses.push("requester_role = 'Comptable'");
+      } else if (userRole === 'Facturation' || userRole === 'Comptable') {
+        clauses.push("requester_role IN ('Facturation', 'Comptable')");
       }
 
       if (du) {
@@ -3471,6 +3539,158 @@ function createDatasetBatchFetcher(
             team: u.team || '',
             created_at: String(u.created_at || '').slice(0, 10),
           }));
+        },
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // 27. ROUTINE VRS — VISITES TERRAIN VENDEURS
+    // -------------------------------------------------------------------------
+    case 'routine_vrs': {
+      const clauses: string[] = [];
+      const params: (string | number)[] = [];
+
+      if (du) {
+        clauses.push('w.week_start_date >= ?');
+        params.push(du);
+      }
+      if (au) {
+        clauses.push('w.week_start_date <= ?');
+        params.push(au);
+      }
+      if (filters.vendeur || filters.vendor_id) {
+        clauses.push('(w.vendor_id = ? OR u.code = ?)');
+        params.push(filters.vendeur || filters.vendor_id, filters.vendeur || filters.vendor_id);
+      }
+      if (filters.statut || filters.status) {
+        const st = String(filters.statut || filters.status).trim();
+        if (st === 'Non démarré' || st === 'Non effectué') {
+          clauses.push("(w.status = 'Non effectué' OR w.status = 'Disponible')");
+        } else {
+          clauses.push('w.status = ?');
+          params.push(st);
+        }
+      }
+
+      const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+      const countRow = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM vrs_weeks w LEFT JOIN users u ON w.vendor_id = u.id ${whereSql}`
+        )
+        .get(...params) as { cnt: number };
+
+      return {
+        totalEstimatedRows: Number(countRow?.cnt || 0),
+        columns: [
+          { key: 'week_start_date', header: 'Semaine (Lundi)', type: 'date', width: 16 },
+          { key: 'week_end_date', header: 'Fin Semaine (Samedi)', type: 'date', width: 18 },
+          { key: 'vendor_code', header: 'Code Vendeur', type: 'text', width: 15 },
+          { key: 'vendor_name', header: 'Vendeur', type: 'text', width: 22 },
+          { key: 'team', header: 'Équipe', type: 'text', width: 24 },
+          { key: 'month_label', header: 'Mois', type: 'text', width: 18 },
+          { key: 'monthly_target_pdv', header: 'Objectif Mensuel PDV', type: 'integer', width: 18 },
+          { key: 'monthly_realized_pdv', header: 'Réalisé Mois', type: 'integer', width: 14 },
+          { key: 'monthly_progress', header: '% Avancement Mois', type: 'text', width: 16 },
+          { key: 'monthly_days_ratio', header: 'Jours Validés / Ouvrés', type: 'text', width: 20 },
+          { key: 'monthly_status', header: 'Statut Mensuel', type: 'text', width: 16 },
+          { key: 'chosen_day', header: 'Jour Actif', type: 'text', width: 18 },
+          { key: 'counted_visits_count', header: 'Visites Validées Jour', type: 'integer', width: 16 },
+          { key: 'target_pdv_count', header: 'Objectif Jour PDV', type: 'integer', width: 16 },
+          { key: 'progression', header: 'Progression Jour', type: 'text', width: 16 },
+          { key: 'status', header: 'Statut Routine', type: 'text', width: 16 },
+          { key: 'last_visit', header: 'Dernière Visite', type: 'text', width: 32 },
+          { key: 'derogation_count', header: 'Dérogations', type: 'integer', width: 14 },
+        ],
+        fetchBatch: (limit, offset) => {
+          const rows = db
+            .prepare(
+              `
+              SELECT w.*, u.code AS vendor_code, u.name AS vendor_name
+              FROM vrs_weeks w
+              LEFT JOIN users u ON w.vendor_id = u.id
+              ${whereSql}
+              ORDER BY w.week_start_date DESC, u.code ASC
+              LIMIT ? OFFSET ?
+            `
+            )
+            .all(...params, limit, offset) as any[];
+
+          const dayNamesFr: Record<number, string> = {
+            1: 'Lundi',
+            2: 'Mardi',
+            3: 'Mercredi',
+            4: 'Jeudi',
+            5: 'Vendredi',
+            6: 'Samedi',
+            7: 'Dimanche',
+          };
+
+          return rows.map((r) => {
+            const activeOrChosen = r.active_date || r.chosen_date || '';
+            let chosenDayLabel = 'Non démarré';
+            if (activeOrChosen && /^\d{4}-\d{2}-\d{2}$/.test(activeOrChosen)) {
+              const [y, m, d] = activeOrChosen.split('-').map(Number);
+              const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+              const jsDay = dt.getUTCDay();
+              const dayIdx = jsDay === 0 ? 7 : jsDay;
+              chosenDayLabel = `${dayNamesFr[dayIdx] || ''} (${activeOrChosen})`.trim();
+            }
+
+            const lastVis = db
+              .prepare(
+                `SELECT v.visit_date, v.visit_time, p.name as pdv_name, p.code as pdv_code
+                 FROM vrs_visits v
+                 LEFT JOIN points_de_vente p ON v.pdv_id = p.id
+                 WHERE v.vendor_id = ? AND v.week_start_date = ?
+                 ORDER BY v.server_recorded_at DESC, v.created_at DESC
+                 LIMIT 1`
+              )
+              .get(r.vendor_id, r.week_start_date) as
+              | { visit_date: string; visit_time: string; pdv_name: string; pdv_code: string }
+              | undefined;
+
+            const codeUpper = String(r.vendor_code || r.vendor_id || '').toUpperCase();
+            const teamLabel =
+              codeUpper.includes('VND-001') || codeUpper.includes('VND-01') || codeUpper.includes('VND-1')
+                ? 'Équipe Rive Gauche (Bamako)'
+                : codeUpper.includes('VND-002') || codeUpper.includes('VND-02') || codeUpper.includes('VND-2')
+                ? 'Équipe Rive Droite (Bamako)'
+                : codeUpper.includes('VND-003') || codeUpper.includes('VND-03') || codeUpper.includes('VND-3')
+                ? 'Équipe Centre & Sotuba'
+                : 'Équipe Terrain Bamako';
+
+            const counted = Number(r.counted_visits_count || 0);
+            const target = 25;
+            const monthKey = String(r.week_start_date || '2026-11').slice(0, 7);
+            const monthlySummary = buildVendorMonthlyObjectiveSummary(
+              r.vendor_id,
+              monthKey,
+              r.week_start_date
+            );
+
+            return {
+              week_start_date: r.week_start_date,
+              week_end_date: r.week_end_date,
+              vendor_code: r.vendor_code || r.vendor_id,
+              vendor_name: r.vendor_name || 'Vendeur',
+              team: teamLabel,
+              month_label: monthlySummary.monthLabel,
+              monthly_target_pdv: monthlySummary.monthlyTargetPdv,
+              monthly_realized_pdv: monthlySummary.realizedMonthlyPdv,
+              monthly_progress: `${monthlySummary.progressPercent}%${monthlySummary.isDefault ? ' (Objectif par défaut)' : ''}`,
+              monthly_days_ratio: `${monthlySummary.validatedDaysCount} / ${monthlySummary.workingDaysCount} j`,
+              monthly_status: monthlySummary.status,
+              chosen_day: chosenDayLabel,
+              counted_visits_count: counted,
+              target_pdv_count: target,
+              progression: `${counted} / ${target} PDV`,
+              status: r.status === 'Non effectué' ? 'Non démarré' : r.status,
+              last_visit: lastVis
+                ? `${lastVis.visit_date} ${lastVis.visit_time.slice(0, 5)} — ${lastVis.pdv_name || lastVis.pdv_code}`
+                : 'Aucune visite enregistrée',
+              derogation_count: Number(r.derogation_count || 0),
+            };
+          });
         },
       };
     }

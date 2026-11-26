@@ -875,7 +875,7 @@ export function buildSafePushContent(params: {
     category = 'versements';
     urgency = 'high';
     requireInteraction = true;
-    if (role === 'Comptable') {
+    if (role === 'Facturation' || role === 'Comptable') {
       pushTitle = 'Versement à confirmer';
       pushBody = refStr ? `Versement ${refStr} à confirmer` : 'Nouveau versement à confirmer en caisse';
       tab = 'versements';
@@ -903,17 +903,9 @@ export function buildSafePushContent(params: {
     urgency = isRectif ? 'high' : 'normal';
     requireInteraction = isRectif;
     if (role === 'Vendeur') {
-      tab = 'mes-factures';
-      if (type === 'facture_rectifiee' || lowerTitle.includes('rectifiée')) {
-        pushTitle = 'Facture rectifiée';
-        pushBody = 'Votre facture a été rectifiée par la comptabilité';
-      } else if (lowerTitle.includes('rejet')) {
-        pushTitle = 'Demande de rectification';
-        pushBody = 'Décision enregistrée sur votre demande de rectification';
-      } else {
-        pushTitle = 'Nouvelle facture';
-        pushBody = 'Une nouvelle facture est disponible dans votre espace';
-      }
+      tab = 'mes-ventes';
+      pushTitle = 'Mise à jour vente';
+      pushBody = 'Ticket thermique disponible dans Mes Ventes';
     } else {
       tab = 'factures';
       pushTitle = 'Rectification de facture';
@@ -967,7 +959,7 @@ export function buildSafePushContent(params: {
     if (type === 'ecart' || refStr.startsWith('INV-')) {
       pushTitle = 'Inventaire vendeur';
       pushBody = "Nouveau contrôle d'inventaire enregistré";
-      tab = role === 'Comptable' ? 'soldes-vendeurs' : 'inventaire';
+      tab = role === 'Facturation' || role === 'Comptable' ? 'soldes-vendeurs' : 'inventaire';
     } else {
       pushTitle = 'Alerte péremption';
       pushBody = 'Un lot est proche de la péremption';
@@ -1005,7 +997,7 @@ export function buildSafePushContent(params: {
         pushTitle = 'Bon cadeau prêt';
         pushBody = 'Votre carte cadeau est prête';
       }
-    } else if (role === 'Comptable') {
+    } else if (role === 'Facturation' || role === 'Comptable') {
       pushTitle = 'Bon cadeau remis';
       pushBody = 'Un bon cadeau a été remis au dépôt';
       tab = 'rapports';
@@ -1678,6 +1670,7 @@ export function resolveAuthorizedSaleRecipients(params: {
       role === 'Administrateur' ||
       role === 'Directeur des opérations de vente' ||
       role === 'Sales Admin' ||
+      role === 'Facturation' ||
       role === 'Comptable'
     ) {
       return true;

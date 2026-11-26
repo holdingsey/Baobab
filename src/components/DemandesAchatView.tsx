@@ -71,14 +71,14 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
   const isSalesAdmin = currentUser.role === 'Sales Admin';
   const canReviewRequest = isAdmin || isSalesAdmin;
   const isMagasinier = currentUser.role === 'Gestionnaire de stock' || currentUser.role === 'Magasinier';
-  const isComptable = currentUser.role === 'Comptable';
-  // Seuls le Magasinier et le Comptable créent des demandes d'achat ; l'Admin et le Sales Admin les valident ou les refusent
+  const isComptable = currentUser.role === 'Facturation' || currentUser.role === 'Comptable';
+  // Seuls le Magasinier et la Facturation créent des demandes d'achat ; l'Admin et le Sales Admin les valident ou les refusent
   const canCreateRequest = isMagasinier || isComptable;
 
   const [requests, setRequests] = useState<PurchaseRequestRecord[]>(externalRequests || []);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | 'en_attente' | 'validee' | 'rejetee'>('all');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'Gestionnaire de stock' | 'Magasinier' | 'Facturation' | 'Comptable'>('all');
   const [feedbackBanner, setFeedbackBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Create Modal state (Magasinier & Comptable)
@@ -319,7 +319,8 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
     return requests.filter((r) => {
       const sameRole =
         r.requester_role === currentUser.role ||
-        (isMagasinier && (r.requester_role === 'Gestionnaire de stock' || r.requester_role === 'Magasinier'));
+        (isMagasinier && (r.requester_role === 'Gestionnaire de stock' || r.requester_role === 'Magasinier')) ||
+        (isComptable && (r.requester_role === 'Facturation' || r.requester_role === 'Comptable'));
       if (!canReviewRequest && !sameRole && r.requester_id !== currentUser.id) {
         return false;
       }
@@ -327,13 +328,15 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
       if (canReviewRequest && roleFilter !== 'all') {
         if (roleFilter === 'Gestionnaire de stock' || roleFilter === 'Magasinier') {
           if (r.requester_role !== 'Gestionnaire de stock' && r.requester_role !== 'Magasinier') return false;
+        } else if (roleFilter === 'Facturation' || roleFilter === 'Comptable') {
+          if (r.requester_role !== 'Facturation' && r.requester_role !== 'Comptable') return false;
         } else if (r.requester_role !== roleFilter) {
           return false;
         }
       }
       return true;
     });
-  }, [requests, canReviewRequest, isMagasinier, currentUser.role, currentUser.id, statusFilter, roleFilter]);
+  }, [requests, canReviewRequest, isMagasinier, isComptable, currentUser.role, currentUser.id, statusFilter, roleFilter]);
 
   const counts = useMemo(() => {
     const base = canReviewRequest
@@ -342,6 +345,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
           (r) =>
             r.requester_role === currentUser.role ||
             (isMagasinier && (r.requester_role === 'Gestionnaire de stock' || r.requester_role === 'Magasinier')) ||
+            (isComptable && (r.requester_role === 'Facturation' || r.requester_role === 'Comptable')) ||
             r.requester_id === currentUser.id
         );
     return {
@@ -353,7 +357,7 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         .filter((r) => r.status === 'validee')
         .reduce((acc, r) => acc + Number(r.total_amount || 0), 0),
     };
-  }, [requests, canReviewRequest, isMagasinier, currentUser.role, currentUser.id]);
+  }, [requests, canReviewRequest, isMagasinier, isComptable, currentUser.role, currentUser.id]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
@@ -373,19 +377,21 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
                 ? 'Sales Admin'
                 : currentUser.role === 'Gestionnaire de stock'
                 ? 'Magasinier'
+                : currentUser.role === 'Comptable'
+                ? 'Facturation'
                 : currentUser.role}
             </span>
           </div>
           <div className="flex items-center gap-1.5 mt-1">
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
               {canReviewRequest
-                ? "Validation ou refus des demandes d'achat soumises par le Magasinier et le Comptable."
+                ? "Validation ou refus des demandes d'achat soumises par le Magasinier et la Facturation."
                 : "Suivi et soumission de vos demandes d'achat."}
             </p>
             <InfoTooltip
               text={
                 canReviewRequest
-                  ? "Examinez, validez ou refusez les demandes d'achat soumises par le Gestionnaire de stock et le Comptable (avec motif optionnel). Le demandeur reçoit immédiatement une notification de votre décision."
+                  ? "Examinez, validez ou refusez les demandes d'achat soumises par le Gestionnaire de stock et la Facturation (avec motif optionnel). Le demandeur reçoit immédiatement une notification de votre décision."
                   : "Soumettez vos demandes d'achat (avec motif optionnel) à l'Administrateur / Sales Admin et recevez une notification dès validation ou refus."
               }
             />
@@ -497,11 +503,11 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
           <span className="text-[10px] font-bold uppercase text-slate-400">Total Demandes</span>
           <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">{counts.total}</div>
-          <span className="text-[11px] text-slate-500">Magasinier &amp; Comptable</span>
+          <span className="text-[11px] text-slate-500">Magasinier &amp; Facturation</span>
         </div>
 
         <div className="p-4 rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-950/20 shadow-xs">
@@ -612,8 +618,8 @@ export const DemandesAchatView: React.FC<DemandesAchatViewProps> = ({
         </div>
 
         {canReviewRequest && (
-          <div className="grid grid-cols-3 gap-2">
-            {(['all', 'Magasinier', 'Comptable'] as const).map((r) => (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {(['all', 'Magasinier', 'Facturation'] as const).map((r) => (
               <button
                 key={r}
                 type="button"

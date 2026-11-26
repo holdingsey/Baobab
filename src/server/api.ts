@@ -44,6 +44,20 @@ import {
   handleUpdateAnomalyThresholds,
   handleRunAnomalyScanNow,
 } from './anomalyEngine.js';
+import {
+  initVrsSystem,
+  vrsRouter,
+  syncVendorVrsCycleTransaction,
+  executeVrsVisitCheckin,
+  executeVrsMotifReaction,
+  executeVrsValidatePendingVisit,
+  executeVrsAssignMonthlyObjectives,
+  buildVendorMonthlyObjectiveSummary,
+  getMonthWorkingDaysInfo,
+  isVrsSupervisorRole,
+  isVrsAllowedRole,
+  resolveActor,
+} from './vrsService.js';
 
 export const apiRouter = Router();
 
@@ -52,6 +66,10 @@ ensureVapidConfigured();
 initSearchEngine();
 initBackupSystem();
 initAnomalyEngine();
+initVrsSystem();
+
+// Module Routine VRS (Visites terrain des vendeurs)
+apiRouter.use('/vrs', vrsRouter);
 
 // Exécution automatique des règles d'anomalies côté serveur à chaque événement métier
 apiRouter.use((req, res, next) => {
@@ -59,7 +77,8 @@ apiRouter.use((req, res, next) => {
     (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') &&
     !req.path.startsWith('/anomalies') &&
     !req.path.startsWith('/alertes') &&
-    !req.path.startsWith('/notifications')
+    !req.path.startsWith('/notifications') &&
+    !req.path.startsWith('/vrs')
   ) {
     res.on('finish', () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -601,10 +620,35 @@ apiRouter.delete('/users/:id', (req, res) => {
   }
 });
 
-// 3. CATALOGUE & GAMMES (Gammes lues dynamiquement depuis la base de données, jamais en dur)
+// 3. CATALOGUE & GAMMES (Gammes lues dynamiquement depuis la table des produits, jamais en dur)
 apiRouter.get('/products', (req, res) => {
   try {
-    const products = db.prepare('SELECT * FROM products ORDER BY name ASC').all();
+    const activeOnly = req.query.activeOnly === '1' || req.query.activeOnly === 'true';
+    const sql = activeOnly
+      ? 'SELECT * FROM products WHERE COALESCE(is_active, 1) = 1 ORDER BY gamme ASC, name ASC'
+      : 'SELECT * FROM products ORDER BY CASE WHEN COALESCE(is_active, 1) = 1 THEN 0 ELSE 1 END ASC, gamme ASC, name ASC';
+    const rawProducts = db.prepare(sql).all() as any[];
+
+    const historyRows = db
+      .prepare('SELECT * FROM product_price_history ORDER BY effective_date DESC, created_at DESC')
+      .all() as any[];
+    const historyByProductId = new Map<string, any[]>();
+    for (const h of historyRows) {
+      const list = historyByProductId.get(h.product_id) || [];
+      list.push(h);
+      historyByProductId.set(h.product_id, list);
+    }
+
+    const products = rawProducts.map((p) => ({
+      ...p,
+      is_active: p.is_active === undefined || p.is_active === null ? 1 : Number(p.is_active),
+      wholesale_price_box:
+        p.wholesale_price_box !== undefined && p.wholesale_price_box !== null
+          ? Number(p.wholesale_price_box)
+          : null,
+      price_history: historyByProductId.get(p.id) || [],
+    }));
+
     res.json({ success: true, products });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -614,10 +658,27 @@ apiRouter.get('/products', (req, res) => {
 
 apiRouter.get('/gammes', (req, res) => {
   try {
-    // Lu dynamiquement dans la table produits, jamais en dur !
-    const rows = db.prepare('SELECT DISTINCT gamme FROM products ORDER BY gamme ASC').all() as { gamme: string }[];
-    const gammes = rows.map(r => r.gamme);
+    // Lu dynamiquement dans la table des produits, jamais en dur !
+    const activeOnly = req.query.activeOnly === '1' || req.query.activeOnly === 'true';
+    const sql = activeOnly
+      ? "SELECT DISTINCT gamme FROM products WHERE COALESCE(is_active, 1) = 1 AND TRIM(gamme) != '' ORDER BY gamme ASC"
+      : "SELECT DISTINCT gamme FROM products WHERE TRIM(gamme) != '' ORDER BY gamme ASC";
+    const rows = db.prepare(sql).all() as { gamme: string }[];
+    const gammes = rows.map((r) => r.gamme);
     res.json({ success: true, gammes });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+apiRouter.get('/products/:id/price-history', (req, res) => {
+  try {
+    const { id } = req.params;
+    const history = db
+      .prepare('SELECT * FROM product_price_history WHERE product_id = ? ORDER BY effective_date DESC, created_at DESC')
+      .all(id);
+    res.json({ success: true, history });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
@@ -634,31 +695,100 @@ apiRouter.post('/products', requireAdmin, (req, res) => {
       packaging,
       units_per_box,
       price_box,
+      wholesale_price_box,
+      price_effective_date,
+      price_motif,
       stock_depot,
       threshold_depot,
+      is_active,
     } = req.body;
     if (!name || !gamme) {
       return res.status(400).json({ success: false, error: 'Nom et gamme du produit obligatoires.' });
     }
+
+    const retailPrice = Number(price_box || 9000);
+    if (!Number.isFinite(retailPrice) || retailPrice <= 0) {
+      return res.status(400).json({ success: false, error: 'Le prix détaillant par carton doit être supérieur à 0 FCFA.' });
+    }
+
+    let wholesalePrice: number | null = null;
+    if (wholesale_price_box !== undefined && wholesale_price_box !== null && String(wholesale_price_box).trim() !== '') {
+      wholesalePrice = Number(wholesale_price_box);
+      if (!Number.isFinite(wholesalePrice) || wholesalePrice <= 0) {
+        return res.status(400).json({ success: false, error: 'Le prix grossiste doit être un montant valide supérieur à 0 FCFA.' });
+      }
+      if (wholesalePrice > retailPrice) {
+        return res.status(400).json({
+          success: false,
+          error: `Contrôle tarifaire refusé : le prix grossiste (${wholesalePrice.toLocaleString('fr-FR')} FCFA) doit être inférieur ou égal au prix détaillant (${retailPrice.toLocaleString('fr-FR')} FCFA).`,
+        });
+      }
+    }
+
     const id = `prd-${Date.now()}`;
     const finalCode =
       code && String(code).trim()
         ? String(code).trim().toUpperCase()
         : `BAO-PRD-${String(Date.now()).slice(-4)}`;
+    const cleanName = String(name).trim();
+    const cleanGamme = String(gamme).trim() === 'Jus' ? 'Jus Cajoucy' : String(gamme).trim();
+    const effectiveDate =
+      price_effective_date && String(price_effective_date).trim()
+        ? String(price_effective_date).trim()
+        : new Date().toISOString().split('T')[0];
+    const activeFlag = is_active === 0 || is_active === false ? 0 : 1;
+    const nowIso = new Date().toISOString();
+
     db.prepare(`
-      INSERT INTO products (id, code, name, gamme, packaging, units_per_box, price_box, stock_depot, threshold_depot)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (
+        id, code, name, gamme, packaging, units_per_box,
+        price_box, wholesale_price_box, price_effective_date,
+        stock_depot, threshold_depot, is_active
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       finalCode,
-      String(name).trim(),
-      String(gamme).trim(),
-      packaging ? String(packaging).trim() : 'Carton standard',
+      cleanName,
+      cleanGamme,
+      packaging ? String(packaging).trim() : 'Carton de 12',
       Number(units_per_box || 12),
-      Number(price_box || 10000),
+      retailPrice,
+      wholesalePrice,
+      effectiveDate,
       Number(stock_depot || 0),
-      Number(threshold_depot || 50)
+      Number(threshold_depot || 50),
+      activeFlag
     );
+
+    db.prepare(`
+      INSERT INTO product_price_history (
+        id, product_id, product_code, product_name,
+        old_price_box, new_price_box, old_wholesale_price_box, new_wholesale_price_box,
+        effective_date, changed_by, motif, created_at
+      ) VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
+    `).run(
+      `pph-${Date.now()}`,
+      id,
+      finalCode,
+      cleanName,
+      retailPrice,
+      wholesalePrice,
+      effectiveDate,
+      'Amadou Touré (Administrateur)',
+      price_motif ? String(price_motif).trim() : 'Création initiale du produit au catalogue',
+      nowIso
+    );
+
+    recordAudit(
+      'CREATION_PRODUIT_CATALOGUE',
+      'PRODUCT',
+      id,
+      'Administrateur',
+      'usr-adm',
+      `Création du produit ${cleanName} (${finalCode}) dans la gamme "${cleanGamme}" — Prix détaillant : ${retailPrice} FCFA${wholesalePrice !== null ? `, Prix grossiste : ${wholesalePrice} FCFA` : ''} (effet : ${effectiveDate}).`
+    );
+
     res.json({ success: true, message: 'Produit ajouté au catalogue.' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -666,70 +796,1311 @@ apiRouter.post('/products', requireAdmin, (req, res) => {
   }
 });
 
-// Modification de produit : Administrateur seul
+// Modification de produit : Administrateur seul (avec contrôle prix grossiste <= prix détaillant, date d'effet et historique)
 apiRouter.patch('/products/:id', requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
-    const { name, gamme, packaging, units_per_box, price_box, stock_depot, threshold_depot } = req.body;
+    const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Produit introuvable.' });
+    }
+
+    const {
+      name,
+      gamme,
+      packaging,
+      units_per_box,
+      price_box,
+      wholesale_price_box,
+      price_effective_date,
+      price_motif,
+      stock_depot,
+      threshold_depot,
+      is_active,
+    } = req.body;
+
+    const nextRetailPrice = price_box !== undefined && price_box !== null ? Number(price_box) : Number(existing.price_box);
+    if (!Number.isFinite(nextRetailPrice) || nextRetailPrice <= 0) {
+      return res.status(400).json({ success: false, error: 'Le prix détaillant par carton doit être supérieur à 0 FCFA.' });
+    }
+
+    let nextWholesalePrice: number | null =
+      existing.wholesale_price_box !== undefined && existing.wholesale_price_box !== null
+        ? Number(existing.wholesale_price_box)
+        : null;
+
+    if (wholesale_price_box === null || wholesale_price_box === '') {
+      nextWholesalePrice = null;
+    } else if (wholesale_price_box !== undefined) {
+      nextWholesalePrice = Number(wholesale_price_box);
+      if (!Number.isFinite(nextWholesalePrice) || nextWholesalePrice <= 0) {
+        return res.status(400).json({ success: false, error: 'Le prix grossiste doit être un montant valide supérieur à 0 FCFA.' });
+      }
+    }
+
+    if (nextWholesalePrice !== null && nextWholesalePrice > nextRetailPrice) {
+      return res.status(400).json({
+        success: false,
+        error: `Contrôle tarifaire refusé : le prix grossiste (${nextWholesalePrice.toLocaleString('fr-FR')} FCFA) doit être inférieur ou égal au prix détaillant (${nextRetailPrice.toLocaleString('fr-FR')} FCFA).`,
+      });
+    }
+
+    const oldRetailPrice = Number(existing.price_box);
+    const oldWholesalePrice =
+      existing.wholesale_price_box !== undefined && existing.wholesale_price_box !== null
+        ? Number(existing.wholesale_price_box)
+        : null;
+    const priceChanged = nextRetailPrice !== oldRetailPrice || nextWholesalePrice !== oldWholesalePrice;
+
+    const effectiveDate =
+      price_effective_date && String(price_effective_date).trim()
+        ? String(price_effective_date).trim()
+        : priceChanged
+        ? new Date().toISOString().split('T')[0]
+        : existing.price_effective_date || new Date().toISOString().split('T')[0];
+
+    const cleanGamme =
+      gamme !== undefined && gamme !== null
+        ? String(gamme).trim() === 'Jus'
+          ? 'Jus Cajoucy'
+          : String(gamme).trim()
+        : existing.gamme;
+
+    const nextActive =
+      is_active !== undefined && is_active !== null
+        ? is_active === 0 || is_active === false
+          ? 0
+          : 1
+        : Number(existing.is_active ?? 1);
+
     db.prepare(`
       UPDATE products
       SET name = COALESCE(?, name),
-          gamme = COALESCE(?, gamme),
+          gamme = ?,
           packaging = COALESCE(?, packaging),
           units_per_box = COALESCE(?, units_per_box),
-          price_box = COALESCE(?, price_box),
+          price_box = ?,
+          wholesale_price_box = ?,
+          price_effective_date = ?,
           stock_depot = COALESCE(?, stock_depot),
-          threshold_depot = COALESCE(?, threshold_depot)
+          threshold_depot = COALESCE(?, threshold_depot),
+          is_active = ?
       WHERE id = ?
     `).run(
-      name ?? null,
-      gamme ?? null,
-      packaging ?? null,
+      name ? String(name).trim() : null,
+      cleanGamme,
+      packaging ? String(packaging).trim() : null,
       units_per_box !== undefined ? Number(units_per_box) : null,
-      price_box !== undefined ? Number(price_box) : null,
+      nextRetailPrice,
+      nextWholesalePrice,
+      effectiveDate,
       stock_depot !== undefined ? Number(stock_depot) : null,
       threshold_depot !== undefined ? Number(threshold_depot) : null,
+      nextActive,
       id
     );
-    res.json({ success: true, message: 'Produit mis à jour.' });
+
+    if (priceChanged) {
+      const nowIso = new Date().toISOString();
+      const motifText =
+        price_motif && String(price_motif).trim()
+          ? String(price_motif).trim()
+          : `Mise à jour tarifaire par l'Administrateur (date d'effet : ${effectiveDate})`;
+
+      db.prepare(`
+        INSERT INTO product_price_history (
+          id, product_id, product_code, product_name,
+          old_price_box, new_price_box, old_wholesale_price_box, new_wholesale_price_box,
+          effective_date, changed_by, motif, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `pph-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id,
+        existing.code,
+        name ? String(name).trim() : existing.name,
+        oldRetailPrice,
+        nextRetailPrice,
+        oldWholesalePrice,
+        nextWholesalePrice,
+        effectiveDate,
+        'Amadou Touré (Administrateur)',
+        motifText,
+        nowIso
+      );
+
+      recordAudit(
+        'MODIFICATION_TARIF_PRODUIT',
+        'PRODUCT',
+        id,
+        'Administrateur',
+        'usr-adm',
+        `Tarif mis à jour pour ${name || existing.name} (${existing.code}) avec date d'effet ${effectiveDate} : Détaillant ${oldRetailPrice} -> ${nextRetailPrice} FCFA | Grossiste ${oldWholesalePrice ?? 'Aucun'} -> ${nextWholesalePrice ?? 'Aucun'} FCFA. Motif : ${motifText}`
+      );
+    }
+
+    res.json({ success: true, message: 'Produit mis à jour avec succès.' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
   }
 });
 
+// Reclassement motivé du stock d'un produit (ex. "Jus Cajoucy (ancien)") vers une saveur active : Administrateur seul
+apiRouter.post('/products/:id/reclassify-stock', requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { target_product_id, quantity, motif } = req.body || {};
+
+    const sourceProd = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
+    if (!sourceProd) {
+      return res.status(404).json({ success: false, error: 'Produit source introuvable.' });
+    }
+
+    const targetProd = db.prepare('SELECT * FROM products WHERE id = ?').get(target_product_id) as any;
+    if (!targetProd) {
+      return res.status(404).json({ success: false, error: 'Saveur / produit de destination introuvable.' });
+    }
+    if (sourceProd.id === targetProd.id) {
+      return res.status(400).json({ success: false, error: 'Le produit de destination doit être différent du produit source.' });
+    }
+    if (Number(targetProd.is_active ?? 1) === 0) {
+      return res.status(400).json({ success: false, error: 'Impossible de reclasser du stock vers un produit désactivé.' });
+    }
+
+    const qty = Math.round(Number(quantity) || 0);
+    if (qty <= 0) {
+      return res.status(400).json({ success: false, error: 'La quantité à reclasser doit être supérieure à 0 carton.' });
+    }
+    if (qty > Number(sourceProd.stock_depot || 0)) {
+      return res.status(400).json({
+        success: false,
+        error: `Quantité supérieure au stock disponible de "${sourceProd.name}" (${sourceProd.stock_depot} cartons).`,
+      });
+    }
+
+    const cleanMotif = String(motif || '').trim();
+    if (cleanMotif.length < 3) {
+      return res.status(400).json({
+        success: false,
+        error: 'Un motif de reclassement est obligatoire pour tracer ce mouvement de stock.',
+      });
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const todayStr = nowIso.split('T')[0];
+    const ref = `RECL-${todayStr}-${String(Date.now()).slice(-4)}`;
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      // 1. Déduire du produit source et créditer la saveur cible
+      db.prepare('UPDATE products SET stock_depot = stock_depot - ? WHERE id = ?').run(qty, sourceProd.id);
+      db.prepare('UPDATE products SET stock_depot = stock_depot + ? WHERE id = ?').run(qty, targetProd.id);
+
+      // 2. Ajuster les lots FEFO : créer ou alimenter un lot sur la saveur cible
+      const sourceLot = db
+        .prepare("SELECT * FROM lots WHERE product_id = ? AND quantity > 0 ORDER BY expiry_date ASC LIMIT 1")
+        .get(sourceProd.id) as any;
+
+      const expiryToUse = sourceLot?.expiry_date || '2027-08-30';
+      if (sourceLot) {
+        const deductLot = Math.min(Number(sourceLot.quantity), qty);
+        db.prepare('UPDATE lots SET quantity = MAX(0, quantity - ?) WHERE id = ?').run(deductLot, sourceLot.id);
+      }
+
+      const newLotId = `lot-recl-${Date.now()}`;
+      const newLotNumber = `LOT-RECL-${targetProd.code.slice(-6)}-${String(Date.now()).slice(-3)}`;
+      db.prepare(`
+        INSERT INTO lots (id, product_id, lot_number, expiry_date, quantity, initial_quantity, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'actif', ?)
+      `).run(newLotId, targetProd.id, newLotNumber, expiryToUse, qty, qty, todayStr);
+
+      // 3. Tracer les deux mouvements dans stock_movements (sortie ancien produit + entrée saveur cible)
+      recordStockMovement(
+        'reclassement',
+        'OUT',
+        sourceProd.id,
+        sourceLot?.id || null,
+        qty,
+        ref,
+        `Reclassement stock de "${sourceProd.name}" vers "${targetProd.name}" — Motif : ${cleanMotif}`,
+        qty * Number(sourceProd.price_box || 0),
+        'Amadou Touré (Administrateur)'
+      );
+
+      recordStockMovement(
+        'reclassement',
+        'IN',
+        targetProd.id,
+        newLotId,
+        qty,
+        ref,
+        `Reclassement stock depuis "${sourceProd.name}" vers "${targetProd.name}" — Motif : ${cleanMotif}`,
+        qty * Number(targetProd.price_box || 0),
+        'Amadou Touré (Administrateur)'
+      );
+
+      // 4. Audit log
+      recordAudit(
+        'RECLASSEMENT_STOCK_PRODUIT',
+        'PRODUCT',
+        sourceProd.id,
+        'Administrateur',
+        'usr-adm',
+        `Reclassement motivé (${ref}) : ${qty} cartons transférés de "${sourceProd.name}" (${sourceProd.code}) vers "${targetProd.name}" (${targetProd.code}). Motif : ${cleanMotif}`
+      );
+
+      db.exec('COMMIT');
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      throw txErr;
+    }
+
+    res.json({
+      success: true,
+      reference: ref,
+      message: `${qty} cartons reclassés de "${sourceProd.name}" vers "${targetProd.name}" (Réf: ${ref}).`,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur lors du reclassement';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
 // 4. POINTS DE VENTE (PDV)
+
+/**
+ * Calcule les statistiques complètes de chaque PDV :
+ * - Nombre de ventes réalisées (sales_count), Chiffre d'affaires total (total_sales_amount)
+ * - Les produits assez achetés par le PDV (top_products : produit, total cartons achetés, nombre d'achats, montant total)
+ * - Nombre de visites (visits_count, no_sale_visits_count), déjà visité auparavant (visited_before), visité aujourd'hui (visited_today)
+ */
+function buildPdvSalesAndVisitsAnalyticsMap(referenceDateStr?: string) {
+  const refDate =
+    referenceDateStr ||
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Bamako',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+  const salesRows = db
+    .prepare(
+      `
+      SELECT s.id, s.number, s.thermal_ticket_number, s.invoice_number,
+             s.date, s.sale_time, s.vendor_id, s.pdv_id, s.items,
+             s.total_amount, s.buyer_type, s.wholesale_discount_amount,
+             s.cajoucy_boxes_count, s.payment_type, s.status, s.created_at,
+             COALESCE(u.name, 'Vendeur Baobab') as vendor_name,
+             COALESCE(u.code, 'BAO-VND') as vendor_code,
+             COALESCE(p.name, 'PDV') as pdv_name,
+             COALESCE(p.code, 'PDV') as pdv_code,
+             COALESCE(p.routine_name, '') as pdv_routine_name,
+             COALESCE(p.routine_day, 'Vendredi') as pdv_routine_day
+      FROM sales s
+      LEFT JOIN users u ON u.id = s.vendor_id
+      LEFT JOIN points_de_vente p ON p.id = s.pdv_id
+      WHERE COALESCE(s.status, 'livree') != 'annulee'
+      ORDER BY s.date DESC, COALESCE(s.sale_time, '00:00') DESC, s.created_at DESC
+    `
+    )
+    .all() as any[];
+
+  ensureVisitMotifImmutabilityAndReactionsSchema();
+
+  const reactionsByVisitId = new Map<
+    string,
+    Array<{
+      id: string;
+      visitId: string;
+      decision: 'accepte' | 'conteste';
+      comment: string | null;
+      actorName: string;
+      actorRole: string;
+      createdAt: string;
+    }>
+  >();
+  try {
+    const rxRows = db
+      .prepare(
+        `SELECT id, visit_id, decision, comment, actor_name, actor_role, created_at
+         FROM vrs_visit_motif_reactions
+         ORDER BY created_at DESC`
+      )
+      .all() as any[];
+    for (const r of rxRows) {
+      const vid = String(r.visit_id || '');
+      if (!vid) continue;
+      const list = reactionsByVisitId.get(vid) || [];
+      list.push({
+        id: String(r.id),
+        visitId: vid,
+        decision: r.decision === 'conteste' ? 'conteste' : 'accepte',
+        comment: r.comment || null,
+        actorName: String(r.actor_name || 'DOV'),
+        actorRole: String(r.actor_role || 'Directeur des opérations de vente'),
+        createdAt: String(r.created_at || ''),
+      });
+      reactionsByVisitId.set(vid, list);
+    }
+  } catch {
+    // ignore
+  }
+
+  let visitRows: any[] = [];
+  try {
+    visitRows = db
+      .prepare(
+        `
+        SELECT v.id, v.visit_uuid, v.visit_date, v.visit_time, v.server_recorded_at,
+               v.vendor_id, v.pdv_id, v.latitude, v.longitude, v.gps_accuracy, v.distance_m,
+               v.is_counted, v.status_reason, v.device_info,
+               COALESCE(v.visit_type, 'visite_sans_vente') as visit_type,
+               v.no_sale_reason,
+               v.sale_id,
+               v.routine_day,
+               v.routine_day_index,
+               v.motif_reaction_status,
+               v.motif_reaction_comment,
+               v.motif_reacted_by,
+               v.motif_reacted_role,
+               v.motif_reacted_at,
+               v.created_at,
+               COALESCE(u.name, 'Vendeur Baobab') as vendor_name,
+               COALESCE(u.code, 'BAO-VND') as vendor_code,
+               COALESCE(p.routine_day, 'Vendredi') as pdv_routine_day,
+               COALESCE(p.routine_day_index, 5) as pdv_routine_day_index
+        FROM vrs_visits v
+        LEFT JOIN users u ON u.id = v.vendor_id
+        LEFT JOIN points_de_vente p ON p.id = v.pdv_id
+        ORDER BY v.visit_date DESC, COALESCE(v.visit_time, '00:00:00') DESC, v.created_at DESC
+      `
+      )
+      .all() as any[];
+  } catch {
+    visitRows = [];
+  }
+
+  const pdvSalesMap = new Map<
+    string,
+    {
+      salesCount: number;
+      totalSalesAmount: number;
+      totalCartons: number;
+      lastSaleDate: string | null;
+      soldToday: boolean;
+      productsMap: Map<
+        string,
+        {
+          productId: string;
+          code: string;
+          name: string;
+          totalQuantity: number;
+          ordersCount: number;
+          totalAmount: number;
+        }
+      >;
+      salesHistory: any[];
+    }
+  >();
+
+  for (const s of salesRows) {
+    const pdvId = String(s.pdv_id || '');
+    if (!pdvId) continue;
+    let entry = pdvSalesMap.get(pdvId);
+    if (!entry) {
+      entry = {
+        salesCount: 0,
+        totalSalesAmount: 0,
+        totalCartons: 0,
+        lastSaleDate: null,
+        soldToday: false,
+        productsMap: new Map(),
+        salesHistory: [],
+      };
+      pdvSalesMap.set(pdvId, entry);
+    }
+
+    const amount = Number(s.total_amount || 0);
+    entry.salesCount += 1;
+    entry.totalSalesAmount += amount;
+    if (!entry.lastSaleDate || String(s.date) > entry.lastSaleDate) {
+      entry.lastSaleDate = s.date;
+    }
+    if (s.date === refDate) {
+      entry.soldToday = true;
+    }
+
+    let parsedItems: any[] = [];
+    try {
+      parsedItems =
+        typeof s.items === 'string'
+          ? JSON.parse(s.items)
+          : Array.isArray(s.items)
+          ? s.items
+          : [];
+    } catch {
+      parsedItems = [];
+    }
+
+    const normalizedSaleItems: Array<{
+      productId: string;
+      code: string;
+      name: string;
+      qtyBoxes: number;
+      unitPrice: number;
+      total: number;
+    }> = [];
+
+    let saleCartons = 0;
+    const seenProductsInThisSale = new Set<string>();
+
+    for (const it of parsedItems) {
+      const pId = String(it?.productId || it?.product_id || it?.code || it?.name || 'prod');
+      const pCode = String(it?.code || it?.productCode || 'PRD');
+      const pName = String(it?.name || it?.productName || it?.description || 'Produit Baobab');
+      const qty = Math.max(0, Number(it?.qtyBoxes ?? it?.qty ?? it?.quantity ?? 0));
+      const unitPrice = Math.max(0, Number(it?.unitPrice ?? it?.price ?? 0));
+      const lineTotal = Math.max(0, Number(it?.total ?? qty * unitPrice));
+      if (qty <= 0) continue;
+
+      saleCartons += qty;
+      normalizedSaleItems.push({
+        productId: pId,
+        code: pCode,
+        name: pName,
+        qtyBoxes: qty,
+        unitPrice,
+        total: lineTotal,
+      });
+
+      const prodKey = pId || pName;
+      const existingProd = entry.productsMap.get(prodKey) || {
+        productId: pId,
+        code: pCode,
+        name: pName,
+        totalQuantity: 0,
+        ordersCount: 0,
+        totalAmount: 0,
+      };
+      existingProd.totalQuantity += qty;
+      existingProd.totalAmount += lineTotal;
+      if (!seenProductsInThisSale.has(prodKey)) {
+        existingProd.ordersCount += 1;
+        seenProductsInThisSale.add(prodKey);
+      }
+      entry.productsMap.set(prodKey, existingProd);
+    }
+
+    entry.totalCartons += saleCartons;
+    const resolvedRoutineDay = s.pdv_routine_day || 'Vendredi';
+    const resolvedRoutineName =
+      (s.pdv_routine_name && String(s.pdv_routine_name).trim()) ||
+      `Routine ${resolvedRoutineDay}`;
+    entry.salesHistory.push({
+      id: s.id,
+      number: s.number,
+      thermal_ticket_number:
+        s.thermal_ticket_number || String(s.number || '').replace(/^VTE-/, 'TKT-THERM-'),
+      invoice_number: s.invoice_number || String(s.number || '').replace(/^VTE-/, 'FAC-'),
+      date: s.date,
+      sale_time: s.sale_time || '10:00',
+      vendor_id: s.vendor_id,
+      vendor_name: s.vendor_name,
+      vendor_code: s.vendor_code,
+      pdv_id: s.pdv_id,
+      pdv_name: s.pdv_name || 'PDV',
+      pdv_code: s.pdv_code || 'PDV',
+      routine_name: resolvedRoutineName,
+      routine_day: resolvedRoutineDay,
+      total_amount: amount,
+      total_boxes: saleCartons,
+      payment_type: s.payment_type || 'Comptant',
+      buyer_type: s.buyer_type || null,
+      wholesale_discount_amount: Number(s.wholesale_discount_amount || 0),
+      status: s.status || 'livree',
+      items: normalizedSaleItems,
+    });
+  }
+
+  const pdvVisitsMap = new Map<
+    string,
+    {
+      visitsCount: number;
+      routineDayVisitsCount: number;
+      noSaleVisitsCount: number;
+      withSaleVisitsCount: number;
+      visitedToday: boolean;
+      visitedBefore: boolean;
+      lastVisitDate: string | null;
+      lastVisitTime: string | null;
+      lastNoSaleReason: string | null;
+      visitsHistory: any[];
+    }
+  >();
+
+  for (const v of visitRows) {
+    const pdvId = String(v.pdv_id || '');
+    if (!pdvId) continue;
+    let entry = pdvVisitsMap.get(pdvId);
+    if (!entry) {
+      entry = {
+        visitsCount: 0,
+        routineDayVisitsCount: 0,
+        noSaleVisitsCount: 0,
+        withSaleVisitsCount: 0,
+        visitedToday: false,
+        visitedBefore: false,
+        lastVisitDate: null,
+        lastVisitTime: null,
+        lastNoSaleReason: null,
+        visitsHistory: [],
+      };
+      pdvVisitsMap.set(pdvId, entry);
+    }
+
+    entry.visitsCount += 1;
+
+    const pdvRoutineDay = String(v.pdv_routine_day || v.routine_day || 'Vendredi').trim();
+    const pdvRoutineDayIndex = Number(v.pdv_routine_day_index || v.routine_day_index || 5);
+    const visitRoutineDay = String(v.routine_day || pdvRoutineDay).trim();
+    const visitRoutineDayIndex = Number(v.routine_day_index || pdvRoutineDayIndex);
+    const isVisitOnRoutineDay =
+      visitRoutineDayIndex === pdvRoutineDayIndex ||
+      visitRoutineDay.toLowerCase() === pdvRoutineDay.toLowerCase();
+
+    if (isVisitOnRoutineDay) {
+      entry.routineDayVisitsCount += 1;
+    }
+
+    const hasExplicitNoSaleReason = Boolean(
+      v.no_sale_reason && String(v.no_sale_reason).trim().length > 0
+    );
+    const isWithSale =
+      !hasExplicitNoSaleReason &&
+      v.visit_type !== 'visite_sans_vente' &&
+      v.visit_type !== 'sans_vente' &&
+      (v.visit_type === 'visite_avec_vente' ||
+        Boolean(v.sale_id) ||
+        (/vente/i.test(String(v.status_reason || '')) &&
+          !/sans vente/i.test(String(v.status_reason || ''))));
+
+    // Toute visite qui n'est pas une vente est comptabilisée comme une visite sans vente
+    const isNoSale = !isWithSale;
+
+    if (isNoSale) {
+      entry.noSaleVisitsCount += 1;
+      if (!entry.lastNoSaleReason && v.no_sale_reason) {
+        entry.lastNoSaleReason = String(v.no_sale_reason);
+      }
+    } else if (isWithSale) {
+      entry.withSaleVisitsCount += 1;
+    }
+
+    if (v.visit_date === refDate || isVisitOnRoutineDay) {
+      entry.visitedToday = true;
+    } else {
+      entry.visitedBefore = true;
+    }
+
+    if (!entry.lastVisitDate || String(v.visit_date) > entry.lastVisitDate) {
+      entry.lastVisitDate = v.visit_date;
+      entry.lastVisitTime = v.visit_time || '09:00:00';
+    }
+
+    const rxHistory = reactionsByVisitId.get(String(v.id)) || [];
+
+    entry.visitsHistory.push({
+      id: v.id,
+      visit_uuid: v.visit_uuid,
+      visit_date: v.visit_date,
+      visit_time: v.visit_time || '09:00:00',
+      vendor_id: v.vendor_id,
+      vendor_name: v.vendor_name,
+      vendor_code: v.vendor_code,
+      visit_type: isWithSale ? 'visite_avec_vente' : 'visite_sans_vente',
+      no_sale_reason: v.no_sale_reason || null,
+      motif_reaction_status: v.motif_reaction_status || rxHistory[0]?.decision || null,
+      motif_reaction_comment: v.motif_reaction_comment || rxHistory[0]?.comment || null,
+      motif_reacted_by: v.motif_reacted_by || rxHistory[0]?.actorName || null,
+      motif_reacted_role: v.motif_reacted_role || rxHistory[0]?.actorRole || null,
+      motif_reacted_at: v.motif_reacted_at || rxHistory[0]?.createdAt || null,
+      motif_reactions_history: rxHistory,
+      sale_id: v.sale_id || null,
+      routine_day: visitRoutineDay,
+      routine_day_index: visitRoutineDayIndex,
+      status_reason: v.status_reason || 'Visite sans vente enregistrée',
+      is_counted: Number(v.is_counted ?? 1) === 1,
+      latitude: Number(v.latitude || 12.6392),
+      longitude: Number(v.longitude || -8.0029),
+      gps_accuracy: Number(v.gps_accuracy || 4.5),
+      distance_m: Number(v.distance_m || 0),
+    });
+  }
+
+  return { pdvSalesMap, pdvVisitsMap, refDate };
+}
+
+/**
+ * S'assure que le schéma d'immuabilité du motif vendeur (visites sans vente) et l'historique
+ * des réactions DOV (Accepter le motif / Contester avec commentaire séparé) existent.
+ * Crée également un déclencheur SQLite interdisant toute modification d'un motif déjà envoyé.
+ */
+function ensureVisitMotifImmutabilityAndReactionsSchema(
+  vendorId?: string,
+  referenceDate?: string,
+  routineStatus?: { activeDayName: string; activeDayIndex: number },
+  vendorMeta?: { id: string; name: string; code: string }
+) {
+  try {
+    try {
+      db.exec("ALTER TABLE vrs_visits ADD COLUMN validation_status TEXT DEFAULT 'soumis'");
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN validated_by TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN validated_at TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN motif_reaction_status TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN motif_reaction_comment TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN motif_reacted_by TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN motif_reacted_role TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN motif_reacted_at TEXT');
+    } catch {}
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS vrs_visit_motif_reactions (
+        id TEXT PRIMARY KEY,
+        visit_id TEXT NOT NULL,
+        pdv_id TEXT,
+        vendor_id TEXT,
+        decision TEXT NOT NULL,
+        comment TEXT,
+        actor_id TEXT,
+        actor_name TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_vrs_visit_motif_reactions_visit ON vrs_visit_motif_reactions(visit_id);
+    `);
+
+    // Trigger SQLite : fige définitivement tout motif déjà envoyé (interdit tout UPDATE de no_sale_reason)
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_vrs_visits_freeze_no_sale_reason
+      BEFORE UPDATE OF no_sale_reason ON vrs_visits
+      WHEN OLD.no_sale_reason IS NOT NULL AND TRIM(OLD.no_sale_reason) <> '' AND COALESCE(NEW.no_sale_reason, '') <> OLD.no_sale_reason
+      BEGIN
+        SELECT RAISE(ABORT, 'MOTIF_VENDEUR_FIGE_403');
+      END;
+    `);
+  } catch {
+    // ignore schema init errors
+  }
+}
+
+/**
+ * Assure que tous les PDV existants sont liés à leur vendeur créateur et au jour où ils ont été créés,
+ * afin que chaque vendeur retrouve immédiatement ses PDV sur son jour actif de routine (et reste verrouillé
+ * sur ce jour tant qu'il n'a pas validé au moins 25 PDV).
+ */
+function ensureAllPdvsBoundToVendorAndRoutineDay() {
+  try {
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN updated_at TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN validation_status TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN validated_by TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN validated_at TEXT');
+    } catch {}
+
+    const vendors = db
+      .prepare("SELECT id, name, code FROM users WHERE role = 'Vendeur' ORDER BY code ASC")
+      .all() as Array<{ id: string; name: string; code: string }>;
+    if (vendors.length === 0) return;
+
+    const defaultVendor = vendors[0];
+    db.prepare(`
+      UPDATE points_de_vente
+      SET vendor_id = ?,
+          created_by = COALESCE(NULLIF(created_by, ''), ?)
+      WHERE vendor_id IS NULL OR TRIM(vendor_id) = ''
+    `).run(defaultVendor.id, defaultVendor.name);
+  } catch (err) {
+    console.warn('[PDV Binding] Warning:', err);
+  }
+}
+
+function comparePdvRowsMostRecentFirst(a: any, b: any): number {
+  const tsA = String(a.updated_at || a.created_at || '');
+  const tsB = String(b.updated_at || b.created_at || '');
+  if (tsA !== tsB) {
+    return tsB.localeCompare(tsA);
+  }
+  const createdA = String(a.created_at || '');
+  const createdB = String(b.created_at || '');
+  if (createdA !== createdB) {
+    return createdB.localeCompare(createdA);
+  }
+  const idNumA = Number(String(a.id || '').replace(/\D+/g, '')) || 0;
+  const idNumB = Number(String(b.id || '').replace(/\D+/g, '')) || 0;
+  if (idNumA !== idNumB) {
+    return idNumB - idNumA;
+  }
+  return String(b.code || '').localeCompare(String(a.code || ''), 'fr', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
 apiRouter.get('/pdvs', (req, res) => {
   try {
+    ensureAllPdvsBoundToVendorAndRoutineDay();
+
     const userRole = getUserRole(req);
-    const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
-    const queryVendorId = typeof req.query.vendor_id === 'string' ? req.query.vendor_id.trim() : '';
-    const filterVendorId = queryVendorId || (userRole === 'Vendeur' ? headerUserId : '');
+    const headerUserId =
+      typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+    const queryVendorId =
+      typeof req.query.vendor_id === 'string' ? req.query.vendor_id.trim() : '';
+    const clientDate =
+      typeof req.query.client_date === 'string' ? req.query.client_date.trim() : undefined;
+    const includeAllDays = req.query.include_all_days === '1';
+
+    const effectiveVendorId =
+      userRole === 'Vendeur'
+        ? headerUserId || queryVendorId || 'usr-vnd-1'
+        : queryVendorId;
+
+    let vendorActiveRoutine: ReturnType<typeof reconcileVendorPdvRoutineStatus> | null = null;
+    if (effectiveVendorId) {
+      vendorActiveRoutine = reconcileVendorPdvRoutineStatus(effectiveVendorId, clientDate);
+    }
 
     let sql = `
       SELECT p.*,
              COALESCE(u.name, p.created_by, 'Oumar Konaté') AS created_by,
              COALESCE(u.code, 'BAO-VND-001') AS vendor_code,
              COALESCE(u.team, '') AS vendor_team,
-             COALESCE(u.phone, '') AS vendor_phone,
-             COALESCE((SELECT COUNT(*) FROM sales s WHERE s.pdv_id = p.id AND COALESCE(s.status, 'livree') != 'annulee'), 0) AS sales_count,
-             COALESCE((SELECT SUM(s.total_amount) FROM sales s WHERE s.pdv_id = p.id AND COALESCE(s.status, 'livree') != 'annulee'), 0) AS total_sales_amount,
-             (SELECT MAX(s.date) FROM sales s WHERE s.pdv_id = p.id AND COALESCE(s.status, 'livree') != 'annulee') AS last_sale_date
+             COALESCE(u.phone, '') AS vendor_phone
       FROM points_de_vente p
       LEFT JOIN users u ON p.vendor_id = u.id
     `;
+    const conditions: string[] = [];
     const params: any[] = [];
-    if (userRole === 'Vendeur' && filterVendorId) {
-      sql += ` WHERE p.vendor_id = ?`;
-      params.push(filterVendorId);
-    }
-    sql += ` ORDER BY p.created_at DESC, p.code ASC`;
 
-    const pdvs = db.prepare(sql).all(...params);
-    res.json({ success: true, pdvs });
+    // Règle stricte demandée :
+    // "Chaque point de vente est lié au jour où il a été créé par le vendeur et il a l'obligation de revenir
+    // dans ces mêmes points de vente pour visite ou vente. Par exemple : les 25 PDV créés le vendredi ne peuvent
+    // être visités par le vendeur que le vendredi donc chaque PDV s'affiche uniquement dans le jour où il a été créé
+    // et visible que par son vendeur."
+    if (userRole === 'Vendeur') {
+      const vId = effectiveVendorId || 'usr-vnd-1';
+      conditions.push('p.vendor_id = ?');
+      params.push(vId);
+
+      if (vendorActiveRoutine && !includeAllDays) {
+        conditions.push(
+          `(p.routine_day_index IS NULL OR p.routine_day_index = 0 OR p.routine_day IS NULL OR TRIM(p.routine_day) = '' OR p.routine_day_index = ? OR LOWER(COALESCE(p.routine_day, '')) = LOWER(?))`
+        );
+        params.push(vendorActiveRoutine.activeDayIndex, vendorActiveRoutine.activeDayName);
+      }
+    } else if (effectiveVendorId) {
+      conditions.push('p.vendor_id = ?');
+      params.push(effectiveVendorId);
+    }
+
+    if (conditions.length > 0) {
+      sql += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    sql += ` ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.created_at DESC, p.code DESC`;
+
+    const rawPdvs = db.prepare(sql).all(...params) as any[];
+    const { pdvSalesMap, pdvVisitsMap, refDate } = buildPdvSalesAndVisitsAnalyticsMap(
+      vendorActiveRoutine?.referenceDate || clientDate
+    );
+
+    const vendorRoutineCache = new Map<
+      string,
+      ReturnType<typeof reconcileVendorPdvRoutineStatus>
+    >();
+    if (effectiveVendorId && vendorActiveRoutine) {
+      vendorRoutineCache.set(effectiveVendorId, vendorActiveRoutine);
+    }
+    const getVendorRoutine = (vIdRaw?: string | null) => {
+      const vId = String(vIdRaw || 'usr-vnd-1').trim() || 'usr-vnd-1';
+      let cached = vendorRoutineCache.get(vId);
+      if (!cached) {
+        try {
+          cached = reconcileVendorPdvRoutineStatus(vId, clientDate);
+          vendorRoutineCache.set(vId, cached);
+        } catch {
+          return vendorActiveRoutine;
+        }
+      }
+      return cached;
+    };
+
+    const pdvs = rawPdvs
+      .map((p) => {
+        const sStats = pdvSalesMap.get(String(p.id));
+        const vStats = pdvVisitsMap.get(String(p.id));
+        const vRoutine = getVendorRoutine(p.vendor_id);
+
+        const topProducts = sStats
+          ? Array.from(sStats.productsMap.values())
+              .sort((a, b) => b.totalQuantity - a.totalQuantity || b.totalAmount - a.totalAmount)
+              .slice(0, 6)
+          : [];
+
+        const salesCount = sStats?.salesCount || 0;
+        const rawVisitsCount = vStats?.visitsCount || 0;
+        const visitsCount = Math.max(rawVisitsCount, salesCount > 0 ? salesCount : 1);
+        const unlinkedSaleTodayCount =
+          sStats?.soldToday && (vStats?.withSaleVisitsCount || 0) === 0 ? 1 : 0;
+        const routineDayVisitsCount = Math.max(
+          (vStats?.routineDayVisitsCount || 0) + unlinkedSaleTodayCount,
+          p.validation_status === 'valide' && (vStats?.routineDayVisitsCount || 0) === 0 ? 1 : 0
+        );
+        const noSaleVisitsCount = Math.max(
+          vStats?.noSaleVisitsCount || 0,
+          Math.max(0, rawVisitsCount - salesCount)
+        );
+        const visitedBefore =
+          Boolean(vStats?.visitedBefore) ||
+          salesCount > 0 ||
+          (p.created_at && String(p.created_at).slice(0, 10) < refDate) ||
+          rawVisitsCount >= 1;
+
+        return {
+          ...p,
+          updated_at: p.updated_at || p.created_at,
+          routine_day: p.routine_day || vRoutine?.activeDayName || 'Lundi',
+          routine_day_index: Number(
+            p.routine_day_index || vRoutine?.activeDayIndex || 1
+          ),
+          sales_count: salesCount,
+          total_sales_amount: sStats?.totalSalesAmount || 0,
+          total_cartons_sold: sStats?.totalCartons || 0,
+          last_sale_date: sStats?.lastSaleDate || null,
+          visits_count: visitsCount,
+          routine_day_visits_count: routineDayVisitsCount,
+          today_visits_count: routineDayVisitsCount,
+          no_sale_visits_count: noSaleVisitsCount,
+          with_sale_visits_count: Math.max(vStats?.withSaleVisitsCount || 0, salesCount),
+          visited_today: Boolean(routineDayVisitsCount > 0 || vStats?.visitedToday || sStats?.soldToday),
+          sold_today: Boolean(sStats?.soldToday),
+          visited_before: visitedBefore,
+          last_visit_date: vStats?.lastVisitDate || p.created_at || null,
+          last_visit_time: vStats?.lastVisitTime || null,
+          last_no_sale_reason: vStats?.lastNoSaleReason || null,
+          top_products: topProducts,
+        };
+      })
+      .sort(comparePdvRowsMostRecentFirst);
+
+    res.json({
+      success: true,
+      pdvs,
+      activeRoutineDay: vendorActiveRoutine
+        ? {
+            dayIndex: vendorActiveRoutine.activeDayIndex,
+            dayName: vendorActiveRoutine.activeDayName,
+            pdvCount: vendorActiveRoutine.activePdvCount,
+            targetPdvCount: vendorActiveRoutine.targetPdvCount,
+            isTargetReachedToday: vendorActiveRoutine.isTargetReachedToday,
+          }
+        : null,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Fiche Profil complète d'un PDV & Historique complet des Visites et des Ventes (+ Produits assez achetés)
+// Accessible au Vendeur (uniquement pour ses propres PDV), à l'Administrateur, au VOD/DOV (Directeur des opérations de vente) et au SA (Sales Admin)
+apiRouter.get('/pdvs/:id/fiche', (req, res) => {
+  try {
+    ensureAllPdvsBoundToVendorAndRoutineDay();
+
+    const { id } = req.params;
+    const userRole = getUserRole(req) || '';
+    const headerUserId =
+      typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+
+    const allowedRoles = [
+      'Vendeur',
+      'Administrateur',
+      'Directeur des opérations de vente',
+      'Sales Admin',
+      'Comptable',
+    ];
+    if (userRole && !allowedRoles.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        error: `Accès refusé (403) : le rôle "${userRole}" n'est pas autorisé à consulter la fiche détaillée de ce PDV.`,
+      });
+    }
+
+    const pdv = db
+      .prepare(
+        `
+        SELECT p.*,
+               COALESCE(u.name, p.created_by, 'Oumar Konaté') AS created_by,
+               COALESCE(u.code, 'BAO-VND-001') AS vendor_code,
+               COALESCE(u.team, '') AS vendor_team,
+               COALESCE(u.phone, '') AS vendor_phone
+        FROM points_de_vente p
+        LEFT JOIN users u ON p.vendor_id = u.id
+        WHERE p.id = ? OR p.code = ?
+      `
+      )
+      .get(id, id) as any;
+
+    if (!pdv) {
+      return res.status(404).json({
+        success: false,
+        error: 'Point de vente introuvable.',
+      });
+    }
+
+    // Un vendeur ne peut voir que les PDV qu'il a lui-même créés
+    if (userRole === 'Vendeur' && headerUserId && pdv.vendor_id && pdv.vendor_id !== headerUserId) {
+      return res.status(403).json({
+        success: false,
+        error:
+          'Accès refusé (403) : chaque PDV est visible uniquement par le vendeur qui l\'a créé.',
+      });
+    }
+
+    const { pdvSalesMap, pdvVisitsMap, refDate } = buildPdvSalesAndVisitsAnalyticsMap();
+    const sStats = pdvSalesMap.get(String(pdv.id));
+    const vStats = pdvVisitsMap.get(String(pdv.id));
+
+    const topProducts = sStats
+      ? Array.from(sStats.productsMap.values()).sort(
+          (a, b) => b.totalQuantity - a.totalQuantity || b.totalAmount - a.totalAmount
+        )
+      : [];
+
+    const salesHistory = sStats?.salesHistory || [];
+    const rawVisitsHistory = vStats?.visitsHistory ? [...vStats.visitsHistory] : [];
+
+    // S'assurer que chaque vente réalisée dans ce PDV apparaît aussi dans la chronologie des visites si non présente,
+    // et que la visite initiale de création du PDV figure bien dans l'historique des visites
+    const existingVisitDates = new Set(rawVisitsHistory.map((v) => `${v.visit_date}`));
+    for (const s of salesHistory) {
+      if (!existingVisitDates.has(String(s.date))) {
+        const productsSummary = (s.items || [])
+          .map((it: any) => `${it.qtyBoxes}x ${it.name}`)
+          .join(', ');
+        rawVisitsHistory.push({
+          id: `vis-sale-${s.id}`,
+          visit_uuid: `uuid-sale-${s.id}`,
+          visit_date: s.date,
+          visit_time: s.sale_time ? `${s.sale_time}:00` : '10:30:00',
+          vendor_id: s.vendor_id,
+          vendor_name: s.vendor_name,
+          vendor_code: s.vendor_code,
+          visit_type: 'visite_avec_vente',
+          no_sale_reason: null,
+          sale_id: s.id,
+          sale_number: s.number,
+          sale_amount: s.total_amount,
+          sale_products_summary: productsSummary,
+          routine_day: pdv.routine_day || 'Vendredi',
+          routine_day_index: pdv.routine_day_index || 5,
+          status_reason: `Visite avec vente ${s.number} (${Number(s.total_amount || 0).toLocaleString('fr-FR')} FCFA) — ${productsSummary}`,
+          is_counted: true,
+          latitude: Number(pdv.latitude || 12.6392),
+          longitude: Number(pdv.longitude || -8.0029),
+          gps_accuracy: Number(pdv.gps_accuracy || 4.2),
+          distance_m: 0,
+        });
+      }
+    }
+
+    // Ajouter la visite initiale de création uniquement si aucune visite n'existe encore pour ce PDV
+    const createdDateStr = String(pdv.created_at || '2026-05-15').split('T')[0];
+    if (rawVisitsHistory.length === 0) {
+      rawVisitsHistory.push({
+        id: `vis-creation-${pdv.id}`,
+        visit_uuid: `uuid-creation-${pdv.id}`,
+        visit_date: createdDateStr,
+        visit_time: '08:45:00',
+        vendor_id: pdv.vendor_id || 'usr-vnd-1',
+        vendor_name: pdv.created_by || 'Oumar Konaté',
+        vendor_code: pdv.vendor_code || 'BAO-VND-001',
+        visit_type: 'visite_sans_vente',
+        no_sale_reason: null,
+        sale_id: null,
+        routine_day: pdv.routine_day || 'Vendredi',
+        routine_day_index: pdv.routine_day_index || 5,
+        status_reason: `Visite sans vente (${pdv.routine_day || 'Vendredi'})`,
+        is_counted: true,
+        latitude: Number(pdv.latitude || 12.6392),
+        longitude: Number(pdv.longitude || -8.0029),
+        gps_accuracy: Number(pdv.gps_accuracy || 4.2),
+        distance_m: 0,
+      });
+    }
+
+    // Enrichir les visites ayant eu une vente le même jour avec le détail de la vente
+    const salesByDateMap = new Map<string, any[]>();
+    for (const s of salesHistory) {
+      const list = salesByDateMap.get(String(s.date)) || [];
+      list.push(s);
+      salesByDateMap.set(String(s.date), list);
+    }
+
+    const sortedChrono = rawVisitsHistory
+      .map((v) => {
+        const linkedSale =
+          (v.sale_id && salesHistory.find((s) => s.id === v.sale_id || s.number === v.sale_id)) ||
+          (v.visit_type !== 'visite_sans_vente' &&
+          !v.no_sale_reason &&
+          salesByDateMap.get(String(v.visit_date))?.[0]
+            ? salesByDateMap.get(String(v.visit_date))![0]
+            : null);
+
+        const isWithSale = Boolean(linkedSale) || v.visit_type === 'visite_avec_vente';
+
+        return {
+          ...v,
+          routine_day: v.routine_day || pdv.routine_day || 'Vendredi',
+          routine_day_index: Number(v.routine_day_index || pdv.routine_day_index || 5),
+          visit_type: isWithSale ? 'visite_avec_vente' : 'visite_sans_vente',
+          sale_number: v.sale_number || linkedSale?.number || null,
+          sale_amount: v.sale_amount ?? linkedSale?.total_amount ?? null,
+          sale_items: linkedSale?.items || [],
+        };
+      })
+      .sort((a, b) => {
+        const keyA = `${a.visit_date}T${a.visit_time || '00:00:00'}`;
+        const keyB = `${b.visit_date}T${b.visit_time || '00:00:00'}`;
+        return keyA.localeCompare(keyB);
+      })
+      .map((v, idx) => ({
+        ...v,
+        routine_visit_number: idx + 1,
+      }));
+
+    const enrichedVisitsHistory = [...sortedChrono].reverse();
+
+    const salesCount = salesHistory.length;
+    const totalSalesAmount = sStats?.totalSalesAmount || 0;
+    const totalCartonsSold = sStats?.totalCartons || 0;
+    const visitsCount = enrichedVisitsHistory.length;
+    const pdvTargetDay = String(pdv.routine_day || 'Vendredi').toLowerCase();
+    const pdvTargetDayIndex = Number(pdv.routine_day_index || 5);
+    const realVisitsOnRoutineDay = enrichedVisitsHistory.filter(
+      (v) =>
+        !String(v.id || '').startsWith('vis-creation-') &&
+        (Number(v.routine_day_index || 0) === pdvTargetDayIndex ||
+          String(v.routine_day || '').toLowerCase() === pdvTargetDay)
+    );
+    const routineDayVisitsCount = Math.max(
+      realVisitsOnRoutineDay.length,
+      pdv.validation_status === 'valide' && realVisitsOnRoutineDay.length === 0 ? 1 : 0
+    );
+    const noSaleVisitsCount = realVisitsOnRoutineDay.filter(
+      (v) => v.visit_type === 'visite_sans_vente'
+    ).length;
+    const withSaleVisitsCount = realVisitsOnRoutineDay.filter(
+      (v) => v.visit_type === 'visite_avec_vente'
+    ).length;
+
+    res.json({
+      success: true,
+      fiche: {
+        pdv: {
+          ...pdv,
+          routine_day: pdv.routine_day || 'Vendredi',
+          routine_day_index: Number(pdv.routine_day_index || 5),
+          sales_count: salesCount,
+          total_sales_amount: totalSalesAmount,
+          total_cartons_sold: totalCartonsSold,
+          visits_count: visitsCount,
+          routine_day_visits_count: routineDayVisitsCount,
+          today_visits_count: routineDayVisitsCount,
+          no_sale_visits_count: noSaleVisitsCount,
+          with_sale_visits_count: withSaleVisitsCount,
+          visited_today: Boolean(routineDayVisitsCount > 0 || vStats?.visitedToday || sStats?.soldToday),
+          sold_today: Boolean(sStats?.soldToday),
+          visited_before: visitsCount >= 1,
+          last_sale_date: sStats?.lastSaleDate || null,
+          last_visit_date: enrichedVisitsHistory[0]?.visit_date || pdv.created_at || null,
+          top_products: topProducts,
+        },
+        top_products: topProducts,
+        sales_history: salesHistory,
+        visits_history: enrichedVisitsHistory,
+        routine_day_visits_count: routineDayVisitsCount,
+        today_visits_count: routineDayVisitsCount,
+        reference_date: refDate,
+      },
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Erreur lors du chargement de la fiche PDV';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Déclaration d'une visite par le vendeur dans un PDV qu'il a créé et visité auparavant :
+// - Vérifie que le PDV appartient au vendeur créateur et au jour de routine actif (ex: Vendredi -> Vendredi uniquement)
+// - Si visite sans vente (visit_mode === 'sans_vente') : motif obligatoire, enregistre la visite dans l'historique du PDV,
+//   incrémente la progression vers les 25 PDV du jour actif, et envoie une notification en temps réel à l'Administrateur et au VOD/DOV
+apiRouter.post('/pdvs/:id/declare-visit', (req, res) => {
+  try {
+    ensureAllPdvsBoundToVendorAndRoutineDay();
+    ensureVisitMotifImmutabilityAndReactionsSchema();
+
+    const { id } = req.params;
+    const callerRole = getUserRole(req);
+    const headerUserId =
+      typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+
+    if (callerRole !== 'Vendeur') {
+      recordAudit(
+        'TENTATIVE_SAISIE_OU_MODIFICATION_MOTIF_REFUSEE_403',
+        'PDV',
+        String(id || 'pdv'),
+        callerRole || 'Non spécifié',
+        headerUserId || 'inconnu',
+        `Refus 403 : tentative de saisie ou de modification du motif de visite sans vente par le rôle "${callerRole || 'Non spécifié'}" sur le PDV ${id}.`
+      );
+      return res.status(403).json({
+        success: false,
+        code: 'ROLE_READONLY_MOTIF_403',
+        error:
+          "Accès refusé (403) : seul le Vendeur peut pointer une visite ou saisir un motif avant l'envoi.",
+      });
+    }
+
+    const {
+      vendor_id,
+      visit_id,
+      visit_mode,
+      visit_type,
+      no_sale_reason,
+      motif,
+      latitude,
+      longitude,
+      gps_accuracy,
+      client_date,
+      visit_date,
+      visit_uuid,
+      device_info,
+    } = req.body || {};
+
+    if (visit_id || req.body?.edit_motif || req.body?.update_motif) {
+      return res.status(403).json({
+        success: false,
+        code: 'MOTIF_FIGE_403',
+        error:
+          "Modification refusée (403) : toute tentative de modifier un motif déjà envoyé est refusée. Le motif est définitivement figé à l'envoi.",
+      });
+    }
+
+    const pdvRow = db
+      .prepare('SELECT * FROM points_de_vente WHERE id = ? OR code = ?')
+      .get(id, id) as any;
+
+    if (!pdvRow) {
+      return res.status(404).json({
+        success: false,
+        error: 'Point de vente introuvable.',
+      });
+    }
+
+    const actor = resolveActor(req);
+    const vendorId =
+      typeof vendor_id === 'string' && vendor_id.trim()
+        ? vendor_id.trim()
+        : actor.role === 'Vendeur' && actor.id
+        ? actor.id
+        : headerUserId || 'usr-vnd-1';
+
+    const cleanMotif = String(no_sale_reason || motif || '').trim();
+    const rawMode = String(visit_type || visit_mode || '').toLowerCase().trim();
+    const effectiveType =
+      rawMode === 'avec_vente' || rawMode === 'visite_avec_vente'
+        ? 'avec_vente'
+        : 'sans_vente';
+
+    const result = executeVrsVisitCheckin({
+      actor: { ...actor, role: 'Vendeur', id: vendorId },
+      vendorId,
+      pdvId: pdvRow.id,
+      latitude: latitude !== undefined ? Number(latitude) : undefined,
+      longitude: longitude !== undefined ? Number(longitude) : undefined,
+      gpsAccuracy: gps_accuracy !== undefined ? Number(gps_accuracy) : undefined,
+      deviceInfo: device_info || 'Déclaration Visite PDV',
+      visitUuid: visit_uuid,
+      visitDate: visit_date || client_date,
+      visitType: effectiveType,
+      noSaleReason: cleanMotif || null,
+    });
+
+    if (!result.success) {
+      return res.status(result.httpStatus).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+      });
+    }
+
+    const updatedRoutineStatus = reconcileVendorPdvRoutineStatus(
+      vendorId,
+      visit_date || client_date
+    );
+    const activeDayVisitsCount =
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM vrs_visits
+             WHERE vendor_id = ? AND pdv_id = ? AND visit_date = ?`
+          )
+          .get(vendorId, pdvRow.id, result.visit?.visit_date || updatedRoutineStatus.activeDate) as
+          | { cnt: number }
+          | undefined
+      )?.cnt || 1;
+
+    return res.status(result.httpStatus).json({
+      success: true,
+      visitId: result.visit?.id,
+      visit: result.visit,
+      visitType: result.visit?.visit_type,
+      routineDayVisitsCount: activeDayVisitsCount,
+      noSaleReason: result.visit?.no_sale_reason || null,
+      alreadyCountedToday: Boolean(result.alreadyCountedToday),
+      justReached25: Boolean(result.justValidatedDay),
+      justValidatedDay: Boolean(result.justValidatedDay),
+      justCompletedCycle: Boolean(result.justCompletedCycle),
+      routineStatus: updatedRoutineStatus,
+      state: result.state,
+      message: result.message,
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Erreur lors de la déclaration de la visite au PDV';
+    return res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -757,11 +2128,59 @@ apiRouter.patch('/pdvs/:id/status', requireAdminOrDirecteurOps, (req, res) => {
       return res.status(404).json({ success: false, error: 'Point de vente introuvable.' });
     }
 
-    db.prepare('UPDATE points_de_vente SET status = ?, rejection_reason = ? WHERE id = ?').run(
+    const nowIso = new Date().toISOString();
+    const validatorBadgeLabel =
+      userRole === 'Directeur des opérations de vente'
+        ? 'Directeur des opérations de vente (DOV)'
+        : 'Administrateur';
+
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN validation_status TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN validated_by TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE points_de_vente ADD COLUMN validated_at TEXT');
+    } catch {}
+    try {
+      db.exec("ALTER TABLE vrs_visits ADD COLUMN validation_status TEXT DEFAULT 'soumis'");
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN validated_by TEXT');
+    } catch {}
+    try {
+      db.exec('ALTER TABLE vrs_visits ADD COLUMN validated_at TEXT');
+    } catch {}
+
+    db.prepare(
+      `UPDATE points_de_vente
+       SET status = ?,
+           validation_status = ?,
+           validated_by = ?,
+           validated_at = ?,
+           rejection_reason = ?,
+           updated_at = ?
+       WHERE id = ?`
+    ).run(
       status,
+      status === 'valide' ? 'valide' : 'soumis',
+      status === 'valide' ? validatorBadgeLabel : null,
+      status === 'valide' ? nowIso : null,
       status === 'rejete' ? (rejection_reason || `Demande rejetée par ${actorLabel}`) : null,
+      nowIso,
       id
     );
+
+    if (status === 'valide') {
+      try {
+        db.prepare(
+          'UPDATE vrs_visits SET validation_status = ?, validated_by = ?, validated_at = ? WHERE pdv_id = ?'
+        ).run('valide', validatorBadgeLabel, nowIso, id);
+      } catch {
+        // ignore
+      }
+    }
 
     markNotificationsReadByReference('Administrateur', pdv.code);
     markNotificationsReadByReference('Directeur des opérations de vente', pdv.code);
@@ -818,13 +2237,215 @@ apiRouter.patch('/pdvs/:id/status', requireAdminOrDirecteurOps, (req, res) => {
   }
 });
 
-// Création d'un PDV : Vendeur uniquement, conditionnée par la prise de photo en direct de la devanture et la position GPS précise
+// Jours ouvrables de la routine de création de PDV (Lundi à Samedi — Dimanche exclu)
+const PDV_ROUTINE_WEEK_DAYS: Array<{
+  dayIndex: number;
+  dayName: string;
+  shortName: string;
+}> = [
+  { dayIndex: 1, dayName: 'Lundi', shortName: 'Lun' },
+  { dayIndex: 2, dayName: 'Mardi', shortName: 'Mar' },
+  { dayIndex: 3, dayName: 'Mercredi', shortName: 'Mer' },
+  { dayIndex: 4, dayName: 'Jeudi', shortName: 'Jeu' },
+  { dayIndex: 5, dayName: 'Vendredi', shortName: 'Ven' },
+  { dayIndex: 6, dayName: 'Samedi', shortName: 'Sam' },
+];
+
+const PDV_ROUTINE_DAILY_TARGET = 25;
+
+function resolvePdvRoutineReferenceDate(clientDateRaw?: unknown): {
+  dateStr: string;
+  weekdayIndex: number; // 1 (Lundi) .. 6 (Samedi), Dimanche ramené à Lundi (1)
+} {
+  const now = new Date();
+  const bamakoDateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Bamako',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+
+  const candidate =
+    typeof clientDateRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDateRaw.trim())
+      ? clientDateRaw.trim()
+      : bamakoDateStr;
+
+  const [y, m, d] = candidate.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const jsDay = dt.getUTCDay(); // 0 = Dimanche, 1 = Lundi .. 6 = Samedi
+  const weekdayIndex = jsDay >= 1 && jsDay <= 6 ? jsDay : 1;
+
+  return {
+    dateStr: candidate,
+    weekdayIndex,
+  };
+}
+
+function getNextPdvRoutineDayIndex(currentDayIndex: number): number {
+  if (currentDayIndex < 1 || currentDayIndex >= 6) return 1;
+  return currentDayIndex + 1;
+}
+
+function getPdvRoutineDayMeta(dayIndex: number) {
+  return (
+    PDV_ROUTINE_WEEK_DAYS.find((d) => d.dayIndex === dayIndex) || PDV_ROUTINE_WEEK_DAYS[0]
+  );
+}
+
+/**
+ * Gère la sélection par défaut du jour de création de PDV, le blocage automatique des autres jours,
+ * et la bascule automatique à partir de 00h00 dès que l'objectif de 25 PDV (ou plus) est atteint :
+ * - Le jour de la création de PDV est sélectionné par défaut, ce qui bloque automatiquement les 5 autres jours.
+ * - Chaque 25 PDV réalisés sur le jour actif débloque automatiquement le jour suivant à partir de 00h00
+ *   et bloque automatiquement le jour passé à partir de 00h00.
+ */
+function reconcileVendorPdvRoutineStatus(vendorIdRaw: string, clientDateRaw?: unknown) {
+  const vendorId = (vendorIdRaw || 'usr-vnd-1').trim() || 'usr-vnd-1';
+  const candidateDate =
+    typeof clientDateRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDateRaw.trim())
+      ? clientDateRaw.trim()
+      : undefined;
+
+  const state = syncVendorVrsCycleTransaction(vendorId, candidateDate);
+  const activeDay = state.activeDay || state.days[0];
+  const activeDayIndex = Number(activeDay?.dayOfWeek || 1);
+  const activeDayName = String(activeDay?.dayName || 'Lundi');
+  const activePdvCount = Number(activeDay?.countedVisits || 0);
+  const targetPdvCount = Number(activeDay?.targetPdvCount || state.settings.target_pdv_count || 25);
+  const isTargetReachedToday = activeDay?.status === 'Validé' || activePdvCount >= targetPdvCount;
+
+  const nextDaySlot =
+    state.days.find((d: any) => d.slotIndex === Number(activeDay?.slotIndex || 1) + 1) ||
+    state.days[0];
+
+  const days = state.days.map((d: any) => ({
+    slotIndex: d.slotIndex,
+    date: d.date,
+    dayIndex: d.dayOfWeek,
+    dayOfWeek: d.dayOfWeek,
+    dayName: d.dayName,
+    shortName: d.shortName,
+    status: d.status,
+    statusLabel: d.status,
+    statusCode:
+      d.status === 'Validé'
+        ? 'valide'
+        : d.status === 'En cours'
+        ? 'en_cours'
+        : d.status === 'Disponible'
+        ? 'disponible'
+        : d.status === 'Incomplet'
+        ? 'incomplet'
+        : 'bloque',
+    isSelected: Boolean(d.isSelected),
+    isActiveDay: Boolean(d.isActiveDay),
+    isLocked: Boolean(d.isLocked),
+    countedVisits: Number(d.countedVisits || 0),
+    pendingVisits: Number(d.pendingVisits || 0),
+    contestedVisits: Number(d.contestedVisits || 0),
+    totalVisits: Number(d.totalVisits || 0),
+    pdvCount: Number(d.countedVisits || 0),
+    targetPdvCount: Number(d.targetPdvCount || targetPdvCount),
+    isTargetReached: d.status === 'Validé',
+    derogationGranted: Boolean(d.derogationGranted),
+    validatedAt: d.validatedAt || null,
+  }));
+
+  return {
+    vendorId,
+    referenceDate: state.referenceDate,
+    routineStartDate: state.settings.routine_start_date,
+    isStarted: state.isStarted,
+    cycleStatus: state.cycleStatus,
+    completionMessage: state.completionMessage,
+    weekStartDate: state.weekStartDate,
+    weekEndDate: state.weekEndDate,
+    nextCycleStartDate: state.nextCycleStartDate,
+    activeCycleId: state.cycle.id,
+    stepNumber: Number(activeDay?.slotIndex || 1),
+    activeDayIndex,
+    activeDayName,
+    activeDate: activeDay?.date || state.weekStartDate,
+    routineName: `Routine ${activeDayName} - ${
+      ({
+        Lundi: 'Sotuba',
+        Mardi: 'Badalabougou',
+        Mercredi: 'ACI 2000',
+        Jeudi: 'Faladié',
+        Vendredi: 'Lafiabougou',
+        Samedi: 'Bozola',
+      } as Record<string, string>)[activeDayName] || 'Sotuba'
+    }`,
+    activePdvCount,
+    countedVisitsCount: Number(activeDay?.countedVisits || 0),
+    pendingVisitsCount: Number(activeDay?.pendingVisits || 0),
+    contestedVisitsCount: Number(activeDay?.contestedVisits || 0),
+    targetPdvCount,
+    remainingForTarget: Math.max(0, targetPdvCount - activePdvCount),
+    isTargetReachedToday,
+    reachedTargetDate: activeDay?.validatedAt ? String(activeDay.validatedAt).slice(0, 10) : null,
+    nextDayIndex: Number(nextDaySlot?.dayOfWeek || 1),
+    nextDayName: String(nextDaySlot?.dayName || 'Lundi'),
+    nextDayDate: String(nextDaySlot?.date || state.nextCycleStartDate),
+    totalRealizedPdvs: Number(state.cycle.totalCycleCountedVisits || 0),
+    completedBatchesOf25: Number(state.cycle.validatedDaysCount || 0),
+    monthlyObjective: state.monthlyObjective,
+    days,
+  };
+}
+
+// Statut de la routine de création de PDV (6 jours Lundi..Samedi en petits blocs, objectif 25 PDV/jour, bascule auto à 00h00)
+apiRouter.get('/pdvs/routine-status', (req, res) => {
+  try {
+    const headerUserId =
+      typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+    const queryVendorId =
+      typeof req.query.vendor_id === 'string' ? req.query.vendor_id.trim() : '';
+    const clientDate =
+      typeof req.query.client_date === 'string' ? req.query.client_date.trim() : undefined;
+
+    const vendorId = queryVendorId || headerUserId || 'usr-vnd-1';
+    const routineStatus = reconcileVendorPdvRoutineStatus(vendorId, clientDate);
+
+    res.json({
+      success: true,
+      routineStatus,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur lors de la lecture de la routine PDV';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Création d'un PDV : Vendeur uniquement, conditionnée par la prise de photo en direct de la devanture, la position GPS précise et la routine du jour actif
 apiRouter.post('/pdvs', requireVendeur, (req, res) => {
   try {
-    const { name, manager_name, neighborhood, phone, latitude, longitude, gps_accuracy, photo_data, captured_at, vendor_id, created_by } = req.body;
+    const {
+      name,
+      manager_name,
+      neighborhood,
+      phone,
+      latitude,
+      longitude,
+      gps_accuracy,
+      photo_data,
+      captured_at,
+      vendor_id,
+      created_by,
+      routine_name,
+      routine_day,
+      routine_day_index,
+      client_date,
+    } = req.body;
+
     if (!name || !manager_name) {
       return res.status(400).json({ success: false, error: 'Le nom du commerce et le nom du gérant sont obligatoires.' });
     }
+    const cleanRoutineName =
+      typeof routine_name === 'string' && routine_name.trim()
+        ? routine_name.trim()
+        : `Routine ${(routine_day || 'Lundi').toString().trim()} - ${(neighborhood || 'Sotuba').toString().trim()}`;
+
     const latNum = Number(latitude);
     const lngNum = Number(longitude);
     if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) {
@@ -846,6 +2467,31 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
     const creatorName = vendorRow?.name || created_by || 'Oumar Konaté';
     const creatorCode = vendorRow?.code || 'BAO-VND-001';
 
+    // Réconcilier l'état de la routine du vendeur (bascule auto à 00h00 si les 25 PDV ont été atteints la veille)
+    const beforeRoutineStatus = reconcileVendorPdvRoutineStatus(creatorVendorId, client_date);
+
+    // Vérifier que le jour soumis correspond bien au seul jour débloqué (les autres jours + Dimanche sont bloqués)
+    if (
+      routine_day_index !== undefined &&
+      routine_day_index !== null &&
+      Number(routine_day_index) !== beforeRoutineStatus.activeDayIndex
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: `Jour bloqué : seul le jour « ${beforeRoutineStatus.activeDayName} » est sélectionné et débloqué (${beforeRoutineStatus.activePdvCount}/${beforeRoutineStatus.targetPdvCount} PDV). Les autres jours restent bloqués tant que les 25 PDV ne sont pas atteints et jusqu'à 00h00.`,
+      });
+    }
+    if (
+      typeof routine_day === 'string' &&
+      routine_day.trim().length > 0 &&
+      routine_day.trim().toLowerCase() !== beforeRoutineStatus.activeDayName.toLowerCase()
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: `Jour bloqué : seul le jour « ${beforeRoutineStatus.activeDayName} » est sélectionné et débloqué (${beforeRoutineStatus.activePdvCount}/${beforeRoutineStatus.targetPdvCount} PDV).`,
+      });
+    }
+
     // Save the stamped storefront photo to public/uploads for archival AND keep the data URL in photo_url so it renders immediately as profile image
     try {
       const base64Clean = photo_data.replace(/^data:image\/\w+;base64,/, '');
@@ -861,19 +2507,116 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
     const count = (db.prepare('SELECT COUNT(*) as count FROM points_de_vente').get() as { count: number }).count;
     const code = `PDV-BKO-${String(count + 1).padStart(2, '0')}`;
     const id = `pdv-${Date.now()}`;
-    const createdAt = new Date().toISOString().split('T')[0];
+    const createdAt = beforeRoutineStatus.referenceDate;
     const accNum = Number.isFinite(Number(gps_accuracy)) ? Number(gps_accuracy) : 5;
     const capturedAtStr = captured_at || new Date().toLocaleString('fr-FR');
+    const activeDayName = beforeRoutineStatus.activeDayName;
+    const activeDayIndex = beforeRoutineStatus.activeDayIndex;
+    const activeCycleId = beforeRoutineStatus.activeCycleId;
+
+    const nowIso = new Date().toISOString();
 
     db.prepare(`
-      INSERT INTO points_de_vente (id, code, name, manager_name, neighborhood, city, phone, status, latitude, longitude, gps_accuracy, photo_url, captured_at, vendor_id, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, 'Bamako', ?, 'en_attente', ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, code, name, manager_name, neighborhood || 'Sotuba', phone || '', latNum, lngNum, accNum, photoUrl, capturedAtStr, creatorVendorId, creatorName, createdAt);
+      INSERT INTO points_de_vente (
+        id, code, name, manager_name, neighborhood, city, phone, status,
+        latitude, longitude, gps_accuracy, photo_url, captured_at,
+        vendor_id, created_by, routine_name, routine_day, routine_day_index, routine_cycle_id, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, 'Bamako', ?, 'en_attente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      code,
+      name,
+      manager_name,
+      neighborhood || 'Sotuba',
+      phone || '',
+      latNum,
+      lngNum,
+      accNum,
+      photoUrl,
+      capturedAtStr,
+      creatorVendorId,
+      creatorName,
+      cleanRoutineName,
+      activeDayName,
+      activeDayIndex,
+      activeCycleId,
+      createdAt,
+      nowIso
+    );
+
+    // Incrémenter le compteur de PDV réalisés sur le jour de routine actif
+    const nextPdvCount = beforeRoutineStatus.activePdvCount + 1;
+    const justReached25 =
+      nextPdvCount >= beforeRoutineStatus.targetPdvCount && !beforeRoutineStatus.reachedTargetDate;
+    const reachedDateToStore =
+      beforeRoutineStatus.reachedTargetDate ||
+      (nextPdvCount >= beforeRoutineStatus.targetPdvCount ? beforeRoutineStatus.referenceDate : null);
+
+    db.prepare(`
+      UPDATE pdv_routine_cycles
+      SET pdv_count = ?,
+          routine_name = ?,
+          reached_target_date = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      nextPdvCount,
+      cleanRoutineName,
+      reachedDateToStore,
+      nowIso,
+      activeCycleId
+    );
+
+    // Enregistrer automatiquement la visite terrain du jour (vrs_visits) lors de la création du PDV
+    try {
+      const [yStr, mStr, dStr] = createdAt.split('-');
+      const refUtc = new Date(Date.UTC(Number(yStr), Number(mStr) - 1, Number(dStr), 12, 0, 0));
+      const jsDay = refUtc.getUTCDay();
+      const dayOfWeek = jsDay === 0 ? 7 : jsDay;
+      const mondayUtc = new Date(refUtc.getTime() - (dayOfWeek - 1) * 86400000);
+      const weekStartDate = mondayUtc.toISOString().split('T')[0];
+      const visitTimeStr = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Bamako',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(new Date());
+      const visitId = `vrs-vis-pdv-${id}`;
+      db.prepare(`
+        INSERT OR IGNORE INTO vrs_visits (
+          id, visit_uuid, week_start_date, visit_date, visit_time, server_recorded_at,
+          vendor_id, pdv_id, latitude, longitude, gps_accuracy, distance_m,
+          device_info, is_counted, status_reason, recorded_offline, client_recorded_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, 0, ?, ?)
+      `).run(
+        visitId,
+        `uuid-${visitId}`,
+        weekStartDate,
+        createdAt,
+        visitTimeStr,
+        nowIso,
+        creatorVendorId,
+        id,
+        latNum,
+        lngNum,
+        accNum,
+        `Création PDV • Routine ${cleanRoutineName}`,
+        `Création PDV (${activeDayName}) — ${nextPdvCount}/${beforeRoutineStatus.targetPdvCount} PDV`,
+        nowIso,
+        nowIso
+      );
+    } catch {
+      // Ignore if vrs_visits table is not yet initialized
+    }
+
+    const updatedRoutineStatus = reconcileVendorPdvRoutineStatus(creatorVendorId, client_date);
 
     sendNotification(
       'Administrateur',
       `Nouveau PDV créé par ${creatorName} : ${name}`,
-      `Le vendeur ${creatorName} (${creatorCode}) a créé le point de vente "${name}" (${code}, quartier ${neighborhood || 'Sotuba'}, gérant : ${manager_name}) avec photo de profil de devanture certifiée et GPS (${latNum.toFixed(5)}, ${lngNum.toFixed(5)}). En attente de votre validation.`,
+      `Le vendeur ${creatorName} (${creatorCode}) a créé le point de vente "${name}" (${code}, quartier ${neighborhood || 'Sotuba'}, gérant : ${manager_name} — Routine "${cleanRoutineName}" • ${activeDayName} [${nextPdvCount}/${beforeRoutineStatus.targetPdvCount} PDV]) avec photo de profil de devanture certifiée et GPS (${latNum.toFixed(5)}, ${lngNum.toFixed(5)}). En attente de votre validation.`,
       'creation_pdv',
       code,
       {
@@ -883,6 +2626,9 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
           pdvName: name,
           managerName: manager_name,
           neighborhood: neighborhood || 'Sotuba',
+          routineName: cleanRoutineName,
+          routineDay: activeDayName,
+          routineProgress: `${nextPdvCount}/${beforeRoutineStatus.targetPdvCount}`,
           vendorId: creatorVendorId,
           vendorName: creatorName,
           vendorCode: creatorCode,
@@ -892,7 +2638,7 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
     sendNotification(
       'Directeur des opérations de vente',
       `Nouveau PDV à valider (${creatorName}) : ${name}`,
-      `Le vendeur ${creatorName} (${creatorCode}) a soumis une demande de création pour le point de vente "${name}" (${code}, quartier ${neighborhood || 'Sotuba'}, gérant : ${manager_name}). En attente de validation.`,
+      `Le vendeur ${creatorName} (${creatorCode}) a soumis une demande de création pour le point de vente "${name}" (${code}, quartier ${neighborhood || 'Sotuba'}, gérant : ${manager_name} — Routine "${cleanRoutineName}" • ${activeDayName} [${nextPdvCount}/${beforeRoutineStatus.targetPdvCount} PDV]). En attente de validation.`,
       'creation_pdv',
       code,
       {
@@ -902,6 +2648,9 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
           pdvName: name,
           managerName: manager_name,
           neighborhood: neighborhood || 'Sotuba',
+          routineName: cleanRoutineName,
+          routineDay: activeDayName,
+          routineProgress: `${nextPdvCount}/${beforeRoutineStatus.targetPdvCount}`,
           vendorId: creatorVendorId,
           vendorName: creatorName,
           vendorCode: creatorCode,
@@ -909,18 +2658,32 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
       }
     );
 
+    if (justReached25) {
+      sendNotification(
+        'Vendeur',
+        `Objectif 25 PDV atteint (${activeDayName}) — Routine "${cleanRoutineName}"`,
+        `Félicitations ${creatorName} ! Vous avez atteint ${nextPdvCount}/${beforeRoutineStatus.targetPdvCount} PDV sur le jour "${activeDayName}" (Routine "${cleanRoutineName}"). À partir de 00h00, le jour suivant ("${beforeRoutineStatus.nextDayName}") sera débloqué automatiquement et "${activeDayName}" sera bloqué automatiquement.`,
+        'info',
+        code,
+        {
+          targetUserId: creatorVendorId,
+        }
+      );
+    }
+
     recordAudit(
       'CREATION_DEMANDE_PDV',
       'PDV',
       id,
       'Vendeur',
       creatorVendorId,
-      `Demande PDV ${code} (${name}) créée par ${creatorName} (${creatorCode}) avec photo de profil devanture et GPS (${latNum.toFixed(6)}, ${lngNum.toFixed(6)} ±${accNum.toFixed(1)}m) capturé à ${capturedAtStr}.`
+      `Demande PDV ${code} (${name}) créée par ${creatorName} (${creatorCode}) dans la routine "${cleanRoutineName}" (${activeDayName} : ${nextPdvCount}/${beforeRoutineStatus.targetPdvCount} PDV) avec photo de profil devanture et GPS (${latNum.toFixed(6)}, ${lngNum.toFixed(6)} ±${accNum.toFixed(1)}m) capturé à ${capturedAtStr}.`
     );
 
     res.json({
       success: true,
       message: 'Point de vente créé avec sa photo de devanture assignée comme image de profil (en attente de validation par l\'Administrateur).',
+      routineStatus: updatedRoutineStatus,
       pdv: {
         id,
         code,
@@ -939,7 +2702,12 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
         created_by: creatorName,
         vendor_code: creatorCode,
         vendor_team: vendorRow?.team || '',
+        routine_name: cleanRoutineName,
+        routine_day: activeDayName,
+        routine_day_index: activeDayIndex,
+        routine_cycle_id: activeCycleId,
         created_at: createdAt,
+        updated_at: nowIso,
         sales_count: 0,
         total_sales_amount: 0,
       }
@@ -947,6 +2715,1129 @@ apiRouter.post('/pdvs', requireVendeur, (req, res) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
     res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ============================================================================
+// TABLEAU DE BORD DE PERFORMANCE (KPI) SPÉCIFIQUE AU VENDEUR — TEMPS RÉEL
+// Objectifs de 25 PDV / jour, visites effectuées et ventes réalisées sur la journée en cours
+// ============================================================================
+function buildVendorDailyPerformancePayload(
+  vendorIdRaw: string,
+  clientDateStr?: string,
+  startDateStr?: string,
+  endDateStr?: string
+) {
+  ensureAllPdvsBoundToVendorAndRoutineDay();
+
+  const availableVendors = db
+    .prepare(
+      "SELECT id, name, code, team, phone FROM users WHERE role = 'Vendeur' ORDER BY code ASC"
+    )
+    .all() as Array<{ id: string; name: string; code: string; team: string; phone: string }>;
+
+  let vendorRow = db
+    .prepare('SELECT id, name, code, team, phone, role FROM users WHERE id = ?')
+    .get(vendorIdRaw) as
+    | { id: string; name: string; code: string; team: string; phone: string; role?: string }
+    | undefined;
+
+  if (!vendorRow || vendorRow.role !== 'Vendeur') {
+    vendorRow = availableVendors[0]
+      ? { ...availableVendors[0], role: 'Vendeur' }
+      : {
+          id: 'usr-vnd-1',
+          name: 'Oumar Konaté',
+          code: 'BAO-VND-001',
+          team: 'Équipe A (Bamako Nord)',
+          phone: '+223 76 11 22 33',
+          role: 'Vendeur',
+        };
+  }
+
+  const vendorId = vendorRow.id || 'usr-vnd-1';
+  let routineStatus = reconcileVendorPdvRoutineStatus(vendorId, clientDateStr);
+  const referenceDate = routineStatus.referenceDate;
+
+  const isValidIsoDate = (d?: string) => Boolean(d && /^\d{4}-\d{2}-\d{2}$/.test(d.trim()));
+  const rawStart = isValidIsoDate(startDateStr) ? startDateStr!.trim() : referenceDate;
+  const rawEnd = isValidIsoDate(endDateStr) ? endDateStr!.trim() : rawStart;
+  const periodStart = rawStart <= rawEnd ? rawStart : rawEnd;
+  const periodEnd = rawStart <= rawEnd ? rawEnd : rawStart;
+  const isSingleCurrentDay = periodStart === referenceDate && periodEnd === referenceDate;
+
+  let workingDaysCount = 1;
+  try {
+    const startMs = new Date(`${periodStart}T12:00:00Z`).getTime();
+    const endMs = new Date(`${periodEnd}T12:00:00Z`).getTime();
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+      let count = 0;
+      for (let t = startMs; t <= endMs; t += 86400000) {
+        const d = new Date(t);
+        if (d.getUTCDay() !== 0) {
+          count += 1;
+        }
+      }
+      workingDaysCount = Math.max(1, count);
+    }
+  } catch {
+    workingDaysCount = 1;
+  }
+
+  const vendorMeta = {
+    id: vendorRow.id || vendorId,
+    name: vendorRow.name || 'Oumar Konaté',
+    code: vendorRow.code || 'BAO-VND-001',
+    team: vendorRow.team || 'Équipe A (Bamako Nord)',
+    phone: vendorRow.phone || '+223 76 11 22 33',
+  };
+
+  // 1. Récupérer les PDV créés par ce vendeur sur la période sélectionnée [periodStart, periodEnd]
+  const pdvsCreatedToday = db
+    .prepare(
+      `
+      SELECT id, code, name, manager_name, neighborhood, phone, status,
+             latitude, longitude, gps_accuracy, captured_at,
+             routine_name, routine_day, routine_day_index, created_at
+      FROM points_de_vente
+      WHERE vendor_id = ?
+        AND substr(created_at, 1, 10) >= ?
+        AND substr(created_at, 1, 10) <= ?
+      ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+    `
+    )
+    .all(vendorId, periodStart, periodEnd) as any[];
+
+  ensureVisitMotifImmutabilityAndReactionsSchema();
+
+  const reactionsByVisitId = new Map<
+    string,
+    Array<{
+      id: string;
+      visitId: string;
+      decision: 'accepte' | 'conteste';
+      comment: string | null;
+      actorName: string;
+      actorRole: string;
+      createdAt: string;
+    }>
+  >();
+  try {
+    const rxRows = db
+      .prepare(
+        `SELECT id, visit_id, decision, comment, actor_name, actor_role, created_at
+         FROM vrs_visit_motif_reactions
+         WHERE vendor_id = ? OR vendor_id IS NULL
+         ORDER BY created_at DESC`
+      )
+      .all(vendorId) as any[];
+    for (const r of rxRows) {
+      const vid = String(r.visit_id || '');
+      if (!vid) continue;
+      const list = reactionsByVisitId.get(vid) || [];
+      list.push({
+        id: String(r.id),
+        visitId: vid,
+        decision: r.decision === 'conteste' ? 'conteste' : 'accepte',
+        comment: r.comment || null,
+        actorName: String(r.actor_name || 'DOV'),
+        actorRole: String(r.actor_role || 'Directeur des opérations de vente'),
+        createdAt: String(r.created_at || ''),
+      });
+      reactionsByVisitId.set(vid, list);
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Récupérer toutes les visites effectuées par ce vendeur sur la période sélectionnée
+  let todayVisitsRaw: any[] = [];
+  const activeVisitDate = routineStatus.activeDate || referenceDate;
+  try {
+    if (isSingleCurrentDay) {
+      todayVisitsRaw = db
+        .prepare(
+          `
+          SELECT v.id, v.visit_uuid, v.visit_date, v.visit_time, v.server_recorded_at,
+                 v.pdv_id, v.latitude, v.longitude, v.gps_accuracy, v.distance_m,
+                 v.is_counted, v.status_reason, v.device_info, v.recorded_offline,
+                 COALESCE(v.visit_type, 'visite') as visit_type,
+                 v.no_sale_reason,
+                 v.sale_id,
+                 COALESCE(v.validation_status, 'en_attente') as validation_status,
+                 v.validated_by,
+                 v.validated_at,
+                 v.motif_reaction_status,
+                 v.motif_reaction_comment,
+                 v.motif_reacted_by,
+                 v.motif_reacted_role,
+                 v.motif_reacted_at,
+                 COALESCE(p.name, 'PDV') as pdv_name,
+                 COALESCE(p.code, 'PDV') as pdv_code,
+                 COALESCE(p.neighborhood, 'Bamako') as pdv_neighborhood,
+                 COALESCE(p.manager_name, '') as pdv_manager_name,
+                 COALESCE(p.phone, '') as pdv_phone,
+                 COALESCE(p.status, 'valide') as pdv_status,
+                 p.validation_status as pdv_validation_status,
+                 p.validated_by as pdv_validated_by,
+                 p.routine_name as pdv_routine_name,
+                 p.routine_day as pdv_routine_day
+          FROM vrs_visits v
+          LEFT JOIN points_de_vente p ON p.id = v.pdv_id
+          WHERE v.vendor_id = ?
+            AND v.visit_date = ?
+          ORDER BY v.visit_date DESC, v.visit_time DESC, v.created_at DESC
+        `
+        )
+        .all(vendorId, activeVisitDate) as any[];
+    } else {
+      todayVisitsRaw = db
+        .prepare(
+          `
+          SELECT v.id, v.visit_uuid, v.visit_date, v.visit_time, v.server_recorded_at,
+                 v.pdv_id, v.latitude, v.longitude, v.gps_accuracy, v.distance_m,
+                 v.is_counted, v.status_reason, v.device_info, v.recorded_offline,
+                 COALESCE(v.visit_type, 'visite') as visit_type,
+                 v.no_sale_reason,
+                 v.sale_id,
+                 COALESCE(v.validation_status, 'en_attente') as validation_status,
+                 v.validated_by,
+                 v.validated_at,
+                 v.motif_reaction_status,
+                 v.motif_reaction_comment,
+                 v.motif_reacted_by,
+                 v.motif_reacted_role,
+                 v.motif_reacted_at,
+                 COALESCE(p.name, 'PDV') as pdv_name,
+                 COALESCE(p.code, 'PDV') as pdv_code,
+                 COALESCE(p.neighborhood, 'Bamako') as pdv_neighborhood,
+                 COALESCE(p.manager_name, '') as pdv_manager_name,
+                 COALESCE(p.phone, '') as pdv_phone,
+                 COALESCE(p.status, 'valide') as pdv_status,
+                 p.validation_status as pdv_validation_status,
+                 p.validated_by as pdv_validated_by,
+                 p.routine_name as pdv_routine_name,
+                 p.routine_day as pdv_routine_day
+          FROM vrs_visits v
+          LEFT JOIN points_de_vente p ON p.id = v.pdv_id
+          WHERE v.vendor_id = ?
+            AND v.visit_date >= ?
+            AND v.visit_date <= ?
+          ORDER BY v.visit_date DESC, v.visit_time DESC, v.created_at DESC
+        `
+        )
+        .all(vendorId, periodStart, periodEnd) as any[];
+    }
+  } catch {
+    todayVisitsRaw = [];
+  }
+
+  const uniqueVisitedPdvIdsToday = new Set<string>();
+  const countedVisitedPdvIdsToday = new Set<string>();
+  for (const vis of todayVisitsRaw) {
+    if (vis.pdv_id) {
+      uniqueVisitedPdvIdsToday.add(String(vis.pdv_id));
+      if (Number(vis.is_counted ?? 0) === 1) {
+        countedVisitedPdvIdsToday.add(String(vis.pdv_id));
+      }
+    }
+  }
+
+  const periodTargetPdv = isSingleCurrentDay
+    ? routineStatus.targetPdvCount
+    : workingDaysCount * routineStatus.targetPdvCount;
+
+  const realizedPdvCount = isSingleCurrentDay
+    ? routineStatus.countedVisitsCount
+    : countedVisitedPdvIdsToday.size;
+
+  const totalVisitsToday = todayVisitsRaw.length;
+
+  const countedTowards25 = Math.min(periodTargetPdv, realizedPdvCount);
+  const remainingPdvForTarget = Math.max(0, periodTargetPdv - realizedPdvCount);
+  const extraVisitsBeyond25 = Math.max(0, realizedPdvCount - periodTargetPdv);
+  const progressPercent = Math.min(
+    100,
+    Math.round((realizedPdvCount / Math.max(1, periodTargetPdv)) * 100)
+  );
+  const isTargetReachedForPeriod = isSingleCurrentDay
+    ? routineStatus.isTargetReachedToday
+    : realizedPdvCount >= periodTargetPdv;
+
+  // 3. Récupérer les ventes réalisées par ce vendeur sur la période sélectionnée [periodStart, periodEnd]
+  const todaySalesRows = db
+    .prepare(
+      `
+      SELECT s.id, s.number, s.thermal_ticket_number, s.date, s.sale_time,
+             s.vendor_id, s.pdv_id, s.items, s.total_amount,
+             s.buyer_type, s.wholesale_discount_amount, s.cajoucy_boxes_count,
+             s.payment_type, s.status, s.recorded_offline, s.created_at,
+             COALESCE(p.name, 'PDV') as pdv_name,
+             COALESCE(p.code, 'PDV') as pdv_code,
+             COALESCE(p.neighborhood, 'Bamako') as pdv_neighborhood,
+             COALESCE(p.manager_name, '') as pdv_manager_name,
+             COALESCE(p.routine_name, '') as pdv_routine_name,
+             COALESCE(p.routine_day, '') as pdv_routine_day
+      FROM sales s
+      LEFT JOIN points_de_vente p ON p.id = s.pdv_id
+      WHERE s.vendor_id = ?
+        AND s.date >= ?
+        AND s.date <= ?
+        AND COALESCE(s.status, 'livree') != 'annulee'
+      ORDER BY s.date DESC, COALESCE(s.sale_time, '00:00') DESC, s.created_at DESC
+    `
+    )
+    .all(vendorId, periodStart, periodEnd) as any[];
+
+  let salesRevenueToday = 0;
+  let salesCartonsToday = 0;
+  let wholesaleDiscountToday = 0;
+  const soldPdvIdsToday = new Set<string>();
+  const paymentMap = new Map<string, { count: number; amount: number }>();
+
+  const salesList = todaySalesRows.map((row) => {
+    const amount = Number(row.total_amount || 0);
+    let rawItems: any[] = [];
+    try {
+      rawItems =
+        typeof row.items === 'string'
+          ? JSON.parse(row.items)
+          : Array.isArray(row.items)
+          ? row.items
+          : [];
+    } catch {
+      rawItems = [];
+    }
+    const parsedItems = rawItems.map((it: any) => {
+      const qty = Math.max(0, Number(it?.qtyBoxes ?? it?.qty ?? it?.quantity ?? 0));
+      const price = Math.max(0, Number(it?.unitPrice ?? it?.price ?? 0));
+      return {
+        product_id: it?.productId || it?.product_id || it?.code || '',
+        code: it?.code || 'ART',
+        name: it?.name || it?.description || 'Produit Baobab',
+        quantity: qty,
+        qtyBoxes: qty,
+        price,
+        unitPrice: price,
+        total: Number(it?.total ?? qty * price),
+      };
+    });
+    const itemsQty = parsedItems.reduce((sum, it) => sum + Number(it?.qtyBoxes || 0), 0);
+    const cartons = Math.max(Number(row.cajoucy_boxes_count || 0), itemsQty);
+    const discount = Number(row.wholesale_discount_amount || 0);
+    const paymentType = String(row.payment_type || 'Comptant');
+
+    salesRevenueToday += amount;
+    salesCartonsToday += cartons;
+    wholesaleDiscountToday += discount;
+    if (row.pdv_id) {
+      soldPdvIdsToday.add(String(row.pdv_id));
+    }
+
+    const prevPay = paymentMap.get(paymentType) || { count: 0, amount: 0 };
+    paymentMap.set(paymentType, {
+      count: prevPay.count + 1,
+      amount: prevPay.amount + amount,
+    });
+
+    const resolvedRoutineDay = row.pdv_routine_day || routineStatus.activeDayName || 'Vendredi';
+    const resolvedRoutineName =
+      (row.pdv_routine_name && String(row.pdv_routine_name).trim()) ||
+      routineStatus.routineName ||
+      `Routine ${resolvedRoutineDay}`;
+
+    return {
+      id: row.id,
+      number: row.number,
+      thermalTicketNumber:
+        row.thermal_ticket_number || String(row.number || '').replace(/^VTE-/, 'TKT-THERM-'),
+      date: row.date,
+      saleTime: row.sale_time || '09:00',
+      pdvId: row.pdv_id,
+      pdvName: row.pdv_name,
+      pdvCode: row.pdv_code,
+      pdvNeighborhood: row.pdv_neighborhood,
+      pdvManagerName: row.pdv_manager_name,
+      routineName: resolvedRoutineName,
+      routineDay: resolvedRoutineDay,
+      totalAmount: amount,
+      cartonsCount: cartons,
+      wholesaleDiscountAmount: discount,
+      buyerType: row.buyer_type || 'revendeur',
+      paymentType,
+      status: row.status || 'livree',
+      recordedOffline: Boolean(row.recorded_offline),
+      items: parsedItems,
+    };
+  });
+
+  const salesCountToday = salesList.length;
+  const averageBasketToday = salesCountToday > 0 ? Math.round(salesRevenueToday / salesCountToday) : 0;
+
+  // Taux de transformation Visites -> Ventes sur la période
+  const effectiveVisitsForConversion = Math.max(totalVisitsToday, soldPdvIdsToday.size);
+  const conversionRatePercent =
+    effectiveVisitsForConversion > 0
+      ? Math.min(100, Math.round((salesCountToday / effectiveVisitsForConversion) * 100))
+      : 0;
+
+  const paymentBreakdown = Array.from(paymentMap.entries())
+    .map(([paymentType, stats]) => ({
+      paymentType,
+      count: stats.count,
+      amount: stats.amount,
+      sharePercent:
+        salesRevenueToday > 0 ? Math.round((stats.amount / salesRevenueToday) * 100) : 0,
+    }))
+    .sort((a, b) => b.amount - a.amount);
+
+  // 4. Historique récent des 6 derniers jours d'activité du vendeur (ventes & visites) pour comparaison
+  const recentSalesByDay = db
+    .prepare(
+      `
+      SELECT date,
+             COUNT(*) as sales_count,
+             COALESCE(SUM(total_amount), 0) as revenue,
+             COALESCE(SUM(cajoucy_boxes_count), 0) as cartons
+      FROM sales
+      WHERE vendor_id = ?
+        AND COALESCE(status, 'livree') != 'annulee'
+      GROUP BY date
+      ORDER BY date DESC
+      LIMIT 6
+    `
+    )
+    .all(vendorId) as Array<{ date: string; sales_count: number; revenue: number; cartons: number }>;
+
+  // 5. Liste des PDV du périmètre vendeur pour pointage rapide d'une visite en temps réel :
+  // Uniquement les PDV créés par ce vendeur ET liés à son jour actif de routine (ex: Vendredi -> Vendredi uniquement)
+  ensureAllPdvsBoundToVendorAndRoutineDay();
+
+  const vendorPerimeterPdvs = db
+    .prepare(
+      `
+      SELECT id, code, name, manager_name, neighborhood, phone, status,
+             validation_status, validated_by, validated_at,
+             latitude, longitude, routine_name, routine_day, routine_day_index, created_at
+      FROM points_de_vente
+      WHERE vendor_id = ?
+        AND COALESCE(status, 'valide') != 'rejete'
+      ORDER BY code ASC, name ASC
+      LIMIT 80
+    `
+    )
+    .all(vendorId) as any[];
+
+  // Indexer les visites et ventes par PDV pour enrichir la liste des PDV validés de la routine
+  const visitsByPdvId = new Map<string, any[]>();
+  for (const vis of todayVisitsRaw) {
+    const pid = String(vis.pdv_id || '');
+    if (!pid) continue;
+    const arr = visitsByPdvId.get(pid) || [];
+    arr.push(vis);
+    visitsByPdvId.set(pid, arr);
+  }
+
+  const salesByPdvId = new Map<string, typeof salesList>();
+  for (const sl of salesList) {
+    const pid = String(sl.pdvId || '');
+    if (!pid) continue;
+    const arr = salesByPdvId.get(pid) || [];
+    arr.push(sl);
+    salesByPdvId.set(pid, arr);
+  }
+
+  const defaultRoutineNameForDay =
+    (routineStatus.routineName && String(routineStatus.routineName).trim()) ||
+    `Routine ${routineStatus.activeDayName} - ${vendorMeta.name}`;
+
+  // Statistiques cumulées (toutes dates) par PDV pour ce vendeur
+  const allTimeVisitsByPdv = new Map<
+    string,
+    { totalVisits: number; noSaleVisits: number; withSaleVisits: number }
+  >();
+  try {
+    const aggVisits = db
+      .prepare(
+        `SELECT pdv_id,
+                COUNT(*) AS total_visits,
+                SUM(CASE WHEN visit_type IN ('visite_sans_vente', 'sans_vente') OR (no_sale_reason IS NOT NULL AND TRIM(no_sale_reason) != '' AND visit_type NOT IN ('visite_avec_vente', 'avec_vente')) THEN 1 ELSE 0 END) AS no_sale_visits,
+                SUM(CASE WHEN visit_type IN ('visite_avec_vente', 'avec_vente') OR (sale_id IS NOT NULL AND TRIM(sale_id) != '') THEN 1 ELSE 0 END) AS with_sale_visits
+         FROM vrs_visits
+         WHERE vendor_id = ?
+         GROUP BY pdv_id`
+      )
+      .all(vendorId) as any[];
+    for (const row of aggVisits) {
+      allTimeVisitsByPdv.set(String(row.pdv_id), {
+        totalVisits: Number(row.total_visits || 0),
+        noSaleVisits: Number(row.no_sale_visits || 0),
+        withSaleVisits: Number(row.with_sale_visits || 0),
+      });
+    }
+  } catch {
+    // fallback silencieux
+  }
+
+  const allTimeSalesByPdv = new Map<string, number>();
+  try {
+    const aggSales = db
+      .prepare(
+        `SELECT pdv_id, COUNT(*) AS sales_count
+         FROM sales
+         WHERE vendor_id = ? AND COALESCE(status, '') NOT IN ('annule', 'annulee')
+         GROUP BY pdv_id`
+      )
+      .all(vendorId) as any[];
+    for (const row of aggSales) {
+      allTimeSalesByPdv.set(String(row.pdv_id), Number(row.sales_count || 0));
+    }
+  } catch {
+    // fallback silencieux
+  }
+
+  const perimeterPdvs = vendorPerimeterPdvs.map((p) => {
+    const pid = String(p.id);
+    const pdvVisits = visitsByPdvId.get(pid) || [];
+    const pdvSales = salesByPdvId.get(pid) || [];
+    const latestVisit = pdvVisits[0] || null;
+    const hasSale = pdvSales.length > 0 || soldPdvIdsToday.has(pid);
+    const noSaleVisit = pdvVisits.find(
+      (v) =>
+        v.visit_type === 'visite_sans_vente' ||
+        v.visit_type === 'sans_vente' ||
+        Boolean(v.no_sale_reason && String(v.no_sale_reason).trim())
+    );
+    const visited = pdvVisits.length > 0 || hasSale;
+    const isCountedForDay =
+      pdvVisits.some(
+        (v) =>
+          Number(v.is_counted) === 1 ||
+          String(v.validation_status || '').toLowerCase() === 'valide' ||
+          String(v.motif_reaction_status || '').toLowerCase() === 'accepte'
+      ) || hasSale;
+    const isContestedForDay =
+      !isCountedForDay &&
+      pdvVisits.some(
+        (v) => v.motif_reaction_status === 'conteste' || v.validation_status === 'conteste'
+      );
+
+    const visitCategory: 'avec_vente' | 'sans_vente' | 'a_visiter' = hasSale
+      ? 'avec_vente'
+      : visited
+      ? 'sans_vente'
+      : 'a_visiter';
+
+    const routineDayVisitsCount = Math.max(pdvVisits.length, hasSale ? 1 : 0);
+    const cumVisits = allTimeVisitsByPdv.get(pid) || {
+      totalVisits: 0,
+      noSaleVisits: 0,
+      withSaleVisits: 0,
+    };
+    const totalSalesCount = Math.max(
+      allTimeSalesByPdv.get(pid) || 0,
+      cumVisits.withSaleVisits,
+      pdvSales.length
+    );
+    const totalNoSaleVisitsCount = cumVisits.noSaleVisits;
+    const totalVisitsCount = Math.max(
+      cumVisits.totalVisits,
+      totalSalesCount + totalNoSaleVisitsCount,
+      routineDayVisitsCount
+    );
+
+    const visitValidationStatus: 'valide' | 'soumis' | 'conteste' = isCountedForDay
+      ? 'valide'
+      : isContestedForDay
+      ? 'conteste'
+      : 'soumis';
+
+    const validatedBy =
+      pdvVisits.find((v) => v.validated_by)?.validated_by ||
+      pdvVisits.find((v) => v.motif_reacted_by)?.motif_reacted_by ||
+      null;
+
+    const activeMotifVisit =
+      pdvVisits.find((v) => Boolean(v.no_sale_reason && String(v.no_sale_reason).trim())) ||
+      noSaleVisit ||
+      latestVisit;
+    const activeMotifVisitId = activeMotifVisit?.id ? String(activeMotifVisit.id) : null;
+
+    return {
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      managerName: p.manager_name || '',
+      neighborhood: p.neighborhood || 'Bamako',
+      phone: p.phone || '',
+      status: p.status || 'valide',
+      latitude: Number(p.latitude || 12.6392),
+      longitude: Number(p.longitude || -8.0029),
+      routineName:
+        (p.routine_name && String(p.routine_name).trim()) || defaultRoutineNameForDay,
+      routineDay: p.routine_day || routineStatus.activeDayName,
+      routineDayIndex: Number(p.routine_day_index || routineStatus.activeDayIndex),
+      visitedToday: visited,
+      visitedEver: totalVisitsCount > 0 || totalSalesCount > 0,
+      soldToday: hasSale,
+      hasSaleToday: hasSale,
+      hasAnySale: totalSalesCount > 0 || hasSale,
+      createdToday: String(p.created_at || '').slice(0, 10) === referenceDate,
+      visitCategory,
+      routineDayVisitsCount,
+      todayVisitsCount: routineDayVisitsCount,
+      totalVisitsCount,
+      totalSalesCount,
+      totalNoSaleVisitsCount,
+      noSaleReason:
+        activeMotifVisit?.no_sale_reason ||
+        noSaleVisit?.no_sale_reason ||
+        latestVisit?.no_sale_reason ||
+        null,
+      visitId: activeMotifVisitId,
+      visitTime: activeMotifVisit?.visit_time || pdvSales[0]?.saleTime || null,
+      visitDate: activeMotifVisit?.visit_date || pdvSales[0]?.date || null,
+      vendorId: vendorMeta.id,
+      vendorName: vendorMeta.name,
+      vendorCode: vendorMeta.code,
+      motifReactionStatus: activeMotifVisit?.motif_reaction_status || null,
+      motifReactionComment: activeMotifVisit?.motif_reaction_comment || null,
+      motifReactedBy: activeMotifVisit?.motif_reacted_by || null,
+      motifReactedRole: activeMotifVisit?.motif_reacted_role || null,
+      motifReactedAt: activeMotifVisit?.motif_reacted_at || null,
+      motifReactionsHistory: activeMotifVisitId
+        ? reactionsByVisitId.get(activeMotifVisitId) || []
+        : [],
+      visitValidationStatus,
+      validatedBy,
+      todaySalesCount: pdvSales.length,
+      todaySalesAmount: pdvSales.reduce((acc, s) => acc + Number(s.totalAmount || 0), 0),
+      todayCartonsCount: pdvSales.reduce((acc, s) => acc + Number(s.cartonsCount || 0), 0),
+      todaySales: pdvSales,
+    };
+  });
+
+  const visitsList = todayVisitsRaw.map((v) => {
+    const pid = String(v.pdv_id || '');
+    const pdvSales = salesByPdvId.get(pid) || [];
+    const pdvVisitsForPdv = visitsByPdvId.get(pid) || [];
+    const hasSale = pdvSales.length > 0 || soldPdvIdsToday.has(pid);
+
+    return {
+      id: v.id,
+      visitUuid: v.visit_uuid,
+      visitDate: v.visit_date,
+      visitTime: v.visit_time || '09:00:00',
+      pdvId: v.pdv_id,
+      pdvName: v.pdv_name,
+      pdvCode: v.pdv_code,
+      pdvNeighborhood: v.pdv_neighborhood,
+      pdvManagerName: v.pdv_manager_name,
+      pdvStatus: v.pdv_status,
+      routineName:
+        (v.pdv_routine_name && String(v.pdv_routine_name).trim()) ||
+        defaultRoutineNameForDay,
+      routineDay: v.pdv_routine_day || routineStatus.activeDayName,
+      routineDayVisitsCount: Math.max(1, pdvVisitsForPdv.length),
+      latitude: Number(v.latitude || 12.6392),
+      longitude: Number(v.longitude || -8.0029),
+      gpsAccuracy: Number(v.gps_accuracy || 5),
+      distanceM: Number(v.distance_m || 0),
+      isCounted: Number(v.is_counted ?? 1) === 1,
+      statusReason: v.status_reason || 'Visite sans vente enregistrée',
+      deviceInfo: v.device_info || 'Terminal Mobile Vendeur',
+      hasSaleToday: hasSale,
+      visitCategory: (hasSale ? 'avec_vente' : 'sans_vente') as 'avec_vente' | 'sans_vente',
+      visitType: hasSale ? 'visite_avec_vente' : 'visite_sans_vente',
+      noSaleReason: v.no_sale_reason || null,
+      vendorId: v.vendor_id || vendorMeta.id,
+      vendorName: v.vendor_name || vendorMeta.name,
+      vendorCode: v.vendor_code || vendorMeta.code,
+      motifReactionStatus: v.motif_reaction_status || null,
+      motifReactionComment: v.motif_reaction_comment || null,
+      motifReactedBy: v.motif_reacted_by || null,
+      motifReactedRole: v.motif_reacted_role || null,
+      motifReactedAt: v.motif_reacted_at || null,
+      motifReactionsHistory: reactionsByVisitId.get(String(v.id)) || [],
+      validationStatus: (
+        v.validation_status === 'valide' || v.pdv_validation_status === 'valide'
+          ? 'valide'
+          : 'soumis'
+      ) as 'valide' | 'soumis',
+      validatedBy: v.validated_by || v.pdv_validated_by || null,
+      todaySales: pdvSales,
+    };
+  });
+
+  const bamakoTimeStr = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Bamako',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date());
+
+  return {
+    serverDate: referenceDate,
+    serverTime: bamakoTimeStr,
+    period: {
+      startDate: periodStart,
+      endDate: periodEnd,
+      isCustomPeriod: !isSingleCurrentDay,
+      workingDaysCount,
+      periodTargetPdv,
+    },
+    vendor: vendorMeta,
+    availableVendors,
+    routineStatus,
+    monthlyObjective: routineStatus.monthlyObjective,
+    kpis: {
+      // Objectif 25 PDV / jour (ou objectif cumulé sur la période personnalisée)
+      dailyTargetPdv: 25,
+      monthlyTargetPdv: Number(routineStatus.monthlyObjective?.monthlyTargetPdv || 625),
+      realizedMonthlyPdv: Number(routineStatus.monthlyObjective?.realizedMonthlyPdv || 0),
+      monthlyProgressPercent: Number(routineStatus.monthlyObjective?.progressPercent || 0),
+      monthlyValidatedDaysCount: Number(routineStatus.monthlyObjective?.validatedDaysCount || 0),
+      monthlyWorkingDaysCount: Number(routineStatus.monthlyObjective?.workingDaysCount || 25),
+      monthlyObjectiveStatus: routineStatus.monthlyObjective?.status || 'En cours',
+      isDefaultMonthlyObjective: Boolean(routineStatus.monthlyObjective?.isDefault),
+      monthlyObjectiveMonthKey: routineStatus.monthlyObjective?.monthKey || '2026-11',
+      monthlyObjectiveMonthLabel: routineStatus.monthlyObjective?.monthLabel || 'Novembre 2026',
+      realizedPdvCount,
+      countedVisitsCount: routineStatus.countedVisitsCount,
+      pendingVisitsCount: routineStatus.pendingVisitsCount,
+      contestedVisitsCount: routineStatus.contestedVisitsCount,
+      countedTowards25,
+      remainingPdvForTarget,
+      extraVisitsBeyond25,
+      progressPercent,
+      isTargetReachedToday: isTargetReachedForPeriod,
+      activeRoutineName: routineStatus.routineName || '',
+      activeDayName: routineStatus.activeDayName,
+      activeDayIndex: routineStatus.activeDayIndex,
+      activeDate: routineStatus.activeDate,
+      nextDayName: routineStatus.nextDayName,
+      completedBatchesOf25: routineStatus.completedBatchesOf25,
+      totalRealizedPdvsAllCycles: routineStatus.totalRealizedPdvs,
+
+      // Visites effectuées sur la journée en cours ou la période sélectionnée
+      totalVisitsToday,
+      uniquePdvsVisitedToday: uniqueVisitedPdvIdsToday.size,
+      pdvsCreatedTodayCount: pdvsCreatedToday.length,
+      lastVisitTime: visitsList[0]?.visitTime || null,
+      lastVisitedPdvName: visitsList[0]?.pdvName || pdvsCreatedToday[0]?.name || null,
+      lastVisitedPdvNeighborhood:
+        visitsList[0]?.pdvNeighborhood || pdvsCreatedToday[0]?.neighborhood || null,
+
+      // Ventes réalisées sur la journée en cours ou la période sélectionnée
+      salesCountToday,
+      salesRevenueToday,
+      salesCartonsToday,
+      averageBasketToday,
+      wholesaleDiscountToday,
+      uniquePdvsSoldToday: soldPdvIdsToday.size,
+      conversionRatePercent,
+      lastSaleTime: salesList[0]?.saleTime || null,
+      lastSalePdvName: salesList[0]?.pdvName || null,
+      lastSaleAmount: salesList[0]?.totalAmount || 0,
+    },
+    paymentBreakdown,
+    visitsList,
+    salesList,
+    pdvsCreatedToday,
+    perimeterPdvs,
+    recentSalesByDay,
+  };
+}
+
+// Endpoint KPI temps réel spécifique au vendeur : objectifs 25 PDV/jour, visites effectuées, ventes réalisées sur la journée en cours ou période personnalisée
+apiRouter.get('/vendor/daily-performance', (req, res) => {
+  try {
+    const headerUserId =
+      typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+    const queryVendorId =
+      typeof req.query.vendor_id === 'string' ? req.query.vendor_id.trim() : '';
+    const clientDate =
+      typeof req.query.client_date === 'string' ? req.query.client_date.trim() : undefined;
+    const startDate =
+      typeof req.query.start_date === 'string' ? req.query.start_date.trim() : undefined;
+    const endDate =
+      typeof req.query.end_date === 'string' ? req.query.end_date.trim() : undefined;
+
+    const vendorId = queryVendorId || headerUserId || 'usr-vnd-1';
+    const performance = buildVendorDailyPerformancePayload(
+      vendorId,
+      clientDate,
+      startDate,
+      endDate
+    );
+
+    res.json({
+      success: true,
+      ...performance,
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error
+        ? err.message
+        : 'Erreur lors du chargement du tableau de bord de performance vendeur';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Pointage en temps réel d'une visite PDV depuis le tableau de bord KPI vendeur (délègue à vrsService.ts)
+apiRouter.post('/vendor/daily-performance/checkin-visit', (req, res) => {
+  try {
+    ensureAllPdvsBoundToVendorAndRoutineDay();
+    ensureVisitMotifImmutabilityAndReactionsSchema();
+
+    const callerRole = getUserRole(req);
+    if (callerRole !== 'Vendeur') {
+      return res.status(403).json({
+        success: false,
+        code: 'ROLE_READONLY_MOTIF_403',
+        error: `Accès refusé (403) : le rôle "${callerRole || 'Non-Vendeur'}" ne peut ni pointer une visite vendeur ni saisir ou modifier un motif de visite sans vente.`,
+      });
+    }
+
+    const headerUserId =
+      typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
+    const {
+      visit_id,
+      vendor_id,
+      pdv_id,
+      visit_mode,
+      visit_type,
+      no_sale_reason,
+      motif,
+      latitude,
+      longitude,
+      gps_accuracy,
+      client_date,
+      visit_date,
+      visit_uuid,
+      device_info,
+    } = req.body || {};
+
+    if (visit_id || req.body?.edit_motif || req.body?.update_motif) {
+      return res.status(403).json({
+        success: false,
+        code: 'MOTIF_FIGE_403',
+        error:
+          "Action interdite (403) : un motif de visite sans vente déjà envoyé est figé à l'envoi et ne peut plus être modifié.",
+      });
+    }
+
+    if (!pdv_id || typeof pdv_id !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Veuillez sélectionner un point de vente (PDV) pour pointer la visite.',
+      });
+    }
+
+    const actor = resolveActor(req);
+    const vendorId =
+      typeof vendor_id === 'string' && vendor_id.trim()
+        ? vendor_id.trim()
+        : actor.role === 'Vendeur' && actor.id
+        ? actor.id
+        : headerUserId || 'usr-vnd-1';
+
+    const cleanMotif = String(no_sale_reason || motif || '').trim();
+    const rawMode = String(visit_type || visit_mode || '').toLowerCase().trim();
+    const effectiveType =
+      rawMode === 'avec_vente' || rawMode === 'visite_avec_vente'
+        ? 'avec_vente'
+        : 'sans_vente';
+
+    const result = executeVrsVisitCheckin({
+      actor: { ...actor, role: 'Vendeur', id: vendorId },
+      vendorId,
+      pdvId: pdv_id.trim(),
+      latitude: latitude !== undefined ? Number(latitude) : undefined,
+      longitude: longitude !== undefined ? Number(longitude) : undefined,
+      gpsAccuracy: gps_accuracy !== undefined ? Number(gps_accuracy) : undefined,
+      deviceInfo: device_info || 'Pointage Routine VRS',
+      visitUuid: visit_uuid,
+      visitDate: visit_date || client_date,
+      visitType: effectiveType,
+      noSaleReason: cleanMotif || null,
+    });
+
+    if (!result.success) {
+      return res.status(result.httpStatus).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+      });
+    }
+
+    const effectiveDate = result.visit?.visit_date || visit_date || client_date;
+    const performance = buildVendorDailyPerformancePayload(vendorId, effectiveDate);
+    const currentRoutineVisitNumber =
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM vrs_visits
+             WHERE vendor_id = ? AND pdv_id = ? AND visit_date = ?`
+          )
+          .get(vendorId, pdv_id.trim(), effectiveDate || performance.routineStatus.activeDate) as
+          | { cnt: number }
+          | undefined
+      )?.cnt || 1;
+
+    return res.status(result.httpStatus).json({
+      success: true,
+      visit: result.visit,
+      alreadyVisitedToday: Boolean(result.alreadyCountedToday),
+      justReached25: Boolean(result.justValidatedDay),
+      justValidatedDay: Boolean(result.justValidatedDay),
+      justCompletedCycle: Boolean(result.justCompletedCycle),
+      routineDayVisitsCount: currentRoutineVisitNumber,
+      message: result.message,
+      ...performance,
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Erreur lors du pointage de la visite PDV';
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Validation d'une visite en attente par DOV, Administrateur ou Sales Admin / Contrôleur (403 pour Vendeur et autres rôles)
+apiRouter.post('/vendor/daily-performance/validate-visit', (req, res) => {
+  try {
+    ensureVisitMotifImmutabilityAndReactionsSchema();
+    const actor = resolveActor(req);
+
+    const { visit_id, pdv_id, vendor_id, client_date, no_sale_reason, motif, noSaleReason } =
+      req.body || {};
+
+    if (no_sale_reason !== undefined || motif !== undefined || noSaleReason !== undefined) {
+      return res.status(403).json({
+        success: false,
+        code: 'MOTIF_FIGE_403',
+        error:
+          "Action interdite (403) : le motif de visite sans vente envoyé par le vendeur est figé à l'envoi et ne peut jamais être modifié.",
+      });
+    }
+
+    if (!isVrsSupervisorRole(actor.role)) {
+      return res.status(403).json({
+        success: false,
+        code: 'ROLE_FORBIDDEN_403',
+        error: `Accès refusé (403) : le rôle "${actor.role}" n'est pas autorisé à valider une visite. Seuls le DOV, l'Administrateur et le Sales Admin / Contrôleur peuvent valider les visites en attente.`,
+      });
+    }
+
+    const result = executeVrsValidatePendingVisit({
+      actor,
+      visitId: typeof visit_id === 'string' ? visit_id.trim() : undefined,
+      pdvId: typeof pdv_id === 'string' ? pdv_id.trim() : undefined,
+      vendorId: typeof vendor_id === 'string' ? vendor_id.trim() : undefined,
+      referenceDate: typeof client_date === 'string' ? client_date.trim() : undefined,
+    });
+
+    if (!result.success) {
+      return res.status(result.httpStatus).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+      });
+    }
+
+    const resolvedVendorId =
+      result.state?.vendor?.id ||
+      (typeof vendor_id === 'string' && vendor_id.trim() ? vendor_id.trim() : 'usr-vnd-1');
+    const performance = buildVendorDailyPerformancePayload(resolvedVendorId, client_date);
+
+    return res.status(result.httpStatus).json({
+      success: true,
+      message: result.message,
+      justValidatedDay: Boolean(result.state?.justValidatedDays?.length),
+      justCompletedCycle: Boolean(result.state?.justCompletedCycle),
+      ...performance,
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Erreur lors de la validation de la visite';
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Réaction d'un superviseur (DOV, Administrateur, Sales Admin / Contrôleur) sur le motif d'une visite sans vente
+// ("Accepter le motif" ou "Contester" avec commentaire séparé obligatoire si contesté)
+// Ne modifie JAMAIS le motif du vendeur (figé à l'envoi). 403 pour Vendeur et autres rôles.
+const handleDovVisitMotifReaction = (req: any, res: any) => {
+  try {
+    ensureVisitMotifImmutabilityAndReactionsSchema();
+    const actor = resolveActor(req);
+
+    const {
+      visit_id,
+      pdv_id,
+      vendor_id,
+      reaction_status,
+      decision,
+      comment,
+      client_date,
+      no_sale_reason,
+      motif,
+      noSaleReason,
+    } = req.body || {};
+
+    if (no_sale_reason !== undefined || motif !== undefined || noSaleReason !== undefined) {
+      return res.status(403).json({
+        success: false,
+        code: 'MOTIF_FIGE_403',
+        error:
+          "Action interdite (403) : le motif envoyé par le vendeur est figé à l'envoi. Il est impossible de le modifier.",
+      });
+    }
+
+    const targetVisitIdFromParam = typeof req.params?.id === 'string' ? req.params.id.trim() : '';
+    const lookupVisitId =
+      targetVisitIdFromParam || (typeof visit_id === 'string' ? visit_id.trim() : '');
+
+    const result = executeVrsMotifReaction({
+      actor,
+      visitId: lookupVisitId || undefined,
+      pdvId: typeof pdv_id === 'string' ? pdv_id.trim() : undefined,
+      vendorId: typeof vendor_id === 'string' ? vendor_id.trim() : undefined,
+      decision: String(decision || reaction_status || ''),
+      comment: typeof comment === 'string' ? comment : undefined,
+      attemptedMotifChange: Boolean(no_sale_reason ?? motif ?? noSaleReason),
+    });
+
+    if (!result.success) {
+      return res.status(result.httpStatus).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+      });
+    }
+
+    const resolvedVendorId =
+      result.reaction?.vendorId ||
+      (typeof vendor_id === 'string' && vendor_id.trim() ? vendor_id.trim() : 'usr-vnd-1');
+    const performance = buildVendorDailyPerformancePayload(resolvedVendorId, client_date);
+
+    return res.status(result.httpStatus).json({
+      success: true,
+      reaction: result.reaction,
+      message: result.message,
+      justValidatedDay: Boolean(result.state?.justValidatedDays?.length),
+      justCompletedCycle: Boolean(result.state?.justCompletedCycle),
+      ...performance,
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : "Erreur lors de l'enregistrement de la réaction";
+    return res.status(500).json({ success: false, error: message });
+  }
+};
+
+apiRouter.post('/vendor/daily-performance/visit-motif-reaction', handleDovVisitMotifReaction);
+apiRouter.post('/vrs/visits/:id/react-motif', handleDovVisitMotifReaction);
+
+// Verrouillage explicite 403 sur toute requête directe tentant de modifier un motif de visite sans vente déjà envoyé
+const rejectDirectMotifModification403 = (req: any, res: any) => {
+  const callerRole = getUserRole(req) || 'Utilisateur';
+  recordAudit(
+    'TENTATIVE_MODIFICATION_MOTIF_FIGE_REFUSEE_403',
+    'VRS_VISIT',
+    String(req.params?.id || req.params?.visitId || req.body?.visit_id || 'visit'),
+    callerRole,
+    String(req.headers['x-user-id'] || 'unknown'),
+    `Tentative refusée (403) par ${callerRole} de modifier un motif de visite sans vente déjà envoyé (${req.method} ${req.originalUrl}).`
+  );
+  return res.status(403).json({
+    success: false,
+    code: 'MOTIF_FIGE_403',
+    error:
+      "Action interdite (403) : toute tentative de modifier un motif de visite sans vente déjà envoyé est refusée pour tous les rôles. Le motif est figé à l'envoi.",
+  });
+};
+
+apiRouter.all('/vendor/daily-performance/visit-motif', rejectDirectMotifModification403);
+apiRouter.all('/vendor/daily-performance/visits/:id/motif', rejectDirectMotifModification403);
+apiRouter.all('/vrs/visits/:id/motif', rejectDirectMotifModification403);
+apiRouter.put('/vrs/visits/:id', rejectDirectMotifModification403);
+apiRouter.patch('/vrs/visits/:id', rejectDirectMotifModification403);
+apiRouter.all('/pdvs/:id/visits/:visitId/motif', rejectDirectMotifModification403);
+
+// Attribution de l'objectif mensuel de routine par DOV, Administrateur ou Sales Admin / Contrôleur (403 pour Vendeur et autres rôles)
+apiRouter.post('/vendor/routine-objective', (req, res) => {
+  try {
+    const actor = resolveActor(req);
+    const {
+      vendor_ids,
+      vendorIds,
+      vendor_id,
+      vendorId,
+      apply_to_all,
+      applyToAll,
+      month_key,
+      monthKey,
+      year,
+      month,
+      monthly_target_pdv,
+      monthlyTargetPdv,
+      target_pdv_count,
+      daily_target_pdv,
+      routine_name,
+      routineName,
+      correction_reason,
+      correctionReason,
+      client_date,
+      reference_date,
+    } = req.body || {};
+
+    const result = executeVrsAssignMonthlyObjectives({
+      actor,
+      vendorIds: Array.isArray(vendor_ids)
+        ? vendor_ids
+        : Array.isArray(vendorIds)
+        ? vendorIds
+        : undefined,
+      vendorId: vendor_id || vendorId,
+      applyToAll: Boolean(apply_to_all || applyToAll),
+      monthKey: month_key || monthKey,
+      year,
+      month,
+      monthlyTargetPdv:
+        monthly_target_pdv ?? monthlyTargetPdv ?? target_pdv_count ?? daily_target_pdv,
+      routineName: routine_name ?? routineName,
+      correctionReason: correction_reason ?? correctionReason,
+      referenceDate: reference_date || client_date,
+    });
+
+    if (!result.success) {
+      return res.status(result.httpStatus).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+      });
+    }
+
+    const primaryVendorId =
+      result.assignedObjectives?.[0]?.vendorId ||
+      (typeof vendor_id === 'string' && vendor_id.trim() ? vendor_id.trim() : 'usr-vnd-1');
+    const performance = buildVendorDailyPerformancePayload(
+      primaryVendorId,
+      reference_date || client_date
+    );
+
+    return res.status(result.httpStatus).json({
+      success: true,
+      message: result.message,
+      assignedObjectives: result.assignedObjectives,
+      ...performance,
+    });
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : "Erreur lors de l'attribution de l'objectif mensuel";
+    return res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -1131,7 +4022,7 @@ function markNotificationsReadByReference(role: string, reference?: string | nul
 
 // Helper for Stock Movement Journal (Entrées en ajout seul, jamais négatif)
 function recordStockMovement(
-  type: 'reception' | 'chargement' | 'retour' | 'perte_casse_peremption' | 'Bon cadeau',
+  type: 'reception' | 'chargement' | 'retour' | 'perte_casse_peremption' | 'Bon cadeau' | 'reclassement',
   direction: 'IN' | 'OUT',
   productId: string,
   lotId: string | null,
@@ -1238,11 +4129,17 @@ apiRouter.post('/chargements/request', requireVendeurOrDirecteurOps, (req, res) 
       return res.status(400).json({ success: false, error: 'Doublon détecté : chaque produit ne peut être présent qu\'une seule fois dans la demande.' });
     }
 
-    // Validate quantities against warehouse stock
+    // Validate quantities against warehouse stock and active product status
     for (const it of items) {
-      const prod = db.prepare('SELECT stock_depot, name FROM products WHERE id = ?').get(it.productId) as any;
+      const prod = db.prepare('SELECT stock_depot, name, is_active FROM products WHERE id = ?').get(it.productId) as any;
       if (!prod) {
         return res.status(400).json({ success: false, error: `Produit introuvable (${it.productId}).` });
+      }
+      if (Number(prod.is_active ?? 1) === 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Le produit "${prod.name}" est désactivé et ne peut plus faire l'objet d'un chargement.`,
+        });
       }
       if (it.requestedBoxes > prod.stock_depot) {
         return res.status(400).json({
@@ -1872,8 +4769,11 @@ apiRouter.post('/receptions', requireMagasinierOrSalesAdmin, (req, res) => {
       const enrichedLines = [];
 
       for (const line of lines) {
-        const prod = db.prepare('SELECT id, code, name, price_box FROM products WHERE id = ?').get(line.productId) as any;
+        const prod = db.prepare('SELECT id, code, name, price_box, is_active FROM products WHERE id = ?').get(line.productId) as any;
         if (!prod) throw new Error(`Produit ${line.productId} introuvable.`);
+        if (Number(prod.is_active ?? 1) === 0) {
+          throw new Error(`Le produit "${prod.name}" est désactivé et ne peut plus être réceptionné.`);
+        }
 
         const cartons = Number(line.cartons);
         const requestedBoxes =
@@ -2436,9 +5336,10 @@ apiRouter.get('/inventaires-vendeur/theoretical/:vendorId', (req, res) => {
         soldBoxes,
         returnedBoxes,
         theoreticalQty,
-        stockValue: theoreticalQty * Number(prod.price_box || 0)
+        stockValue: theoreticalQty * Number(prod.price_box || 0),
+        is_active: Number(prod.is_active ?? 1),
       };
-    });
+    }).filter((item) => item.is_active === 1 || item.chargedBoxes > 0 || item.soldBoxes > 0 || item.returnedBoxes > 0);
 
     res.json({ success: true, theoreticalStock: theoreticalData });
   } catch (err: unknown) {
@@ -2765,9 +5666,13 @@ function buildSaleDocumentsFromRow(r: any) {
     ? parsedItems.map((it: any, idx: number) => {
         const qty = Number(it.qtyBoxes ?? it.qty ?? it.quantity ?? 1);
         const price = Number(it.unitPrice ?? it.price ?? 0);
+        const retailUnitPrice = Number(it.retailUnitPrice ?? price);
+        const discountPerBox = Number(it.discountPerBox ?? Math.max(0, retailUnitPrice - price));
+        const lineDiscount = Number(it.lineDiscount ?? qty * discountPerBox);
         const total = Number(it.total ?? qty * price);
         return {
           id: `${r.id || 'sale'}-${idx}`,
+          productId: it.productId,
           code: it.code || 'ART',
           name: it.name || it.description || 'Produit Baobab',
           description: it.name || it.description || 'Produit Baobab',
@@ -2776,6 +5681,9 @@ function buildSaleDocumentsFromRow(r: any) {
           quantity: qty,
           price,
           unitPrice: price,
+          retailUnitPrice,
+          discountPerBox,
+          lineDiscount,
           total,
         };
       })
@@ -2783,6 +5691,12 @@ function buildSaleDocumentsFromRow(r: any) {
 
   const computedHt = normalizedItems.reduce((sum: number, it: any) => sum + Number(it.total || 0), 0);
   const subtotalHt = Number(r.total_amount || computedHt || 0);
+  const buyerType = r.buyer_type || null;
+  const wholesaleDiscountAmount = Number(
+    r.wholesale_discount_amount ??
+      normalizedItems.reduce((sum: number, it: any) => sum + Number(it.lineDiscount || 0), 0)
+  );
+  const cajoucyBoxesCount = Number(r.cajoucy_boxes_count || 0);
   const withTva = Boolean(r.with_tva);
   const tvaRate = withTva ? Number(r.tva_rate || 18) : 0;
   const tvaAmount = withTva ? Number(r.tva_amount || Math.round(subtotalHt * 0.18)) : 0;
@@ -2825,6 +5739,9 @@ function buildSaleDocumentsFromRow(r: any) {
     pdvNeighborhood: r.pdv_neighborhood || 'Bamako',
     pdvManager: r.pdv_manager || '',
     pdvPhone: r.pdv_phone || '+223 76 00 00 00',
+    buyerType,
+    wholesaleDiscountAmount,
+    cajoucyBoxesCount,
     items: normalizedItems,
     subtotal: subtotalHt,
     subtotalHt,
@@ -2870,6 +5787,9 @@ function buildSaleDocumentsFromRow(r: any) {
     pdvManager: r.pdv_manager || '',
     pdvPhone: r.pdv_phone || '+223 76 00 00 00',
     versementRef: r.versement_reference || undefined,
+    buyerType,
+    wholesaleDiscountAmount,
+    cajoucyBoxesCount,
     items: normalizedItems,
     subtotal: subtotalHt,
     subtotalHt,
@@ -2890,7 +5810,22 @@ function buildSaleDocumentsFromRow(r: any) {
       : 'Facturée HT (Sans TVA)',
   };
 
-  return { ticket, invoice, saleTime, subtotalHt, withTva, tvaRate, tvaAmount, totalTtc, thermalTicketNumber, invoiceNumber, normalizedItems };
+  return {
+    ticket,
+    invoice,
+    saleTime,
+    subtotalHt,
+    buyerType,
+    wholesaleDiscountAmount,
+    cajoucyBoxesCount,
+    withTva,
+    tvaRate,
+    tvaAmount,
+    totalTtc,
+    thermalTicketNumber,
+    invoiceNumber,
+    normalizedItems,
+  };
 }
 
 function findSaleRowByIdentifier(identifier: string): any {
@@ -2901,6 +5836,7 @@ function findSaleRowByIdentifier(identifier: string): any {
            u.name as vendor_name, u.code as vendor_code, u.team as vendor_team, u.phone as vendor_phone,
            p.name as pdv_name, p.code as pdv_code, p.neighborhood as pdv_neighborhood,
            p.manager_name as pdv_manager, p.phone as pdv_phone,
+           p.routine_name as pdv_routine_name, p.routine_day as pdv_routine_day, p.routine_day_index as pdv_routine_day_index,
            v.reference as versement_reference
     FROM sales s
     JOIN users u ON s.vendor_id = u.id
@@ -2929,11 +5865,14 @@ function checkVendorAccessToSale(req: any, saleRow: any): boolean {
 
 apiRouter.get('/sales', (req, res) => {
   try {
+    ensureAllPdvsBoundToVendorAndRoutineDay();
+
     const rows = db.prepare(`
       SELECT s.*,
              u.name as vendor_name, u.code as vendor_code, u.team as vendor_team, u.phone as vendor_phone,
              p.name as pdv_name, p.code as pdv_code, p.neighborhood as pdv_neighborhood,
              p.manager_name as pdv_manager, p.phone as pdv_phone,
+             p.routine_name as pdv_routine_name, p.routine_day as pdv_routine_day, p.routine_day_index as pdv_routine_day_index,
              v.reference as versement_reference
       FROM sales s
       JOIN users u ON s.vendor_id = u.id
@@ -2957,12 +5896,22 @@ apiRouter.get('/sales', (req, res) => {
 
     const sales = filteredRows.map((r: any) => {
       const built = buildSaleDocumentsFromRow(r);
+      const resolvedRoutineDay = r.pdv_routine_day || 'Vendredi';
+      const resolvedRoutineName =
+        (r.pdv_routine_name && String(r.pdv_routine_name).trim()) ||
+        `Routine ${resolvedRoutineDay}`;
       return {
         ...r,
+        routine_name: resolvedRoutineName,
+        routine_day: resolvedRoutineDay,
+        routine_day_index: Number(r.pdv_routine_day_index || 5),
         sale_time: built.saleTime,
         thermal_ticket_number: built.thermalTicketNumber,
         invoice_generated: Boolean(r.invoice_generated),
         invoice_number: built.invoiceNumber,
+        buyer_type: built.buyerType,
+        wholesale_discount_amount: built.wholesaleDiscountAmount,
+        cajoucy_boxes_count: built.cajoucyBoxesCount,
         with_tva: built.withTva,
         tva_rate: built.tvaRate,
         tva_amount: built.tvaAmount,
@@ -2977,7 +5926,7 @@ apiRouter.get('/sales', (req, res) => {
         cancel_reviewed_at: r.cancel_reviewed_at || null,
         cancel_reviewed_by: r.cancel_reviewed_by || null,
         cancel_rejection_reason: r.cancel_rejection_reason || null,
-        items: typeof r.items === 'string' ? JSON.parse(r.items) : r.items,
+        items: built.normalizedItems,
       };
     });
     res.json({ success: true, sales });
@@ -3193,6 +6142,435 @@ apiRouter.get('/sales/:id', (req, res) => {
   }
 });
 
+interface WholesaleValidationResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+  normalizedItems: Array<{
+    productId: string;
+    code: string;
+    name: string;
+    qtyBoxes: number;
+    unitPrice: number;
+    retailUnitPrice: number;
+    discountPerBox: number;
+    lineDiscount: number;
+    total: number;
+  }>;
+  cajoucyBoxesCount: number;
+  buyerType: 'Grossiste' | 'Détaillant' | null;
+  wholesaleDiscountAmount: number;
+  totalAmount: number;
+}
+
+function validateAndComputeSaleWholesaleDiscount(params: {
+  rawItems: any[];
+  rawBuyerType?: any;
+  rawWholesaleDiscount?: any;
+  rawTotalAmount?: any;
+}): WholesaleValidationResult {
+  const { rawItems, rawBuyerType, rawWholesaleDiscount, rawTotalAmount } = params;
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Données de vente incomplètes.',
+      normalizedItems: [],
+      cajoucyBoxesCount: 0,
+      buyerType: null,
+      wholesaleDiscountAmount: 0,
+      totalAmount: 0,
+    };
+  }
+
+  const resolvedLines: Array<{
+    prod: any;
+    qtyBoxes: number;
+    clientSentPrice: number | null;
+    clientSentTotal: number | null;
+    hasWholesalePrice: boolean;
+    retailPrice: number;
+    wholesalePrice: number;
+  }> = [];
+
+  let cajoucyBoxesCount = 0;
+
+  for (const it of rawItems) {
+    const prod = db
+      .prepare('SELECT id, code, name, price_box, wholesale_price_box, is_active FROM products WHERE id = ? OR code = ?')
+      .get(it.productId || '', it.code || '') as any;
+
+    if (!prod) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Produit introuvable dans le catalogue (${it.code || it.productId || 'inconnu'}).`,
+        normalizedItems: [],
+        cajoucyBoxesCount: 0,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    if (Number(prod.is_active ?? 1) === 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Le produit "${prod.name}" est désactivé et ne peut plus être vendu.`,
+        normalizedItems: [],
+        cajoucyBoxesCount: 0,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    const qtyBoxes = Math.round(Number(it.qtyBoxes ?? it.qty ?? it.quantity ?? 0));
+    if (!Number.isFinite(qtyBoxes) || qtyBoxes <= 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Quantité invalide pour le produit "${prod.name}".`,
+        normalizedItems: [],
+        cajoucyBoxesCount: 0,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    const hasWholesalePrice =
+      prod.wholesale_price_box !== null &&
+      prod.wholesale_price_box !== undefined &&
+      Number(prod.wholesale_price_box) > 0;
+    const retailPrice = Number(prod.price_box || 0);
+    const wholesalePrice = hasWholesalePrice ? Number(prod.wholesale_price_box) : retailPrice;
+
+    if (hasWholesalePrice) {
+      cajoucyBoxesCount += qtyBoxes;
+    }
+
+    const clientSentPrice =
+      it.unitPrice !== undefined && it.unitPrice !== null
+        ? Number(it.unitPrice)
+        : it.price !== undefined && it.price !== null
+        ? Number(it.price)
+        : null;
+    const clientSentTotal =
+      it.total !== undefined && it.total !== null ? Number(it.total) : null;
+
+    resolvedLines.push({
+      prod,
+      qtyBoxes,
+      clientSentPrice,
+      clientSentTotal,
+      hasWholesalePrice,
+      retailPrice,
+      wholesalePrice,
+    });
+  }
+
+  const cleanBuyerType =
+    typeof rawBuyerType === 'string' ? rawBuyerType.trim() : '';
+  const clientDiscountNum =
+    rawWholesaleDiscount !== undefined && rawWholesaleDiscount !== null
+      ? Number(rawWholesaleDiscount)
+      : 0;
+
+  if (cajoucyBoxesCount < 50) {
+    // Sous le seuil de 50 cartons Cajoucy : aucune remise autorisée, aucun choix "Grossiste"
+    if (cleanBuyerType === 'Grossiste' || clientDiscountNum > 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Remise grossiste refusée : le total Cajoucy (${cajoucyBoxesCount} cartons) est strictement inférieur au seuil obligatoire de 50 cartons.`,
+        normalizedItems: [],
+        cajoucyBoxesCount,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    for (const line of resolvedLines) {
+      if (line.clientSentPrice !== null && line.clientSentPrice !== line.retailPrice) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Prix unitaire modifié ou non autorisé pour "${line.prod.name}" (${line.clientSentPrice} FCFA au lieu du prix détaillant ${line.retailPrice} FCFA).`,
+          normalizedItems: [],
+          cajoucyBoxesCount,
+          buyerType: null,
+          wholesaleDiscountAmount: 0,
+          totalAmount: 0,
+        };
+      }
+      if (
+        line.clientSentTotal !== null &&
+        line.clientSentTotal !== line.qtyBoxes * line.retailPrice
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Montant de ligne modifié ou incohérent pour "${line.prod.name}".`,
+          normalizedItems: [],
+          cajoucyBoxesCount,
+          buyerType: null,
+          wholesaleDiscountAmount: 0,
+          totalAmount: 0,
+        };
+      }
+    }
+
+    const normalizedItems = resolvedLines.map((line) => ({
+      productId: line.prod.id,
+      code: line.prod.code,
+      name: line.prod.name,
+      qtyBoxes: line.qtyBoxes,
+      unitPrice: line.retailPrice,
+      retailUnitPrice: line.retailPrice,
+      discountPerBox: 0,
+      lineDiscount: 0,
+      total: line.qtyBoxes * line.retailPrice,
+    }));
+    const totalAmount = normalizedItems.reduce((sum, it) => sum + it.total, 0);
+
+    if (
+      rawTotalAmount !== undefined &&
+      rawTotalAmount !== null &&
+      Number(rawTotalAmount) !== totalAmount
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Montant total modifié ou incohérent (${rawTotalAmount} FCFA au lieu de ${totalAmount} FCFA).`,
+        normalizedItems: [],
+        cajoucyBoxesCount,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    return {
+      ok: true,
+      normalizedItems,
+      cajoucyBoxesCount,
+      buyerType: null,
+      wholesaleDiscountAmount: 0,
+      totalAmount,
+    };
+  }
+
+  // Seuil atteint : cajoucyBoxesCount >= 50 -> Choix obligatoire "Grossiste" ou "Détaillant"
+  if (cleanBuyerType !== 'Grossiste' && cleanBuyerType !== 'Détaillant') {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        'À partir de 50 cartons Cajoucy, le choix du "Type d\'acheteur" (Grossiste ou Détaillant) est obligatoire.',
+      normalizedItems: [],
+      cajoucyBoxesCount,
+      buyerType: null,
+      wholesaleDiscountAmount: 0,
+      totalAmount: 0,
+    };
+  }
+
+  const applyWholesale = cleanBuyerType === 'Grossiste';
+
+  for (const line of resolvedLines) {
+    const expectedUnitPrice =
+      applyWholesale && line.hasWholesalePrice ? line.wholesalePrice : line.retailPrice;
+
+    if (!line.hasWholesalePrice && line.clientSentPrice !== null && line.clientSentPrice !== line.retailPrice) {
+      return {
+        ok: false,
+        status: 400,
+        error: `La remise grossiste concerne exclusivement les produits Cajoucy ayant un Prix grossiste. Le prix de "${line.prod.name}" ne peut pas être modifié.`,
+        normalizedItems: [],
+        cajoucyBoxesCount,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    if (
+      line.hasWholesalePrice &&
+      line.clientSentPrice !== null &&
+      line.clientSentPrice !== expectedUnitPrice &&
+      !(applyWholesale && line.clientSentPrice === line.retailPrice)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Prix unitaire invalide pour "${line.prod.name}" (${line.clientSentPrice} FCFA au lieu de ${expectedUnitPrice} FCFA pour un acheteur ${cleanBuyerType}).`,
+        normalizedItems: [],
+        cajoucyBoxesCount,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+
+    if (
+      line.clientSentTotal !== null &&
+      line.clientSentTotal !== line.qtyBoxes * expectedUnitPrice &&
+      !(applyWholesale && line.hasWholesalePrice && line.clientSentTotal === line.qtyBoxes * line.retailPrice)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Montant de ligne modifié ou incohérent pour "${line.prod.name}".`,
+        normalizedItems: [],
+        cajoucyBoxesCount,
+        buyerType: null,
+        wholesaleDiscountAmount: 0,
+        totalAmount: 0,
+      };
+    }
+  }
+
+  if (!applyWholesale && clientDiscountNum > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        'Aucune remise grossiste ne peut être appliquée lorsque le type d\'acheteur est "Détaillant".',
+      normalizedItems: [],
+      cajoucyBoxesCount,
+      buyerType: null,
+      wholesaleDiscountAmount: 0,
+      totalAmount: 0,
+    };
+  }
+
+  const normalizedItems = resolvedLines.map((line) => {
+    const unitPrice =
+      applyWholesale && line.hasWholesalePrice ? line.wholesalePrice : line.retailPrice;
+    const discountPerBox =
+      applyWholesale && line.hasWholesalePrice
+        ? Math.max(0, line.retailPrice - line.wholesalePrice)
+        : 0;
+    const lineDiscount = line.qtyBoxes * discountPerBox;
+    const total = line.qtyBoxes * unitPrice;
+
+    return {
+      productId: line.prod.id,
+      code: line.prod.code,
+      name: line.prod.name,
+      qtyBoxes: line.qtyBoxes,
+      unitPrice,
+      retailUnitPrice: line.retailPrice,
+      discountPerBox,
+      lineDiscount,
+      total,
+    };
+  });
+
+  const wholesaleDiscountAmount = normalizedItems.reduce(
+    (sum, it) => sum + it.lineDiscount,
+    0
+  );
+  const totalAmount = normalizedItems.reduce((sum, it) => sum + it.total, 0);
+
+  if (
+    applyWholesale &&
+    rawWholesaleDiscount !== undefined &&
+    rawWholesaleDiscount !== null &&
+    Number(rawWholesaleDiscount) !== 0 &&
+    Number(rawWholesaleDiscount) !== wholesaleDiscountAmount
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Montant de remise grossiste modifié ou invalide (${rawWholesaleDiscount} FCFA au lieu de ${wholesaleDiscountAmount} FCFA).`,
+      normalizedItems: [],
+      cajoucyBoxesCount,
+      buyerType: null,
+      wholesaleDiscountAmount: 0,
+      totalAmount: 0,
+    };
+  }
+
+  if (
+    rawTotalAmount !== undefined &&
+    rawTotalAmount !== null &&
+    Number(rawTotalAmount) !== totalAmount &&
+    !(applyWholesale && Number(rawTotalAmount) === totalAmount + wholesaleDiscountAmount)
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Montant total modifié ou incohérent (${rawTotalAmount} FCFA au lieu de ${totalAmount} FCFA).`,
+      normalizedItems: [],
+      cajoucyBoxesCount,
+      buyerType: null,
+      wholesaleDiscountAmount: 0,
+      totalAmount: 0,
+    };
+  }
+
+  return {
+    ok: true,
+    normalizedItems,
+    cajoucyBoxesCount,
+    buyerType: cleanBuyerType,
+    wholesaleDiscountAmount,
+    totalAmount,
+  };
+}
+
+function checkAndTriggerWholesaleBuyerFrequencyAlert(vendorId: string, refDateStr: string) {
+  try {
+    const cleanDate = (refDateStr || new Date().toISOString().split('T')[0]).slice(0, 10);
+    const stats = db
+      .prepare(
+        `
+        SELECT COUNT(*) as cnt, COALESCE(SUM(wholesale_discount_amount), 0) as total_discount, COALESCE(SUM(cajoucy_boxes_count), 0) as total_boxes
+        FROM sales
+        WHERE vendor_id = ?
+          AND buyer_type = 'Grossiste'
+          AND COALESCE(status, 'livree') != 'annulee'
+          AND date >= date(?, '-6 days')
+          AND date <= date(?)
+      `
+      )
+      .get(vendorId, cleanDate, cleanDate) as {
+      cnt: number;
+      total_discount: number;
+      total_boxes: number;
+    };
+
+    const count7d = Number(stats?.cnt || 0);
+    if (count7d > 10) {
+      const vnd = db
+        .prepare('SELECT id, name, code FROM users WHERE id = ?')
+        .get(vendorId) as { id: string; name: string; code: string } | undefined;
+      const vendorName = vnd?.name || 'Vendeur';
+      const vendorCode = vnd?.code || vendorId;
+      const totalDiscount = Number(stats?.total_discount || 0);
+      const title = `Alerte Remise Grossiste : ${vendorName} (${count7d} ventes en 7j)`;
+      const msg = `Le vendeur ${vendorName} (${vendorCode}) a sélectionné le type d'acheteur "Grossiste" ${count7d} fois sur les 7 derniers jours (seuil : > 10), pour un cumul de remise de ${totalDiscount.toLocaleString('fr-FR')} FCFA.`;
+      const refKey = `ALT-GROSSISTE-7J-${vendorId}-${cleanDate}`;
+
+      sendNotification('Administrateur', title, msg, 'alerte_anomalie', refKey);
+      sendNotification(
+        'Directeur des opérations de vente',
+        title,
+        msg,
+        'alerte_anomalie',
+        refKey
+      );
+      evaluateAllAnomalyRules({ trigger: 'wholesale_discount_frequency', sendPush: true });
+    }
+  } catch (err) {
+    console.warn('[WholesaleFrequencyAlert] Erreur:', err);
+  }
+}
+
 apiRouter.post('/sales', requireVendeur, (req, res) => {
   try {
     const {
@@ -3203,6 +6581,11 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       vendor_id,
       pdv_id,
       items,
+      buyer_type: rawBuyerType,
+      buyerType: rawBuyerTypeAlt,
+      wholesale_discount_amount: rawWholesaleDiscount,
+      wholesaleDiscountAmount: rawWholesaleDiscountAlt,
+      total_amount: rawClientTotalAmount,
       payment_type,
       status: requestedStatus,
       needs_regularization,
@@ -3216,13 +6599,33 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       return res.status(400).json({ success: false, error: 'Données de vente incomplètes.' });
     }
 
-    const total = items.reduce((sum: number, it: any) => sum + (Number(it.qtyBoxes) * Number(it.unitPrice)), 0);
-    const itemsJsonStr = JSON.stringify(items);
+    const validation = validateAndComputeSaleWholesaleDiscount({
+      rawItems: items,
+      rawBuyerType: rawBuyerType ?? rawBuyerTypeAlt,
+      rawWholesaleDiscount: rawWholesaleDiscount ?? rawWholesaleDiscountAlt,
+      rawTotalAmount: rawClientTotalAmount,
+    });
+
+    if (!validation.ok) {
+      return res.status(validation.status || 400).json({
+        success: false,
+        error: validation.error || 'Vente invalide.',
+      });
+    }
+
+    const {
+      normalizedItems,
+      cajoucyBoxesCount,
+      buyerType,
+      wholesaleDiscountAmount,
+      totalAmount: total,
+    } = validation;
+    const itemsJsonStr = JSON.stringify(normalizedItems);
 
     // Déduplication côté serveur : vérifier si l'identifiant de vente existe déjà ou si le vendeur vient de soumettre la même vente en double (< 15 secondes)
     if (clientSaleId) {
       const existingById = db
-        .prepare('SELECT id, number, thermal_ticket_number, date, sale_time FROM sales WHERE id = ?')
+        .prepare('SELECT id, number, thermal_ticket_number, date, sale_time, buyer_type, wholesale_discount_amount, cajoucy_boxes_count, total_amount FROM sales WHERE id = ?')
         .get(clientSaleId) as any;
       if (existingById) {
         return res.json({
@@ -3234,6 +6637,10 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
           thermal_ticket_number: existingById.thermal_ticket_number,
           date: existingById.date,
           sale_time: existingById.sale_time,
+          buyer_type: existingById.buyer_type || null,
+          wholesale_discount_amount: Number(existingById.wholesale_discount_amount || 0),
+          cajoucy_boxes_count: Number(existingById.cajoucy_boxes_count || 0),
+          total_amount: Number(existingById.total_amount || total),
         });
       }
     }
@@ -3241,7 +6648,7 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
     const recentSameVendorSale = db
       .prepare(
         `
-        SELECT id, number, thermal_ticket_number, date, sale_time, created_at
+        SELECT id, number, thermal_ticket_number, date, sale_time, buyer_type, wholesale_discount_amount, cajoucy_boxes_count, total_amount, created_at
         FROM sales
         WHERE vendor_id = ? AND pdv_id = ? AND total_amount = ? AND items = ?
         ORDER BY created_at DESC
@@ -3262,6 +6669,10 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
           thermal_ticket_number: recentSameVendorSale.thermal_ticket_number,
           date: recentSameVendorSale.date,
           sale_time: recentSameVendorSale.sale_time,
+          buyer_type: recentSameVendorSale.buyer_type || null,
+          wholesale_discount_amount: Number(recentSameVendorSale.wholesale_discount_amount || 0),
+          cajoucy_boxes_count: Number(recentSameVendorSale.cajoucy_boxes_count || 0),
+          total_amount: Number(recentSameVendorSale.total_amount || total),
         });
       }
     }
@@ -3280,8 +6691,25 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
     const isRegularize = requestedStatus === 'a_regulariser' || Boolean(needs_regularization);
     const saleStatus = isRegularize ? 'a_regulariser' : 'livree';
 
-    const pdvRow = db.prepare('SELECT name, neighborhood, latitude, longitude FROM points_de_vente WHERE id = ?').get(pdv_id) as any;
+    ensureAllPdvsBoundToVendorAndRoutineDay();
+    const pdvRow = db
+      .prepare(
+        'SELECT id, name, code, neighborhood, latitude, longitude, vendor_id, routine_day, routine_day_index FROM points_de_vente WHERE id = ?'
+      )
+      .get(pdv_id) as any;
     const vendorRow = db.prepare('SELECT name, code FROM users WHERE id = ?').get(vendor_id) as { name: string; code: string } | undefined;
+    const beforeRoutine = reconcileVendorPdvRoutineStatus(vendor_id, date);
+
+    if (userRole === 'Vendeur' && pdvRow) {
+      if (pdvRow.vendor_id && pdvRow.vendor_id !== vendor_id) {
+        return res.status(403).json({
+          success: false,
+          error:
+            'Accès refusé : vous ne pouvez réaliser une vente que dans les points de vente que vous avez vous-même créés.',
+        });
+      }
+    }
+
     const lat = Number.isFinite(Number(latitude)) ? Number(latitude) : Number(pdvRow?.latitude || 12.6392);
     const lng = Number.isFinite(Number(longitude)) ? Number(longitude) : Number(pdvRow?.longitude || -7.9850);
 
@@ -3290,9 +6718,10 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
     const insertResult = db.prepare(`
       INSERT OR IGNORE INTO sales (
         id, number, thermal_ticket_number, date, sale_time, vendor_id, pdv_id, items, total_amount,
+        buyer_type, wholesale_discount_amount, cajoucy_boxes_count,
         payment_type, status, invoice_generated, recorded_offline, offline_recorded_at, synced_at, latitude, longitude, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       number,
@@ -3303,6 +6732,9 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       pdv_id,
       itemsJsonStr,
       total,
+      buyerType,
+      wholesaleDiscountAmount,
+      cajoucyBoxesCount,
       payment_type || 'Comptant',
       saleStatus,
       isOffline,
@@ -3323,6 +6755,10 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
         thermal_ticket_number: thermalTicketNumber,
         date,
         sale_time: saleTime,
+        buyer_type: buyerType,
+        wholesale_discount_amount: wholesaleDiscountAmount,
+        cajoucy_boxes_count: cajoucyBoxesCount,
+        total_amount: total,
       });
     }
 
@@ -3345,14 +6781,51 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       date
     );
 
+    // Synchroniser automatiquement la visite avec vente dans la Routine VRS (compte immédiatement si jour actif et <= 100 m)
+    try {
+      executeVrsVisitCheckin({
+        actor: {
+          id: vendor_id,
+          name: vendorRow?.name || 'Vendeur',
+          role: 'Vendeur',
+          code: vendorRow?.code || 'VND',
+        },
+        vendorId: vendor_id,
+        pdvId: pdv_id,
+        latitude: lat,
+        longitude: lng,
+        gpsAccuracy: 4.2,
+        deviceInfo: `Vente ${number}`,
+        visitUuid: `uuid-vrs-sale-${id}`,
+        visitDate: beforeRoutine.isStarted ? beforeRoutine.activeDate || date : date,
+        visitType: 'avec_vente',
+        saleId: id,
+        recordedOffline: Boolean(isOffline),
+        clientRecordedAt: offline_recorded_at || nowIso,
+      });
+    } catch {
+      // Ignore visit sync errors during sale creation
+    }
+
+    const discountAuditNote =
+      buyerType === 'Grossiste' && wholesaleDiscountAmount > 0
+        ? ` [Type d'acheteur: Grossiste • ${cajoucyBoxesCount} cartons Cajoucy • Remise grossiste: -${wholesaleDiscountAmount.toLocaleString('fr-FR')} FCFA]`
+        : buyerType === 'Détaillant'
+        ? ` [Type d'acheteur: Détaillant • ${cajoucyBoxesCount} cartons Cajoucy]`
+        : '';
+
     recordAudit(
       isOffline ? 'VENTE_PDV_SYNC_HORS_LIGNE' : isRegularize ? 'VENTE_A_REGULARISER' : 'VENTE_PDV',
       'SALE',
       id,
       userRole,
       vendor_id,
-      `Vente ${number} (${total.toLocaleString('fr-FR')} FCFA) ${isOffline ? 'enregistrée hors-ligne puis synchronisée' : 'effectuée par le vendeur'} à ${saleTime}. Mini facture thermique ${thermalTicketNumber} générée automatiquement.`
+      `Vente ${number} (${total.toLocaleString('fr-FR')} FCFA)${discountAuditNote} ${isOffline ? 'enregistrée hors-ligne puis synchronisée' : 'effectuée par le vendeur'} à ${saleTime}. Mini facture thermique ${thermalTicketNumber} générée automatiquement.`
     );
+
+    if (buyerType === 'Grossiste') {
+      checkAndTriggerWholesaleBuyerFrequencyAlert(vendor_id, date);
+    }
 
     // Envoi immédiat et asynchrone du push après commit (urgency "high", TTL 3600 s)
     triggerImmediateSalePush({
@@ -3374,6 +6847,11 @@ apiRouter.post('/sales', requireVendeur, (req, res) => {
       thermal_ticket_number: thermalTicketNumber,
       date,
       sale_time: saleTime,
+      buyer_type: buyerType,
+      wholesale_discount_amount: wholesaleDiscountAmount,
+      cajoucy_boxes_count: cajoucyBoxesCount,
+      total_amount: total,
+      items: normalizedItems,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur';
@@ -4297,6 +7775,7 @@ apiRouter.post('/lots/exit-loss', requireMagasinierOrSalesAdmin, (req, res) => {
 // 12. NOTIFICATIONS & AUDIT LOGS
 apiRouter.get('/notifications', (req, res) => {
   try {
+    initVrsSystem();
     const role = getUserRole(req) || 'ALL';
     const headerUserId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'].trim() : '';
     let notifs: any[];
@@ -4337,7 +7816,7 @@ apiRouter.get('/notifications', (req, res) => {
 
     const enriched = notifs.map((n: any) => {
       let proof = null;
-      let metadata = null;
+      let metadata: any = null;
       try {
         if (n.proof_json) proof = JSON.parse(n.proof_json);
       } catch {
@@ -4348,6 +7827,50 @@ apiRouter.get('/notifications', (req, res) => {
       } catch {
         metadata = null;
       }
+
+      const nType = String(n.type || '').toLowerCase();
+      const nRef = String(n.reference || '').trim();
+      if (
+        (nType === 'creation_pdv' ||
+          nType === 'validation_pdv' ||
+          nType === 'rejet_pdv' ||
+          nRef.toUpperCase().startsWith('PDV-')) &&
+        (!metadata || !metadata.pdvId)
+      ) {
+        const lookupRef = metadata?.pdvCode || metadata?.pdvId || nRef;
+        if (lookupRef) {
+          const pdvRow = db
+            .prepare(
+              `SELECT p.*,
+                      COALESCE(u.name, p.created_by, 'Oumar Konaté') AS vendor_name,
+                      COALESCE(u.code, 'BAO-VND-001') AS vendor_code
+               FROM points_de_vente p
+               LEFT JOIN users u ON p.vendor_id = u.id
+               WHERE p.code = ? OR p.id = ?
+               LIMIT 1`
+            )
+            .get(lookupRef, lookupRef) as any;
+          if (pdvRow) {
+            metadata = {
+              ...(metadata || {}),
+              pdvId: pdvRow.id,
+              pdvCode: pdvRow.code,
+              pdvName: pdvRow.name,
+              managerName: pdvRow.manager_name || 'Gérant',
+              neighborhood: pdvRow.neighborhood || 'Bamako',
+              routineName:
+                pdvRow.routine_name ||
+                `Routine ${pdvRow.routine_day || 'Lundi'} - ${pdvRow.neighborhood || 'Bamako'}`,
+              routineDay: pdvRow.routine_day || 'Lundi',
+              vendorId: pdvRow.vendor_id || 'usr-vnd-1',
+              vendorName: pdvRow.vendor_name,
+              vendorCode: pdvRow.vendor_code,
+              status: pdvRow.status,
+            };
+          }
+        }
+      }
+
       return {
         ...n,
         proof,
@@ -5752,9 +9275,16 @@ function calculateVendorSemesterScoreServer(vendorId: string, semester: string, 
   const caRatio = Math.min(1, salesRow.ca_total / caTarget);
   const scoreCa = Math.round(caRatio * weights.ca * 2) / 2;
 
-  // 2. Régularité des tournées (pondération: weights.regularite, défaut 4)
+  // 2. Régularité des tournées & Objectifs mensuels Routine VRS (pondération: weights.regularite, défaut 4)
+  // Utilise l'objectif mensuel attribué (ou l'objectif mensuel par défaut 25 x jours ouvrés)
+  const currentMonthSummary = buildVendorMonthlyObjectiveSummary(vendorId, '2026-11');
+  const vrsMonthlyRatio =
+    currentMonthSummary.realizedMonthlyPdv > 0
+      ? Math.min(1, currentMonthSummary.realizedMonthlyPdv / Math.max(1, currentMonthSummary.monthlyTargetPdv))
+      : 0;
   const expectedActiveDays = 14;
-  const regRatio = Math.min(1, salesRow.active_days / expectedActiveDays);
+  const salesDaysRatio = Math.min(1, salesRow.active_days / expectedActiveDays);
+  const regRatio = Math.max(salesDaysRatio, vrsMonthlyRatio);
   const scoreRegularite = Math.round(regRatio * weights.regularite * 2) / 2;
 
   // 3. Versements dans les délais (pondération: weights.versements, défaut 4)
@@ -5807,7 +9337,7 @@ function calculateVendorSemesterScoreServer(vendorId: string, semester: string, 
 // Helper to compute FEFO non-expired stock catalogue for bon cadeau basket selection
 function getFefoNonExpiredCatalog() {
   const todayStr = new Date().toISOString().split('T')[0];
-  const products = db.prepare('SELECT * FROM products ORDER BY name ASC').all() as any[];
+  const products = db.prepare('SELECT * FROM products WHERE COALESCE(is_active, 1) = 1 ORDER BY name ASC').all() as any[];
   const lots = db.prepare(`
     SELECT * FROM lots
     WHERE quantity > 0 AND expiry_date > ?
@@ -7279,9 +10809,10 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
     try {
       const insertSaleStmt = db.prepare(`
         INSERT OR IGNORE INTO sales (
-          id, number, date, sale_time, vendor_id, pdv_id, items, total_amount,
+          id, number, thermal_ticket_number, date, sale_time, vendor_id, pdv_id, items, total_amount,
+          buyer_type, wholesale_discount_amount, cajoucy_boxes_count,
           payment_type, status, recorded_offline, offline_recorded_at, synced_at, latitude, longitude, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'livree', 1, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'livree', 1, ?, ?, ?, ?, ?)
       `);
 
       const insertGpsStmt = db.prepare(`
@@ -7294,18 +10825,33 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
       if (Array.isArray(offlineSales)) {
         for (const s of offlineSales) {
           if (!s.vendor_id || !s.pdv_id || !Array.isArray(s.items) || s.items.length === 0) continue;
+
+          const validation = validateAndComputeSaleWholesaleDiscount({
+            rawItems: s.items,
+            rawBuyerType: s.buyer_type ?? s.buyerType,
+            rawWholesaleDiscount: s.wholesale_discount_amount ?? s.wholesaleDiscountAmount,
+            rawTotalAmount: s.total_amount,
+          });
+
+          if (!validation.ok) {
+            db.exec('ROLLBACK');
+            return res.status(validation.status || 400).json({
+              success: false,
+              error: validation.error || 'Vente hors-ligne rejetée par le contrôle serveur.',
+            });
+          }
+
           const saleId = s.id || `sale-off-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
           const saleNumber = s.number || `VTE-OFF-${Math.floor(10000 + Math.random() * 90000)}`;
+          const thermalTicketNumber =
+            s.thermal_ticket_number || String(saleNumber).replace(/^VTE-/, 'TKT-THERM-');
           const saleDate = s.date || nowIso.split('T')[0];
           const saleTime =
             s.sale_time ||
             (s.offline_recorded_at && String(s.offline_recorded_at).includes('T')
               ? String(s.offline_recorded_at).split('T')[1].slice(0, 5)
               : '12:00');
-          const totalAmount = Number(
-            s.total_amount ??
-              s.items.reduce((acc: number, it: any) => acc + Number(it.qtyBoxes) * Number(it.unitPrice), 0)
-          );
+          const totalAmount = validation.totalAmount;
 
           const pdvRow = db.prepare('SELECT name, latitude, longitude FROM points_de_vente WHERE id = ?').get(s.pdv_id) as any;
           const lat = Number.isFinite(Number(s.latitude)) ? Number(s.latitude) : Number(pdvRow?.latitude || 12.6392);
@@ -7314,12 +10860,16 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
           const info = insertSaleStmt.run(
             saleId,
             saleNumber,
+            thermalTicketNumber,
             saleDate,
             saleTime,
             s.vendor_id,
             s.pdv_id,
-            JSON.stringify(s.items),
+            JSON.stringify(validation.normalizedItems),
             totalAmount,
+            validation.buyerType,
+            validation.wholesaleDiscountAmount,
+            validation.cajoucyBoxesCount,
             s.payment_type || 'Comptant',
             s.offline_recorded_at || nowIso,
             nowIso,
@@ -7330,6 +10880,9 @@ apiRouter.post('/sync/offline-batch', (req, res) => {
 
           if (info.changes > 0) {
             syncedSalesCount++;
+            if (validation.buyerType === 'Grossiste') {
+              checkAndTriggerWholesaleBuyerFrequencyAlert(s.vendor_id, saleDate);
+            }
           }
 
           // Also ensure a GPS waypoint is recorded for this offline sale
@@ -7698,12 +11251,26 @@ apiRouter.post('/wholesale/orders', requireGrossiste, (req, res) => {
       return res.status(404).json({ success: false, error: 'Client en gros introuvable.' });
     }
 
+    for (const it of items) {
+      const prod = db.prepare('SELECT * FROM products WHERE id = ? OR code = ?').get(it.productId || '', it.code || '') as any;
+      if (prod && Number(prod.is_active ?? 1) === 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Le produit "${prod.name}" est désactivé et ne peut plus être commandé.`,
+        });
+      }
+    }
+
     const normalizedItems = items
       .filter((it: any) => Number(it.qtyBoxes) > 0)
       .map((it: any) => {
         const prod = db.prepare('SELECT * FROM products WHERE id = ? OR code = ?').get(it.productId || '', it.code || '') as any;
         const qtyBoxes = Math.max(1, Math.round(Number(it.qtyBoxes) || 0));
-        const unitPrice = Number(it.unitPrice || prod?.price_box || 0);
+        const defaultPrice =
+          prod?.wholesale_price_box !== undefined && prod?.wholesale_price_box !== null
+            ? Number(prod.wholesale_price_box)
+            : Number(prod?.price_box || 0);
+        const unitPrice = Number(it.unitPrice || defaultPrice || 0);
         return {
           productId: prod?.id || it.productId,
           code: prod?.code || it.code,

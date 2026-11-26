@@ -8,7 +8,7 @@ export interface UserSession {
   code: string;
   name: string;
   email: string;
-  role: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur';
+  role: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Facturation' | 'Comptable' | 'Vendeur';
   phone?: string;
   team?: string;
   must_change_password?: number;
@@ -220,7 +220,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                     if (user.role === 'Sales Admin') Icon = ClipboardCheck;
                     if (user.role === 'Gestionnaire grossiste') Icon = Package;
                     if (user.role === 'Gestionnaire de stock' || user.role === 'Magasinier') Icon = Package;
-                    if (user.role === 'Comptable') Icon = CreditCard;
+                    if (user.role === 'Facturation' || user.role === 'Comptable') Icon = CreditCard;
                     if (user.role === 'Vendeur') Icon = ShoppingBag;
 
                     return (
@@ -260,6 +260,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
                                 ? 'Gestionnaire grossiste'
                                 : user.role === 'Magasinier'
                                 ? 'Gestionnaire de stock'
+                                : user.role === 'Comptable'
+                                ? 'Facturation'
                                 : user.role} {user.role !== 'Vendeur' && user.team ? `• ${user.team}` : ''}
                             </div>
                           </div>

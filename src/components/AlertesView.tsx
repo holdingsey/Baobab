@@ -475,13 +475,13 @@ export const AlertesView: React.FC<AlertesViewProps> = ({
       )}
 
       {/* Résumé rapide par statut et gravité */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-xs font-bold text-slate-500 dark:text-slate-400">Nouvelles alertes</div>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className="text-2xl font-black text-[#DC2626]">{newCount}</span>
             {newCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full bg-[#DC2626] text-white text-[11px] font-bold">
+              <span className="px-2 py-0.5 rounded-full bg-[#DC2626] text-white text-[11px] font-bold shrink-0 whitespace-nowrap">
                 À traiter
               </span>
             )}

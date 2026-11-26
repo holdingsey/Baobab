@@ -102,6 +102,20 @@ export const EXTRACTION_DATASETS_META: Record<string, ExtractionDatasetMeta> = {
     hasDateRange: false,
     filterFields: ['q'],
   },
+  routine_vrs: {
+    key: 'routine_vrs',
+    title: 'Routine VRS — Visites Terrain',
+    description: 'Suivi hebdomadaire de la Routine VRS (objectif 25 PDV, jour choisi, progression X/25, statut, dernière visite et dérogations).',
+    category: 'Commercial & PDV',
+    hasDateRange: true,
+    filterFields: ['vendor_id', 'status', 'q'],
+    statusOptions: [
+      { value: 'Validé', label: 'Validé (25/25)' },
+      { value: 'En cours', label: 'En cours' },
+      { value: 'Incomplet', label: 'Incomplet' },
+      { value: 'Non démarré', label: 'Non démarré' },
+    ],
+  },
   demandes_stock_vendeur: {
     key: 'demandes_stock_vendeur',
     title: 'Demandes de stock vendeur',
@@ -1146,7 +1160,7 @@ export const SharedExtractionModal: React.FC<SharedExtractionModalProps> = ({
                   <option value="Sales Admin">Sales Admin / Contrôleur</option>
                   <option value="Gestionnaire grossiste">Gestionnaire grossiste</option>
                   <option value="Gestionnaire de stock">Magasinier</option>
-                  <option value="Comptable">Comptable</option>
+                  <option value="Facturation">Facturation</option>
                   <option value="Vendeur">Vendeur</option>
                 </select>
               </div>
@@ -1762,7 +1776,7 @@ const DISPLAY_ROLES: Array<{ key: string; label: string; badge: string; locked?:
   { key: 'Sales Admin', label: 'Sales Admin / Contrôleur', badge: 'BAO-SAD' },
   { key: 'Gestionnaire grossiste', label: 'Gestionnaire grossiste', badge: 'BAO-GRS' },
   { key: 'Magasinier', label: 'Magasinier', badge: 'BAO-MAG' },
-  { key: 'Comptable', label: 'Comptable', badge: 'BAO-CPT' },
+  { key: 'Facturation', label: 'Facturation', badge: 'BAO-CPT' },
   { key: 'Vendeur', label: 'Vendeur (403 strict)', badge: 'BAO-VND', locked: true },
 ];
 

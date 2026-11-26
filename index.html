@@ -27,6 +27,61 @@
     <script>
       (function() {
         try {
+          var currentFetch = window.fetch;
+          var fetchDesc =
+            Object.getOwnPropertyDescriptor(window, 'fetch') ||
+            (typeof Window !== 'undefined' && Window.prototype
+              ? Object.getOwnPropertyDescriptor(Window.prototype, 'fetch')
+              : null);
+          if (!fetchDesc || fetchDesc.configurable !== false) {
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: true,
+              get: function() {
+                return currentFetch;
+              },
+              set: function(fn) {
+                if (typeof fn === 'function') {
+                  currentFetch = fn;
+                }
+              }
+            });
+          }
+        } catch (_fetchErr) {}
+
+        window.addEventListener(
+          'error',
+          function(ev) {
+            var filename = String((ev && ev.filename) || '');
+            var msg = String((ev && ev.message) || '');
+            if (
+              filename.indexOf('chrome-extension://') !== -1 ||
+              msg.indexOf('Cannot set property fetch of #<Window>') !== -1
+            ) {
+              ev.stopImmediatePropagation();
+              ev.preventDefault();
+              return false;
+            }
+          },
+          true
+        );
+
+        window.addEventListener(
+          'unhandledrejection',
+          function(ev) {
+            var reasonStr = String((ev && ev.reason && (ev.reason.stack || ev.reason.message || ev.reason)) || '');
+            if (
+              reasonStr.indexOf('chrome-extension://') !== -1 ||
+              reasonStr.indexOf('Cannot set property fetch of #<Window>') !== -1
+            ) {
+              ev.stopImmediatePropagation();
+              ev.preventDefault();
+            }
+          },
+          true
+        );
+
+        try {
           var NativeWebSocket = window.WebSocket;
           if (NativeWebSocket && ! NativeWebSocket.__viteShimApplied) {
             var ShimmedWebSocket = function(url, protocols) {

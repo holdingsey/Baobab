@@ -1,13 +1,12 @@
 services:
   - type: web
     name: baobab-distribution
-    env: static
-    buildCommand: export NODE_OPTIONS="--max-old-space-size=460" && npm install --no-audit --no-fund --legacy-peer-deps && npm run build
-    staticPublishPath: dist
+    runtime: node
+    buildCommand: npm install --no-audit --no-fund --legacy-peer-deps && npm run build
+    startCommand: npm run start
     envVars:
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=460
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22.14.0
+

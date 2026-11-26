@@ -85,7 +85,7 @@ export function getAllowedDomainsForRole(role: string): AnomalyDomain[] {
   ) {
     return ['commercial', 'stock'];
   }
-  if (r === 'Comptable') {
+  if (r === 'Facturation' || r === 'Comptable') {
     return ['caisse'];
   }
   if (r === 'Magasinier' || r === 'Gestionnaire de stock') {
@@ -108,7 +108,7 @@ export function getTargetRolesForDomain(domain: AnomalyDomain): string[] {
     ];
   }
   if (domain === 'caisse') {
-    return ['Administrateur', 'Comptable'];
+    return ['Administrateur', 'Facturation', 'Comptable'];
   }
   return ['Administrateur'];
 }
@@ -495,11 +495,12 @@ export function evaluateAllAnomalyRules(options?: {
     const userById = new Map(users.map((u) => [u.id, u]));
     const vendors = users.filter((u) => u.role === 'Vendeur');
 
-    const products = db.prepare('SELECT id, code, name, price_box, stock_depot, threshold_depot FROM products').all() as Array<{
+    const products = db.prepare('SELECT id, code, name, price_box, wholesale_price_box, stock_depot, threshold_depot FROM products').all() as Array<{
       id: string;
       code: string;
       name: string;
       price_box: number;
+      wholesale_price_box?: number | null;
       stock_depot: number;
       threshold_depot: number;
     }>;
@@ -539,8 +540,13 @@ export function evaluateAllAnomalyRules(options?: {
         const prod = productById.get(it.productId) || productByCode.get(it.code);
         if (!prod) continue;
         const catalogPrice = Number(prod.price_box || 0);
+        const wholesalePrice =
+          prod.wholesale_price_box !== undefined && prod.wholesale_price_box !== null
+            ? Number(prod.wholesale_price_box)
+            : null;
         const soldPrice = Number(it.unitPrice ?? it.price ?? catalogPrice);
         if (catalogPrice <= 0) continue;
+        if (wholesalePrice !== null && soldPrice === wholesalePrice) continue;
         const diff = soldPrice - catalogPrice;
         const diffPct = (Math.abs(diff) / catalogPrice) * 100;
         if (Math.abs(diff) > 0 && diffPct > thresholds.price_tolerance_pct) {
@@ -1419,13 +1425,103 @@ export function evaluateAllAnomalyRules(options?: {
         if (res.isNew) newAlertsCount++;
       }
     }
+
+    // =========================================================================
+    // RÈGLE REMISE GROSSISTE : Vendeur choisissant "Grossiste" > 10 fois en 7 jours
+    // (Alerte à l'Administrateur et au DOV)
+    // =========================================================================
+    for (const vnd of vendors) {
+      const vWholesaleSales = sales.filter(
+        (s) =>
+          s.vendor_id === vnd.id &&
+          s.buyer_type === 'Grossiste' &&
+          s.status !== 'annulee'
+      );
+      if (vWholesaleSales.length > 10) {
+        // Regarder sur une fenêtre glissante de 7 jours autour de la vente la plus récente ou d'aujourd'hui
+        const latestDateStr = String(vWholesaleSales[0]?.date || bamakoToday).slice(0, 10);
+        const latestTs = new Date(`${latestDateStr}T12:00:00Z`).getTime();
+        const inWindow = vWholesaleSales.filter((s) => {
+          const dStr = String(s.date || '').slice(0, 10);
+          if (!dStr) return false;
+          const ts = new Date(`${dStr}T12:00:00Z`).getTime();
+          const diffDays = (latestTs - ts) / (1000 * 60 * 60 * 24);
+          return diffDays >= -1 && diffDays <= 6;
+        });
+
+        if (inWindow.length > 10) {
+          const totalDiscount7d = inWindow.reduce(
+            (acc, s) => acc + Number(s.wholesale_discount_amount || 0),
+            0
+          );
+          const totalCajoucyBoxes7d = inWindow.reduce(
+            (acc, s) => acc + Number(s.cajoucy_boxes_count || 0),
+            0
+          );
+          const res = registerOrUpdateAlert(
+            {
+              dedup_key: `R_GROSSISTE_7J_${vnd.id}_${latestDateStr}`,
+              rule_code: 'remise_grossiste_frequente',
+              type_label: 'Remise grossiste fréquente (> 10 en 7j)',
+              domain: 'commercial',
+              severity: inWindow.length >= 15 ? 'Critique' : 'Attention',
+              target_type: 'Vendeur',
+              target_ref: vnd.code,
+              target_label: `Remises Grossiste Cajoucy • ${vnd.name} (${vnd.code})`,
+              vendor_id: vnd.id,
+              vendor_name: vnd.name,
+              vendor_code: vnd.code,
+              explanation: `${vnd.name} (${vnd.code}) a sélectionné le type d'acheteur "Grossiste" ${inWindow.length} fois en 7 jours (seuil d'alerte : > 10 fois), accordant ${totalDiscount7d.toLocaleString('fr-FR')} FCFA de remise sur ${totalCajoucyBoxes7d} cartons Cajoucy.`,
+              measured_values: [
+                { label: 'Ventes "Grossiste" (7j)', value: `${inWindow.length} ventes` },
+                { label: 'Seuil de surveillance', value: '10 ventes / 7 jours' },
+                { label: 'Volume Cajoucy remisé', value: `${totalCajoucyBoxes7d} cartons` },
+                { label: 'Total remises accordées', value: `-${totalDiscount7d.toLocaleString('fr-FR')} FCFA` },
+              ],
+              detected_at: new Date().toISOString(),
+            },
+            sendPush
+          );
+          if (res.isNew) {
+            newAlertsCount++;
+            // Notifier explicitement l'Administrateur et le DOV même si la gravité est Attention
+            const nowIso = new Date().toISOString();
+            const insNotif = db.prepare(`
+              INSERT OR IGNORE INTO notifications (id, role, title, message, type, reference, is_read, created_at)
+              VALUES (?, ?, ?, ?, 'alerte_anomalie', ?, 0, ?)
+            `);
+            for (const targetRole of ['Administrateur', 'Directeur des opérations de vente']) {
+              const notifId = `notif-grs7j-${res.id}-${targetRole.replace(/\s+/g, '-').toLowerCase()}`;
+              const notifTitle = `Alerte Remise Grossiste : ${vnd.name} (${inWindow.length} fois en 7j)`;
+              const notifMsg = `${vnd.name} (${vnd.code}) a choisi "Grossiste" ${inWindow.length} fois sur 7 jours (-${totalDiscount7d.toLocaleString('fr-FR')} FCFA).`;
+              try {
+                insNotif.run(notifId, targetRole, notifTitle, notifMsg, res.id, nowIso);
+                if (sendPush) {
+                  triggerImmediatePostCommitPush({
+                    notificationId: notifId,
+                    role: targetRole,
+                    title: notifTitle,
+                    message: notifMsg,
+                    type: 'alerte_anomalie',
+                    reference: res.id,
+                    createdAt: nowIso,
+                  });
+                }
+              } catch {
+                // ignore duplicate
+              }
+            }
+          }
+        }
+      }
+    }
   } catch (err) {
     console.warn('[Anomalies] Erreur lors de l\'évaluation des règles:', err);
   }
 
   const totalRow = db.prepare('SELECT COUNT(*) as c FROM anomaly_alerts').get() as { c: number };
   return {
-    evaluatedRules: 10,
+    evaluatedRules: 11,
     totalAlerts: Number(totalRow?.c || 0),
     newAlertsCount,
   };

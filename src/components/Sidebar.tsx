@@ -100,6 +100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         badgeColor: '#DC2626',
       },
       { id: 'pdvs', label: 'Points de vente (PDV)', icon: Store },
+      { id: 'routine-vrs', label: 'Routine VRS', icon: MapPin },
       { id: 'carte', label: 'Carte & Tournées GPS', icon: MapPin },
       {
         id: 'receptions',
@@ -157,6 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       },
       { id: 'demande-stock-vendeur', label: 'Demande stock vendeur', icon: Truck },
       { id: 'pdvs', label: 'Points de vente', icon: Store },
+      { id: 'routine-vrs', label: 'Routine VRS', icon: MapPin },
       { id: 'carte', label: 'Carte & Tournées', icon: MapPin },
       { id: 'stock-depot', label: 'Stock dépôt', icon: Package },
       { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
@@ -171,6 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         badge: newAnomaliesCount > 0 ? String(newAnomaliesCount) : undefined,
         badgeColor: '#DC2626',
       },
+      { id: 'routine-vrs', label: 'Routine VRS', icon: MapPin },
       {
         id: 'receptions',
         label: 'Validation Réceptions',
@@ -229,7 +232,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'bons-a-remettre', label: 'Bons à remettre', icon: FileCheck },
       { id: 'extractions', label: 'Extractions', icon: FileSpreadsheet },
     ];
-  } else if (role === 'Comptable') {
+  } else if (role === 'Facturation' || role === 'Comptable') {
     menuItems = [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
       {
@@ -253,13 +256,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     menuItems = [
       { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
       { id: 'nouvelle-vente', label: 'Nouvelle vente', icon: PlusCircle },
+      { id: 'routine-vrs', label: 'Ma routine', icon: MapPin },
       { id: 'mon-chargement', label: 'Mon chargement', icon: Truck },
       { id: 'mes-chargements', label: 'Mes chargements', icon: History },
       { id: 'nouveau-pdv', label: 'Nouveau PDV', icon: Plus },
       { id: 'mes-pdvs', label: 'Mes PDV', icon: Store },
       { id: 'mon-stock', label: 'Mon stock', icon: Boxes },
       { id: 'mes-ventes', label: 'Mes ventes', icon: ShoppingBag },
-      { id: 'mes-factures', label: 'Mes factures', icon: Receipt },
       { id: 'mon-solde', label: 'Mon solde', icon: CreditCard },
       { id: 'mes-versements', label: 'Mes versements', icon: DollarSign },
       {
@@ -293,6 +296,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ? 'Grossiste'
     : role === 'Magasinier' || role === 'Gestionnaire de stock' || currentUser.code === 'BAO-MAG'
     ? 'Magasinier'
+    : role === 'Comptable' || role === 'Facturation' || currentUser.code === 'BAO-CPT'
+    ? 'Facturation'
     : role;
 
   return (

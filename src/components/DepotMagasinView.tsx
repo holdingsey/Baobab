@@ -69,15 +69,59 @@ interface Product {
 
 const FALLBACK_PRODUCTS: Product[] = [
   {
-    id: 'prod-caj',
-    code: 'JUS-CAJ-12',
-    name: 'Jus Cajoucy',
-    gamme: 'Jus & Boissons',
+    id: 'prod-caj-ananas',
+    code: 'JUS-CAJ-ANA-12',
+    name: 'Cajoucy Ananas',
+    gamme: 'Jus Cajoucy',
     packaging: 'Carton de 12',
     units_per_box: 12,
-    price_box: 9600,
-    stock_depot: 850,
-    threshold_depot: 100,
+    price_box: 9000,
+    stock_depot: 220,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-cocktail',
+    code: 'JUS-CAJ-COC-12',
+    name: 'Cajoucy Cocktail',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 195,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-mangue',
+    code: 'JUS-CAJ-MAN-12',
+    name: 'Cajoucy Mangue',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 240,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-pomme',
+    code: 'JUS-CAJ-POM-12',
+    name: 'Cajoucy Pomme de Cajou',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 180,
+    threshold_depot: 40,
+  },
+  {
+    id: 'prod-caj-orange',
+    code: 'JUS-CAJ-ORA-12',
+    name: 'Cajoucy Orange',
+    gamme: 'Jus Cajoucy',
+    packaging: 'Carton de 12',
+    units_per_box: 12,
+    price_box: 9000,
+    stock_depot: 210,
+    threshold_depot: 40,
   },
   {
     id: 'prod-ben',
@@ -445,8 +489,10 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
     setHasStockDiscrepancy(false);
     setReceptionNotes('');
     const today = new Date().toISOString().split('T')[0];
-    const catalog = products && products.length > 0 ? products : fetchedProducts;
-    const defaultProdId = catalog[0]?.id || 'prod-caj';
+    const catalog = (products && products.length > 0 ? products : fetchedProducts).filter(
+      (p: any) => Number(p.is_active ?? 1) === 1
+    );
+    const defaultProdId = catalog[0]?.id || 'prod-caj-ananas';
     const autoLot = generateAutoLotNumber(defaultProdId, [], today);
     setReceptionLines([
       {
@@ -462,10 +508,12 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
 
   // Ajout d'une ligne avec attribution automatique d'un produit et d'un numéro de lot incrémenté
   const addReceptionLine = () => {
-    const catalog = products && products.length > 0 ? products : fetchedProducts;
+    const catalog = (products && products.length > 0 ? products : fetchedProducts).filter(
+      (p: any) => Number(p.is_active ?? 1) === 1
+    );
     const usedProdIds = new Set(receptionLines.map((l) => l.productId));
     const nextProd = catalog.find((p) => !usedProdIds.has(p.id)) || catalog[0];
-    const nextProdId = nextProd?.id || 'prod-caj';
+    const nextProdId = nextProd?.id || 'prod-caj-ananas';
     const today = new Date().toISOString().split('T')[0];
     const autoLot = generateAutoLotNumber(nextProdId, receptionLines, today);
 
@@ -920,10 +968,10 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
   const [isAddingLine, setIsAddingLine] = useState<boolean>(true); // true while selecting/validating current line
   const [isSubmittingChargement, setIsSubmittingChargement] = useState(false);
 
-  // Available products for current line (excluding duplicates!)
+  // Available products for current line (excluding duplicates and inactive products!)
   const availableProductsForLine = useMemo(() => {
     const alreadyChosenIds = new Set(validatedLines.map(l => l.productId));
-    return products.filter(p => !alreadyChosenIds.has(p.id) && p.stock_depot > 0);
+    return products.filter(p => Number((p as any).is_active ?? 1) === 1 && !alreadyChosenIds.has(p.id) && p.stock_depot > 0);
   }, [products, validatedLines]);
 
   useEffect(() => {
@@ -1002,6 +1050,22 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
   const handleRemoveValidatedLine = (idx: number) => {
     setValidatedLines(prev => prev.filter((_, i) => i !== idx));
     setLineBuilderError('');
+  };
+
+  const handleUpdateValidatedLineQty = (idx: number, rawQty: number) => {
+    setValidatedLines(prev =>
+      prev.map((line, i) => {
+        if (i !== idx) return line;
+        const p = products.find(prod => prod.id === line.productId);
+        const maxDepot = p ? p.stock_depot : 9999;
+        const cleanQty = Math.min(maxDepot, Math.max(1, Math.floor(Number(rawQty) || 1)));
+        return {
+          ...line,
+          requestedBoxes: cleanQty,
+          total: cleanQty * line.unitPrice
+        };
+      })
+    );
   };
 
   const handleSubmitChargementRequest = async (e: React.FormEvent) => {
@@ -2779,9 +2843,9 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     </span>
                   </div>
 
-                  {/* Interactive visual product cards */}
+                  {/* Interactive visual product cards (uniquement produits actifs) */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {products.map((prod) => {
+                    {products.filter((prod: any) => Number(prod.is_active ?? 1) === 1).map((prod) => {
                       const validatedItem = validatedLines.find((l) => l.productId === prod.id);
                       const isCurrentlySelected = isAddingLine && currentLineProductId === prod.id;
                       const isOut = prod.stock_depot <= 0;
@@ -2867,15 +2931,20 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                   </button>
                                   <input
                                     type="number"
+                                    inputMode="numeric"
                                     min="1"
                                     max={prod.stock_depot}
-                                    value={currentLineQty}
+                                    placeholder="Qté"
+                                    value={currentLineQty === 0 ? '' : currentLineQty}
                                     onChange={(e) => {
-                                      const val = parseInt(e.target.value, 10);
-                                      if (Number.isNaN(val)) {
+                                      const raw = e.target.value;
+                                      if (raw === '') {
                                         setCurrentLineQty(0);
                                       } else {
-                                        setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
+                                        const val = parseInt(raw, 10);
+                                        if (!Number.isNaN(val)) {
+                                          setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
+                                        }
                                       }
                                     }}
                                     className="w-full min-w-[76px] h-10 px-2 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-black text-base text-center focus:outline-none"
@@ -2942,27 +3011,62 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {validatedLines.map((line, idx) => (
-                        <div key={idx} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <span className="font-bold text-slate-900 dark:text-white">{line.name}</span>
-                              <span className="text-slate-500 text-[11px] ml-2">
-                                ({line.code} &bull; <strong>{line.requestedBoxes} {line.requestedBoxes > 1 ? 'cartons' : 'carton'}</strong> &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA)
-                              </span>
+                      {validatedLines.map((line, idx) => {
+                        const p = products.find(prod => prod.id === line.productId);
+                        const maxDepot = p ? p.stock_depot : 9999;
+                        return (
+                          <div key={idx} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <span className="font-bold text-slate-900 dark:text-white">{line.name}</span>
+                                <span className="text-slate-500 text-[11px] ml-2">
+                                  ({line.code} &bull; <strong>{line.requestedBoxes} {line.requestedBoxes > 1 ? 'cartons' : 'carton'}</strong> &times; {line.unitPrice.toLocaleString('fr-FR')} FCFA)
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateValidatedLineQty(idx, line.requestedBoxes - 1)}
+                                  className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={1}
+                                  max={maxDepot}
+                                  value={line.requestedBoxes}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    if (!Number.isNaN(val) && val >= 1) {
+                                      handleUpdateValidatedLineQty(idx, val);
+                                    }
+                                  }}
+                                  aria-label={`Quantité cartons ${line.name}`}
+                                  className="w-16 min-w-[60px] h-8 px-1.5 rounded-lg border border-[#008DA9] bg-white dark:bg-slate-900 text-center font-mono font-black text-xs text-slate-900 dark:text-white"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateValidatedLineQty(idx, line.requestedBoxes + 1)}
+                                  className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                              <span className="font-black text-slate-900 dark:text-white baobab-amount">{line.total.toLocaleString('fr-FR')} FCFA</span>
+                              <ConfirmDestructiveButton
+                                label="Retirer"
+                                confirmLabel="Retirer ?"
+                                onConfirm={() => handleRemoveValidatedLine(idx)}
+                              />
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            <span className="font-black text-slate-900 dark:text-white baobab-amount">{line.total.toLocaleString('fr-FR')} FCFA</span>
-                            <ConfirmDestructiveButton
-                              label="Retirer"
-                              confirmLabel="Retirer ?"
-                              onConfirm={() => handleRemoveValidatedLine(idx)}
-                            />
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -4921,7 +5025,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                               onChange={(e) => handleProductChange(idx, e.target.value)}
                               className={FORM_SELECT_CLASS}
                             >
-                              {products.map((p) => (
+                              {products.filter((p: any) => Number(p.is_active ?? 1) === 1).map((p) => (
                                 <option key={p.id} value={p.id}>
                                   {p.name} — {p.packaging} ({p.code})
                                 </option>
@@ -5187,7 +5291,7 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {products.map((prod) => {
+                  {products.filter((prod: any) => Number(prod.is_active ?? 1) === 1).map((prod) => {
                     const validatedItem = validatedLines.find((l) => l.productId === prod.id);
                     const isCurrentlySelected = isAddingLine && currentLineProductId === prod.id;
                     const isOut = prod.stock_depot <= 0;
@@ -5273,15 +5377,20 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                                 </button>
                                 <input
                                   type="number"
+                                  inputMode="numeric"
                                   min="1"
                                   max={prod.stock_depot}
-                                  value={currentLineQty}
+                                  placeholder="Qté"
+                                  value={currentLineQty === 0 ? '' : currentLineQty}
                                   onChange={(e) => {
-                                    const val = parseInt(e.target.value, 10);
-                                    if (Number.isNaN(val)) {
+                                    const raw = e.target.value;
+                                    if (raw === '') {
                                       setCurrentLineQty(0);
                                     } else {
-                                      setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
+                                      const val = parseInt(raw, 10);
+                                      if (!Number.isNaN(val)) {
+                                        setCurrentLineQty(Math.min(prod.stock_depot, Math.max(0, val)));
+                                      }
                                     }
                                   }}
                                   className="w-full min-w-[76px] h-10 px-2 rounded-lg border-2 border-[#008DA9] bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-black text-base text-center focus:outline-none"
@@ -5343,25 +5452,61 @@ export const DepotMagasinView: React.FC<DepotMagasinViewProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {validatedLines.map((line, idx) => (
-                      <div key={idx} className="flex flex-col gap-2 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-                        <div className="flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <span className="font-bold text-slate-900 dark:text-white">{line.name}</span>
-                            <span className="text-slate-500 text-[11px] ml-2">({line.requestedBoxes} cartons &bull; {line.unitPrice.toLocaleString('fr-FR')} FCFA/ctn)</span>
+                    {validatedLines.map((line, idx) => {
+                      const p = products.find(prod => prod.id === line.productId);
+                      const maxDepot = p ? p.stock_depot : 9999;
+                      return (
+                        <div key={idx} className="flex flex-col gap-2 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <span className="font-bold text-slate-900 dark:text-white">{line.name}</span>
+                              <span className="text-slate-500 text-[11px] ml-2">({line.requestedBoxes} cartons &bull; {line.unitPrice.toLocaleString('fr-FR')} FCFA/ctn)</span>
+                            </div>
+                            <span className="font-black text-slate-900 dark:text-white shrink-0">{line.total.toLocaleString('fr-FR')} FCFA</span>
                           </div>
-                          <span className="font-black text-slate-900 dark:text-white shrink-0">{line.total.toLocaleString('fr-FR')} FCFA</span>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateValidatedLineQty(idx, line.requestedBoxes - 1)}
+                                className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min={1}
+                                max={maxDepot}
+                                value={line.requestedBoxes}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  if (!Number.isNaN(val) && val >= 1) {
+                                    handleUpdateValidatedLineQty(idx, val);
+                                  }
+                                }}
+                                aria-label={`Quantité cartons ${line.name}`}
+                                className="w-20 min-w-[68px] h-8 px-1.5 rounded-lg border border-[#008DA9] bg-white dark:bg-slate-900 text-center font-mono font-black text-xs text-slate-900 dark:text-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateValidatedLineQty(idx, line.requestedBoxes + 1)}
+                                className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black flex items-center justify-center cursor-pointer"
+                              >
+                                +
+                              </button>
+                              <span className="text-[11px] font-semibold text-slate-500">ctn</span>
+                            </div>
+                            <ConfirmDestructiveButton
+                              label="Supprimer"
+                              confirmLabel="Supprimer ?"
+                              onConfirm={() => handleRemoveValidatedLine(idx)}
+                            />
+                          </div>
                         </div>
-                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80">
-                          <ConfirmDestructiveButton
-                            label="Supprimer"
-                            confirmLabel="Supprimer ?"
-                            onConfirm={() => handleRemoveValidatedLine(idx)}
-                          />
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

@@ -27,7 +27,11 @@ const __dirname = path.dirname(__filename);
 
 const distDir = path.join(__dirname, 'dist');
 const indexHtmlPath = path.join(distDir, 'index.html');
-const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
+const isProduction =
+  process.env.NODE_ENV === 'production' ||
+  Boolean(process.env.RENDER) ||
+  Boolean(process.env.RAILWAY_ENVIRONMENT) ||
+  Boolean(process.env.RAILWAY_PROJECT_ID);
 
 async function startServer() {
   const app = express();

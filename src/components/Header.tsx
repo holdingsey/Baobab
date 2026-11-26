@@ -55,7 +55,7 @@ interface HeaderProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onOpenMobileMenu: () => void;
-  onSwitchRole: (newRole: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Comptable' | 'Vendeur') => void;
+  onSwitchRole: (newRole: 'Administrateur' | 'Directeur des opérations de vente' | 'Sales Admin' | 'Gestionnaire grossiste' | 'Gestionnaire de stock' | 'Magasinier' | 'Facturation' | 'Comptable' | 'Vendeur') => void;
   onSwitchUser?: (user: UserSession) => void;
   onOpenDocument?: (doc: InvoiceData) => void;
   onNavigateTab?: (tab: string) => void;
@@ -108,7 +108,7 @@ export const Header: React.FC<HeaderProps> = ({
     if (/grossiste/i.test(r) || (code && code.startsWith('BAO-GRS'))) return 'Gestionnaire grossiste';
     if (/gestionnaire|magas/i.test(r) || code === 'BAO-MAG') return 'Gestionnaire de stock';
     if (/admin/i.test(r) || code === 'BAO-ADM') return 'Administrateur';
-    if (/compt/i.test(r) || code === 'BAO-CPT') return 'Comptable';
+    if (/factur|compt/i.test(r) || code === 'BAO-CPT') return 'Facturation';
     if (/vend/i.test(r) || (code && code.startsWith('BAO-VND'))) return 'Vendeur';
     return r || 'Administrateur';
   }, []);
@@ -237,6 +237,15 @@ export const Header: React.FC<HeaderProps> = ({
                     detail: payload.notification || null,
                   })
                 );
+              }
+              if (
+                notifType === 'creation_pdv' ||
+                notifType === 'validation_pdv' ||
+                notifType === 'rejet_pdv' ||
+                notifRef.toUpperCase().startsWith('PDV-')
+              ) {
+                window.dispatchEvent(new Event('baobab-pdvs-updated'));
+                window.dispatchEvent(new Event('baobab-vrs-updated'));
               }
             } else if (payload.event === 'notification:read') {
               if (payload.notification?.id) {
@@ -517,8 +526,9 @@ export const Header: React.FC<HeaderProps> = ({
     }
     setShowNotifMenu(false);
 
-    const nType = String(n.type || '');
-    const nRef = String(n.reference || '');
+    const nType = String(n.type || '').toLowerCase();
+    const nRef = String(n.reference || '').trim();
+    const nTitleLower = String(n.title || '').toLowerCase();
     if (
       nType === 'nouvelle_vente' ||
       nType === 'commande_gros' ||
@@ -536,6 +546,54 @@ export const Header: React.FC<HeaderProps> = ({
           })
         );
       }
+    }
+
+    if (
+      nType === 'creation_pdv' ||
+      nType === 'validation_pdv' ||
+      nType === 'rejet_pdv' ||
+      nRef.toUpperCase().startsWith('PDV-') ||
+      nTitleLower.includes('pdv')
+    ) {
+      const pdvId = String(n.metadata?.pdvId || '').trim();
+      const pdvCode = String(n.metadata?.pdvCode || nRef || '').trim();
+      const pdvName = String(n.metadata?.pdvName || '').trim();
+      const isMotifVisit =
+        Boolean(n.metadata?.isMotifVisit) ||
+        nTitleLower.includes('motif') ||
+        String(n.message || '').toLowerCase().includes('visite sans vente');
+
+      const pdvValidationPayload = {
+        pdvId,
+        pdvCode,
+        pdvName,
+        isMotifVisit,
+        notification: n,
+        timestamp: Date.now(),
+      };
+
+      try {
+        sessionStorage.setItem(
+          'baobab_pending_pdv_validation_target',
+          JSON.stringify(pdvValidationPayload)
+        );
+      } catch {
+        // ignore sessionStorage quota errors
+      }
+
+      window.dispatchEvent(new Event('baobab-pdvs-updated'));
+      window.dispatchEvent(
+        new CustomEvent('baobab-open-pdv-validation', {
+          detail: pdvValidationPayload,
+        })
+      );
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('baobab-open-pdv-validation', {
+            detail: pdvValidationPayload,
+          })
+        );
+      }, 90);
     }
 
     const action = getNotificationActionTarget(n);
@@ -686,9 +744,16 @@ export const Header: React.FC<HeaderProps> = ({
       ref.startsWith('RECT-') ||
       title.includes('facture')
     ) {
+      if (currentUser.role === 'Vendeur') {
+        return {
+          tab: 'mes-ventes',
+          label: 'Ouvrir Mes Ventes (Ticket thermique)',
+          icon: <Receipt className="w-3.5 h-3.5" />,
+        };
+      }
       return {
-        tab: currentUser.role === 'Vendeur' ? 'mes-factures' : 'factures',
-        label: currentUser.role === 'Vendeur' ? 'Ouvrir Mes Factures' : 'Ouvrir Factures & Rectifications',
+        tab: 'factures',
+        label: 'Ouvrir Factures & Rectifications',
         icon: <FileText className="w-3.5 h-3.5" />,
       };
     }

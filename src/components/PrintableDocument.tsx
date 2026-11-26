@@ -118,6 +118,12 @@ export interface InvoiceData {
   paymentMethod?: string;
   paymentRef?: string;
   status: string;
+  buyerType?: string | null;
+  buyer_type?: string | null;
+  wholesaleDiscountAmount?: number;
+  wholesale_discount_amount?: number;
+  cajoucyBoxesCount?: number;
+  cajoucy_boxes_count?: number;
   isAcquittee?: boolean;
   notes?: string;
   sigLeftLabel?: string;
@@ -183,6 +189,13 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
   const isThermalTicket = useMemo(() => {
     if (!docData) return false;
     const t = String(docData.type || '').toLowerCase();
+    // Le Vendeur ne consulte jamais de facture A4 : uniquement le ticket thermique 80 mm (hors reçu de versement et bon cadeau)
+    if (
+      currentRole === 'Vendeur' &&
+      (t === 'facture' || t === 'invoice' || t === 'facture_grossiste' || t === 'commande_gros')
+    ) {
+      return true;
+    }
     if (
       t === 'facture' ||
       t === 'invoice' ||
@@ -204,7 +217,7 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
       t === 'ticket_thermique' ||
       docNum.startsWith('TKT-THERM-')
     );
-  }, [docData]);
+  }, [docData, currentRole]);
 
   // Si un ticket thermique est ouvert, synchroniser avec /api/sales/:id/ticket pour garantir que
   // le numéro TKT-THERM-... existe en base (génération à la demande pour les anciennes ventes)
@@ -555,6 +568,10 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
   );
   const discountAmount = Number(docData.discountAmount || 0);
   const discountPercent = Number(docData.discountPercent || 0);
+  const wholesaleDiscountAmount = Number(
+    docData.wholesaleDiscountAmount ?? docData.wholesale_discount_amount ?? 0
+  );
+  const buyerTypeDisplay = String(docData.buyerType || docData.buyer_type || '').trim();
   const netHt = Math.max(0, subtotalHt - discountAmount);
   const taxRate = Number(
     docData.taxRate ?? docData.tvaRate ?? (docData.withTva ? 18 : 0)
@@ -1077,6 +1094,27 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
                         {thermalPdvDisplay}
                       </span>
                     </div>
+                    {buyerTypeDisplay && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'baseline',
+                          gap: '6px',
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, flexShrink: 0 }}>Type d&apos;acheteur :</span>
+                        <span
+                          style={{
+                            fontWeight: 800,
+                            textAlign: 'right',
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {buyerTypeDisplay}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Ligne de séparation */}
@@ -1179,6 +1217,21 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
                       color: '#000000',
                     }}
                   >
+                    {wholesaleDiscountAmount > 0 && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'baseline',
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>Remise grossiste :</span>
+                        <span style={{ fontWeight: 800, whiteSpace: 'nowrap' }}>
+                          - {wholesaleDiscountAmount.toLocaleString('fr-FR')} FCFA
+                        </span>
+                      </div>
+                    )}
+
                     <div
                       style={{
                         display: 'flex',
@@ -1901,6 +1954,12 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
                                 <span>Mode de règlement :</span>
                                 <strong>{docData.paymentMethod || 'Comptant'}</strong>
                               </div>
+                              {buyerTypeDisplay && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                                  <span>Type d&apos;acheteur :</span>
+                                  <strong>{buyerTypeDisplay}</strong>
+                                </div>
+                              )}
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
                                 <span>Quantité totale :</span>
                                 <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>
@@ -2056,6 +2115,30 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
                                   {subtotalHt.toLocaleString('fr-FR')} FCFA
                                 </span>
                               </div>
+
+                              {wholesaleDiscountAmount > 0 && (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    padding: '5px 0',
+                                    borderBottom: `1px solid ${COLOR_NOIR}`,
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 700 }}>
+                                    Remise grossiste
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontFamily: "'JetBrains Mono', monospace",
+                                      fontWeight: 800,
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    - {wholesaleDiscountAmount.toLocaleString('fr-FR')} FCFA
+                                  </span>
+                                </div>
+                              )}
 
                               {discountAmount > 0 && (
                                 <div

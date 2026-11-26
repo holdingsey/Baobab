@@ -81,7 +81,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       { id: 'chargements', label: 'Sorties', icon: Truck },
       { id: 'retours', label: 'Retours', icon: RotateCcw },
     ];
-  } else if (role === 'Comptable') {
+  } else if (role === 'Facturation' || role === 'Comptable') {
     items = [
       { id: 'dashboard', label: 'Accueil', icon: LayoutDashboard },
       { id: 'caisse', label: 'Caisse', icon: DollarSign },

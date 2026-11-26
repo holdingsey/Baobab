@@ -624,7 +624,7 @@ export const NotificationSettingsPanel: React.FC<NotificationSettingsPanelProps>
             </div>
 
             {/* Indicateurs de latence et de fiabilité */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
                 <div className="text-[10px] font-bold uppercase text-slate-500">Délai moyen</div>
                 <div className="text-base font-black text-[#008DA9] mt-0.5">

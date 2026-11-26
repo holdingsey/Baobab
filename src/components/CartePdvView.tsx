@@ -18,6 +18,7 @@ import {
   LocateFixed,
   CheckCircle2,
   Shield,
+  ExternalLink,
 } from 'lucide-react';
 import {
   OsmLeafletMap,
@@ -25,6 +26,13 @@ import {
   OsmVendorMarkerItem,
   OsmTrajectoryPoint,
 } from './OsmLeafletMap';
+import { GoogleMapsPdvRoute } from './GoogleMapsPdvRoute';
+import {
+  BAMAKO_DEPARTURE_PRESETS,
+  calculateGpsItineraryToPdv,
+  ComputedGpsItinerary,
+  resolveCurrentDovGpsPosition,
+} from '../utils/gpsItinerary';
 import {
   isAppOnline,
   isSimulatedOffline,
@@ -38,11 +46,14 @@ import {
 import { getPdvStorefrontImageUrl } from '../utils/malianStorefrontImages';
 import { InfoTooltip } from './InfoTooltip';
 import { DataTable } from './DataTable';
+import { CartePdv, GrilleCartesPdv } from './CartePdv';
 
 interface CartePdvViewProps {
   pdvs: any[];
   sales?: any[];
   currentUser: any;
+  onStartSaleForPdv?: (pdv: any) => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 const BAMAKO_NEIGHBORHOOD_GPS: Record<string, { lat: number; lng: number }> = {
@@ -73,8 +84,16 @@ function computeDistanceKm(lat1: number, lng1: number, lat2: number, lng2: numbe
   return R * c;
 }
 
-export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], currentUser }) => {
+export const CartePdvView: React.FC<CartePdvViewProps> = ({
+  pdvs,
+  sales = [],
+  currentUser,
+  onStartSaleForPdv,
+  onNavigateTab,
+}) => {
   const isAdmin = currentUser?.role === 'Administrateur';
+  const isDirecteurOps = currentUser?.role === 'Directeur des opérations de vente';
+  const canViewTrajectories = isAdmin || isDirecteurOps;
   const isVendeur = currentUser?.role === 'Vendeur';
 
   const getPdvSalesCount = useCallback(
@@ -105,6 +124,22 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
   );
   const [trajectoryDateFilter, setTrajectoryDateFilter] = useState<string>('all');
   const [showMap, setShowMap] = useState(true);
+
+  // Itinéraire GPS vers le PDV sélectionné (Visite physique DOV / Admin)
+  const [activePdvItinerary, setActivePdvItinerary] = useState<ComputedGpsItinerary | null>(null);
+  const [itineraryOriginMode, setItineraryOriginMode] = useState<string>('current_gps');
+  const [dovLiveOriginGps, setDovLiveOriginGps] = useState<{
+    lat: number;
+    lng: number;
+    accuracy: number;
+    isHardware: boolean;
+  }>({
+    lat: 12.660842,
+    lng: -7.935218,
+    accuracy: 4.5,
+    isHardware: false,
+  });
+  const [isComputingRoute, setIsComputingRoute] = useState(false);
 
   useEffect(() => {
     if (!selectedPdv || !visiblePdvs.some((p) => p.id === selectedPdv.id)) {
@@ -572,6 +607,50 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
 
   const selectedVendorInfo = mergedVendorPositions.find((v) => v.vendor_id === selectedVendorId) || mergedVendorPositions[0];
 
+  const handleCalculateRouteForSelectedPdv = useCallback(
+    async (targetPdv: any, modeOverride?: string) => {
+      if (!targetPdv) return;
+      setIsComputingRoute(true);
+      try {
+        const mode = modeOverride || itineraryOriginMode;
+        const dest = getPdvCoords(targetPdv);
+        let origLat = dovLiveOriginGps.lat;
+        let origLng = dovLiveOriginGps.lng;
+        let origLabel = 'Ma position GPS actuelle (DOV)';
+
+        if (mode === 'current_gps') {
+          const livePos = await resolveCurrentDovGpsPosition(12.660842, -7.935218);
+          setDovLiveOriginGps(livePos);
+          origLat = livePos.lat;
+          origLng = livePos.lng;
+        } else {
+          const preset = BAMAKO_DEPARTURE_PRESETS.find((p) => p.id === mode);
+          if (preset) {
+            origLat = preset.lat;
+            origLng = preset.lng;
+            origLabel = preset.label;
+          }
+        }
+
+        const route = await calculateGpsItineraryToPdv({
+          originLat: origLat,
+          originLng: origLng,
+          originLabel: origLabel,
+          destLat: dest.lat,
+          destLng: dest.lng,
+          destName: targetPdv.name,
+          destNeighborhood: targetPdv.neighborhood,
+        });
+        setActivePdvItinerary(route);
+        setShowMap(true);
+        setMapMode('global');
+      } finally {
+        setIsComputingRoute(false);
+      }
+    },
+    [dovLiveOriginGps.lat, dovLiveOriginGps.lng, itineraryOriginMode]
+  );
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -750,10 +829,10 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
         </div>
       )}
 
-      {/* MODE TABS & CARTES DE POSITION DE TOUS LES VENDEURS : Réservés aux rôles non-Vendeur (Administrateur, etc.) */}
+      {/* MODE TABS & CARTES DE POSITION DE TOUS LES VENDEURS : Réservés aux rôles non-Vendeur (Administrateur, DOV, etc.) */}
       {!isVendeur && (
         <>
-          <div className={`grid grid-cols-1 ${isAdmin ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-4`}>
+          <div className={`grid grid-cols-1 ${canViewTrajectories ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-4`}>
             <button
               type="button"
               onClick={() => setMapMode('global')}
@@ -791,7 +870,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
               </span>
             </button>
 
-            {isAdmin && (
+            {canViewTrajectories && (
               <button
                 type="button"
                 onClick={() => setMapMode('trajets')}
@@ -802,7 +881,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                 }`}
               >
                 <Route className="w-4 h-4 shrink-0" />
-                <span>Historique du Trajet par Vendeur (Admin)</span>
+                <span>Historique du Trajet par Vendeur (DOV / Admin)</span>
               </button>
             )}
           </div>
@@ -855,7 +934,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                     <span>{v.speed_kmh ? `${v.speed_kmh} km/h` : `±${Number(v.accuracy || 4).toFixed(1)}m`}</span>
                   </div>
 
-                  {isAdmin && (
+                  {canViewTrajectories && (
                     <div className="mt-2 flex items-center justify-between">
                       <span className="text-[10px] text-slate-400">
                         {v.total_points + (v.pendingLocalCount || 0)} points GPS enregistrés
@@ -885,30 +964,67 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
           {showMap ? (
-            <OsmLeafletMap
-              centerLat={activeCenter.lat}
-              centerLng={activeCenter.lng}
-              accuracy={activeCenter.accuracy}
-              zoom={activeCenter.zoom}
-              heightClassName="h-[450px]"
-              markers={mapMode === 'global' ? pdvMarkers : undefined}
-              vendorMarkers={
-                isVendeur
-                  ? undefined
-                  : mapMode !== 'trajets'
-                  ? vendorMapMarkers
-                  : vendorMapMarkers.filter((v) => v.vendorId === selectedVendorId)
-              }
-              trajectoryPoints={!isVendeur && mapMode === 'trajets' ? mapTrajectoryPoints : undefined}
-              selectedId={mapMode === 'global' ? selectedPdv?.id : selectedVendorId}
-              onSelectMarker={(id) => {
-                const found = visiblePdvs.find((item) => item.id === id);
-                if (found) setSelectedPdv(found);
-              }}
-              onSelectVendor={(vId) => {
-                if (!isVendeur) setSelectedVendorId(vId);
-              }}
-            />
+            mapMode === 'global' && activePdvItinerary && selectedPdv ? (
+              <GoogleMapsPdvRoute
+                originLat={activePdvItinerary.originLat}
+                originLng={activePdvItinerary.originLng}
+                originLabel={activePdvItinerary.originLabel}
+                destLat={activePdvItinerary.destLat}
+                destLng={activePdvItinerary.destLng}
+                destName={selectedPdv.name}
+                destCode={selectedPdv.code}
+                destNeighborhood={selectedPdv.neighborhood}
+                destManager={selectedPdv.manager_name}
+                vendorCreator={selectedPdv.created_by || 'Oumar Konaté'}
+                fallbackPolyline={activePdvItinerary.polyline}
+                heightClassName="h-[450px]"
+              />
+            ) : (
+              <OsmLeafletMap
+                centerLat={activeCenter.lat}
+                centerLng={activeCenter.lng}
+                accuracy={activeCenter.accuracy}
+                zoom={activeCenter.zoom}
+                heightClassName="h-[450px]"
+                markers={mapMode === 'global' ? pdvMarkers : undefined}
+                vendorMarkers={
+                  isVendeur
+                    ? undefined
+                    : mapMode !== 'trajets'
+                    ? vendorMapMarkers
+                    : vendorMapMarkers.filter((v) => v.vendorId === selectedVendorId)
+                }
+                trajectoryPoints={!isVendeur && mapMode === 'trajets' ? mapTrajectoryPoints : undefined}
+                routeOverlay={
+                  mapMode === 'global' && activePdvItinerary
+                    ? {
+                        originLat: activePdvItinerary.originLat,
+                        originLng: activePdvItinerary.originLng,
+                        originLabel: activePdvItinerary.originLabel,
+                        destLat: activePdvItinerary.destLat,
+                        destLng: activePdvItinerary.destLng,
+                        destLabel: activePdvItinerary.destLabel,
+                        polyline: activePdvItinerary.polyline,
+                        distanceKm: activePdvItinerary.distanceKm,
+                        durationMin: activePdvItinerary.durationVehicleMin,
+                      }
+                    : null
+                }
+                selectedId={mapMode === 'global' ? selectedPdv?.id : selectedVendorId}
+                onSelectMarker={(id) => {
+                  const found = visiblePdvs.find((item) => item.id === id);
+                  if (found) {
+                    setSelectedPdv(found);
+                    if (activePdvItinerary) {
+                      handleCalculateRouteForSelectedPdv(found);
+                    }
+                  }
+                }}
+                onSelectVendor={(vId) => {
+                  if (!isVendeur) setSelectedVendorId(vId);
+                }}
+              />
+            )
           ) : (
             <div className="rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center space-y-3">
               <Navigation className="w-8 h-8 text-[#008DA9] mx-auto" />
@@ -931,66 +1047,93 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
             </div>
           )}
 
-          {/* Quick PDV Selector Grid when in Global mode — Grille en rangées et colonnes sans débordement */}
+          {/* Quick PDV Selector Grid when in Global mode — Composant CartePdv partagé */}
           {mapMode === 'global' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            <GrilleCartesPdv>
               {visiblePdvs.map((p) => {
                 const isSelected = selectedPdv?.id === p.id;
                 const pdvSalesCount = getPdvSalesCount(p);
-                const pdvImg = getPdvStorefrontImageUrl(p);
+                const noSaleCnt = Number(p.no_sale_visits_count || 0);
+                const totalVisitsCnt = Number(
+                  p.total_visits_count ?? (pdvSalesCount + noSaleCnt || (p.visited_today ? 1 : 0))
+                );
+                const dayVisitsCnt = Number(
+                  p.today_visits_count ?? p.routine_day_visits_count ?? (p.visited_today ? 1 : 0)
+                );
+                const dayLabel = (p.routine_day || 'lundi').toLowerCase();
                 return (
-                  <button
+                  <div
                     key={p.id}
-                    type="button"
-                    onClick={() => setSelectedPdv(p)}
-                    className={`px-2.5 py-2 rounded-xl text-xs font-bold border transition flex items-center justify-between gap-2 cursor-pointer text-left ${
-                      isSelected
-                        ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
-                        : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-[#008DA9]'
+                    className={`rounded-2xl transition ${
+                      isSelected ? 'ring-2 ring-[#005F78]' : ''
                     }`}
                   >
-                    <span className="flex items-center gap-2 min-w-0">
-                      <img
-                        src={pdvImg}
-                        alt={p.name}
-                        referrerPolicy="no-referrer"
-                        className="w-6 h-6 rounded-lg object-cover border border-white/40 shrink-0"
-                      />
-                      <span className="leading-snug">
-                        {p.name} <span className="opacity-75 text-[10px]">({p.neighborhood})</span>
-                      </span>
-                    </span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${
-                        isSelected
-                          ? 'bg-white/20 text-white'
-                          : pdvSalesCount > 0
-                          ? 'bg-cyan-50 text-[#008DA9] dark:bg-cyan-950/60 dark:text-cyan-300'
-                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                      }`}
-                    >
-                      {pdvSalesCount > 0 ? `${pdvSalesCount} ${pdvSalesCount > 1 ? 'ventes' : 'vente'}` : '0 ventes'}
-                    </span>
-                  </button>
+                    <CartePdv
+                      pdv={{
+                        ...p,
+                        photo_url: getPdvStorefrontImageUrl(p),
+                      }}
+                      infoBadges={[
+                        p.visited_today || dayVisitsCnt > 0
+                          ? "Visité aujourd'hui"
+                          : totalVisitsCnt > 0
+                          ? 'Déjà visité'
+                          : 'Non visité',
+                        pdvSalesCount > 0
+                          ? pdvSalesCount > 1
+                            ? `Avec vente (${pdvSalesCount})`
+                            : 'Avec vente'
+                          : totalVisitsCnt > 0
+                          ? 'Sans vente'
+                          : `Jour : ${dayLabel}`,
+                      ]}
+                      routineDayName={dayLabel}
+                      routineDayVisitsCount={dayVisitsCnt}
+                      totalVisitsCount={totalVisitsCnt}
+                      noSaleVisitsCount={noSaleCnt}
+                      salesCount={pdvSalesCount}
+                      actions={[
+                        {
+                          id: 'voir-fiche',
+                          label: 'Voir la fiche',
+                          icon: <Eye className="w-4 h-4 shrink-0" />,
+                          variant: isSelected ? 'primary' : 'secondary',
+                          onClick: () => {
+                            setSelectedPdv(p);
+                          },
+                        },
+                        {
+                          id: 'itineraire',
+                          label: 'Itinéraire',
+                          icon: <Navigation className="w-4 h-4 shrink-0" />,
+                          variant: 'secondary',
+                          onClick: () => {
+                            setSelectedPdv(p);
+                            handleCalculateRouteForSelectedPdv(p);
+                          },
+                        },
+                      ]}
+                    />
+                  </div>
                 );
               })}
-            </div>
+            </GrilleCartesPdv>
           )}
         </div>
 
-        {/* RIGHT PANEL: Context-sensitive details (Trajectory summary for Admin OR Selected Vendor / PDV details) */}
+        {/* RIGHT PANEL: Context-sensitive details (Trajectory summary for Admin/DOV OR Selected Vendor / PDV details) */}
         <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs flex flex-col justify-between space-y-4">
-          {mapMode === 'trajets' && isAdmin ? (
+          {mapMode === 'trajets' && canViewTrajectories ? (
             <div className="space-y-4 text-xs">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                 <div className="flex items-center gap-2">
                   <Route className="w-4 h-4 text-[#008DA9]" />
                   <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                    Contrôle Trajet Vendeur (Admin)
+                    Contrôle Trajet Vendeur (DOV / Admin)
                   </h3>
                 </div>
                 <span className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 font-bold text-[10px]">
-                  Accès Administrateur
+                  Direction &amp; Admin
                 </span>
               </div>
 
@@ -1025,7 +1168,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                   <div className="text-[10px] uppercase font-bold text-slate-400">Distance Parcourue</div>
                   <div className="text-base font-black text-[#008DA9] mt-0.5">{trajectoryTotalDistanceKm} km</div>
@@ -1138,7 +1281,7 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
                 </button>
               </div>
 
-              {isAdmin && (
+              {canViewTrajectories && (
                 <button
                   type="button"
                   onClick={() => setMapMode('trajets')}
@@ -1152,122 +1295,232 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
           ) : selectedPdv ? (
             <>
               <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs font-bold text-[#008DA9] bg-cyan-50 dark:bg-cyan-950/60 px-2 py-0.5 rounded">
-                    {selectedPdv.code}
-                  </span>
-                  <span
-                    className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                      selectedPdv.status === 'valide'
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                        : selectedPdv.status === 'rejete'
-                        ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    }`}
-                  >
-                    {selectedPdv.status === 'valide' ? (
-                      <>
-                        <CheckCircle className="w-3 h-3" /> Validé
-                      </>
-                    ) : selectedPdv.status === 'rejete' ? (
-                      <>
-                        <XCircle className="w-3 h-3" /> Rejeté
-                      </>
-                    ) : (
-                      <>
-                        <Clock className="w-3 h-3" /> En attente
-                      </>
-                    )}
-                  </span>
-                </div>
-
-                <div className="relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-950">
-                  <img
-                    src={getPdvStorefrontImageUrl(selectedPdv)}
-                    alt={`Devanture ${selectedPdv.name}`}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-40 object-cover"
-                  />
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <img
-                    src={getPdvStorefrontImageUrl(selectedPdv)}
-                    alt={`Image de profil ${selectedPdv.name}`}
-                    referrerPolicy="no-referrer"
-                    className="w-14 h-14 rounded-2xl object-cover border-2 border-[#008DA9] shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#008DA9] dark:text-cyan-400">
-                      Image de profil PDV &bull; {selectedPdv.status === 'valide' ? 'Validé' : 'Non Validé'}
-                    </div>
-                    <h3 className="text-base font-black text-slate-900 dark:text-white leading-snug">
-                      {selectedPdv.name}
-                    </h3>
-                  </div>
-                </div>
-
                 {(() => {
-                  const selCount = getPdvSalesCount(selectedPdv);
+                  const selSalesCount = getPdvSalesCount(selectedPdv);
+                  const selNoSaleCount = Number(selectedPdv.no_sale_visits_count || 0);
+                  const selTotalVisitsCount = Number(
+                    selectedPdv.total_visits_count ??
+                      (selSalesCount + selNoSaleCount || (selectedPdv.visited_today ? 1 : 0))
+                  );
+                  const selDayVisitsCount = Number(
+                    selectedPdv.today_visits_count ??
+                      selectedPdv.routine_day_visits_count ??
+                      (selectedPdv.visited_today ? 1 : 0)
+                  );
+                  const selDayLabel = (selectedPdv.routine_day || 'lundi').toLowerCase();
+
                   return (
-                    <div
-                      className={`p-2.5 rounded-xl border text-xs ${
-                        selCount > 0
-                          ? 'bg-cyan-50/70 dark:bg-cyan-950/25 border-cyan-200 dark:border-cyan-900/60 text-slate-800 dark:text-slate-200'
-                          : 'bg-slate-100/80 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      <div className="font-black text-[#008DA9] dark:text-cyan-400">
-                        {selCount > 0
-                          ? `${selCount} ${selCount > 1 ? 'ventes réalisées sur ce PDV' : 'vente réalisée sur ce PDV'}`
-                          : '0 ventes'}
-                      </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        {selCount > 0
-                          ? 'Chaque vente réalisée constitue une facture à part.'
-                          : 'PDV créé par le vendeur sans aucune vente réalisée à ce jour.'}
-                      </div>
-                    </div>
+                    <CartePdv
+                      pdv={{
+                        ...selectedPdv,
+                        photo_url: getPdvStorefrontImageUrl(selectedPdv),
+                      }}
+                      infoBadges={[
+                        selectedPdv.visited_today || selDayVisitsCount > 0
+                          ? "Visité aujourd'hui"
+                          : selTotalVisitsCount > 0
+                          ? 'Déjà visité'
+                          : 'Non visité',
+                        selSalesCount > 0
+                          ? selSalesCount > 1
+                            ? `Avec vente (${selSalesCount})`
+                            : 'Avec vente'
+                          : selTotalVisitsCount > 0
+                          ? 'Sans vente'
+                          : `Jour : ${selDayLabel}`,
+                      ]}
+                      routineDayName={selDayLabel}
+                      routineDayVisitsCount={selDayVisitsCount}
+                      totalVisitsCount={selTotalVisitsCount}
+                      noSaleVisitsCount={selNoSaleCount}
+                      salesCount={selSalesCount}
+                      actions={[
+                        {
+                          id: 'itineraire',
+                          label: 'Itinéraire',
+                          icon: <Navigation className="w-4 h-4 shrink-0" />,
+                          variant: 'primary',
+                          onClick: () => handleCalculateRouteForSelectedPdv(selectedPdv),
+                          disabled: isComputingRoute,
+                        },
+                        ...(onStartSaleForPdv &&
+                        selectedPdv.status === 'valide' &&
+                        (isVendeur || isAdmin)
+                          ? [
+                              {
+                                id: 'vendre',
+                                label: 'Vendre',
+                                icon: <Store className="w-4 h-4 shrink-0" />,
+                                variant: 'success' as const,
+                                onClick: () => onStartSaleForPdv(selectedPdv),
+                              },
+                            ]
+                          : []),
+                        ...(onNavigateTab
+                          ? [
+                              {
+                                id: 'routine',
+                                label: 'Routine VRS',
+                                icon: <MapPin className="w-4 h-4 shrink-0" />,
+                                variant: 'secondary' as const,
+                                onClick: () => onNavigateTab('routine-vrs'),
+                              },
+                              {
+                                id: 'fiche-pdv',
+                                label: 'Module PDV',
+                                icon: <Eye className="w-4 h-4 shrink-0" />,
+                                variant: 'secondary' as const,
+                                onClick: () =>
+                                  onNavigateTab(
+                                    isVendeur
+                                      ? 'mes-pdvs'
+                                      : isDirecteurOps
+                                      ? 'validation-pdv'
+                                      : 'pdvs'
+                                  ),
+                              },
+                            ]
+                          : []),
+                      ]}
+                      extraContent={
+                        <div className="space-y-1 text-xs font-sans text-slate-600 dark:text-slate-300">
+                          <div>
+                            Gérant : <strong>{selectedPdv.manager_name}</strong> • Tél :{' '}
+                            <span className="font-mono font-semibold">{selectedPdv.phone}</span>
+                          </div>
+                          <div>
+                            GPS :{' '}
+                            <span className="font-mono">
+                              {activeCenter.lat.toFixed(6)}° N, {activeCenter.lng.toFixed(6)}° O (±
+                              {activeCenter.accuracy.toFixed(1)} m)
+                            </span>
+                          </div>
+                        </div>
+                      }
+                    />
                   );
                 })()}
 
-                <div className="space-y-2.5 text-xs text-slate-600 dark:text-slate-300">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-[#008DA9] shrink-0" />
-                    <span>
-                      Quartier : <strong>{selectedPdv.neighborhood}</strong> (Bamako)
+                {/* BLOC ITINÉRAIRE GPS VISITE PHYSIQUE (DOV / Admin / Vendeur) */}
+                <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 space-y-2.5 text-xs font-sans">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Route className="w-4 h-4 text-[#005F78]" />
+                      <span>Itinéraire GPS (Visite physique)</span>
                     </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-[#008DA9] shrink-0" />
-                    <span>
-                      Gérant : <strong>{selectedPdv.manager_name}</strong>
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-4 h-4 text-[#008DA9] shrink-0" />
-                    <span>
-                      Téléphone : <strong>{selectedPdv.phone}</strong>
-                    </span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-[11px] text-slate-700 dark:text-slate-300 space-y-1">
-                    <div className="font-bold text-[#008DA9] flex items-center gap-1.5">
-                      <Navigation className="w-3.5 h-3.5" />
-                      <span>Position GPS Précise :</span>
-                    </div>
-                    <div>Latitude : {activeCenter.lat.toFixed(6)}° N</div>
-                    <div>Longitude : {activeCenter.lng.toFixed(6)}° O</div>
-                    <div>Précision : ±{activeCenter.accuracy.toFixed(1)} m</div>
-                    {selectedPdv.captured_at && (
-                      <div className="text-[10px] text-slate-500 pt-0.5">
-                        Horodatage : {selectedPdv.captured_at}
-                      </div>
+                    {activePdvItinerary && (
+                      <button
+                        type="button"
+                        onClick={() => setActivePdvItinerary(null)}
+                        className="text-[11px] font-bold text-[#B91C1C] dark:text-red-400 hover:underline cursor-pointer"
+                      >
+                        Effacer tracé
+                      </button>
                     )}
                   </div>
+
+                  <select
+                    value={itineraryOriginMode}
+                    onChange={(e) => {
+                      const nextMode = e.target.value;
+                      setItineraryOriginMode(nextMode);
+                      handleCalculateRouteForSelectedPdv(selectedPdv, nextMode);
+                    }}
+                    className="w-full h-[48px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold text-xs"
+                  >
+                    <option value="current_gps">
+                      Départ : Ma position GPS actuelle ({dovLiveOriginGps.lat.toFixed(4)}, {dovLiveOriginGps.lng.toFixed(4)})
+                    </option>
+                    {BAMAKO_DEPARTURE_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        Départ : {preset.shortLabel} ({preset.neighborhood})
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCalculateRouteForSelectedPdv(selectedPdv)}
+                    disabled={isComputingRoute}
+                    className="w-full min-h-[48px] py-2.5 px-3.5 rounded-xl bg-[#005F78] hover:bg-[#004A5E] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+                  >
+                    <Navigation className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isComputingRoute
+                        ? 'Calcul de l’itinéraire GPS...'
+                        : activePdvItinerary
+                        ? 'Actualiser l’itinéraire'
+                        : 'Calculer l’itinéraire GPS'}
+                    </span>
+                  </button>
+
+                  {activePdvItinerary && (
+                    <div className="space-y-2.5 pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-center">
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                          <div className="text-[10px] font-bold text-slate-500">Distance</div>
+                          <div className="font-black text-xs text-slate-900 dark:text-white font-mono">
+                            {activePdvItinerary.distanceKm} km
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                          <div className="text-[10px] font-bold text-slate-500">Véhicule</div>
+                          <div className="font-black text-xs text-slate-900 dark:text-white font-mono">
+                            ~{activePdvItinerary.durationVehicleMin} min
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                          <div className="text-[10px] font-bold text-slate-500">Direction</div>
+                          <div className="font-black text-xs text-[#15803D] dark:text-white">
+                            {activePdvItinerary.compassDirection}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                        {activePdvItinerary.steps.map((st) => (
+                          <div
+                            key={st.stepNumber}
+                            className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] flex items-center justify-between gap-2"
+                          >
+                            <span className="text-slate-700 dark:text-slate-200 font-semibold leading-snug">
+                              <strong className="font-mono text-[#005F78]">#{st.stepNumber}</strong> {st.instruction}
+                            </span>
+                            <span className="font-mono text-[10px] font-bold text-slate-500 shrink-0">
+                              {st.distanceLabel}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <a
+                          href={activePdvItinerary.googleMapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-h-[48px] px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 text-white font-bold text-xs flex items-center justify-center gap-1.5"
+                        >
+                          <Navigation className="w-3.5 h-3.5 shrink-0" />
+                          <span>Google Maps</span>
+                          <ExternalLink className="w-3 h-3 shrink-0 opacity-80" />
+                        </a>
+                        <a
+                          href={activePdvItinerary.osmDirectionsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-h-[48px] px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5"
+                        >
+                          <Route className="w-3.5 h-3.5 text-[#005F78] shrink-0" />
+                          <span>OpenStreetMap</span>
+                          <ExternalLink className="w-3 h-3 shrink-0 opacity-70" />
+                        </a>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-xs text-slate-500">
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-xs text-slate-500 font-sans">
                 {isVendeur
                   ? `Seuls les points de vente que vous avez créés (${visiblePdvs.length} PDV) sont visibles sur votre carte.`
                   : 'Les marqueurs bleus sur la carte indiquent la position GPS en direct de chaque vendeur.'}
@@ -1283,8 +1536,8 @@ export const CartePdvView: React.FC<CartePdvViewProps> = ({ pdvs, sales = [], cu
         </div>
       </div>
 
-      {/* SECTION ADMINISTRATEUR : TABLEAU COMPLET DE L'HISTORIQUE DES TRAJETS DE CHAQUE VENDEUR */}
-      {isAdmin && (
+      {/* SECTION ADMINISTRATEUR & DOV : TABLEAU COMPLET DE L'HISTORIQUE DES TRAJETS DE CHAQUE VENDEUR */}
+      {canViewTrajectories && (
         <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
             <div>

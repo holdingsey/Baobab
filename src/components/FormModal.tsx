@@ -13,6 +13,7 @@ export interface FormModalProps {
   footerContent?: React.ReactNode;
   hideFooter?: boolean;
   cancelLabel?: React.ReactNode;
+  size?: 'md' | 'lg' | 'xl' | 'full';
 }
 
 function getFrenchValidationMessage(
@@ -96,6 +97,7 @@ export const FormModal: React.FC<FormModalProps> = ({
   footerContent,
   hideFooter = false,
   cancelLabel = 'Annuler',
+  size = 'md',
 }) => {
   const bodyRef = useRef<HTMLDivElement>(null);
   const initialValuesRef = useRef<Map<Element, string>>(new Map());
@@ -251,10 +253,20 @@ export const FormModal: React.FC<FormModalProps> = ({
     }
   };
 
+  const isFullOrXl = size === 'full' || size === 'xl';
+
+  const sizeWidthClass =
+    size === 'full'
+      ? 'sm:max-w-[98vw] lg:max-w-[1360px] xl:max-w-[1460px]'
+      : size === 'xl'
+      ? 'sm:max-w-[96vw] lg:max-w-[1260px] xl:max-w-[1380px]'
+      : size === 'lg'
+      ? 'sm:max-w-[95vw] md:max-w-[840px] lg:max-w-[980px]'
+      : 'sm:max-w-[92vw] md:max-w-[680px] lg:max-w-[760px]';
+
   return (
     <div
-      onClick={handleRequestClose}
-      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center sm:items-center sm:p-4"
+      className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center sm:items-center sm:p-2 md:p-4"
       role="dialog"
       aria-modal="true"
     >
@@ -262,14 +274,16 @@ export const FormModal: React.FC<FormModalProps> = ({
         noValidate
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleFormSubmit}
-        className="relative flex flex-col w-full h-[100dvh] max-h-[100dvh] sm:h-auto sm:max-h-[90dvh] sm:max-w-[600px] md:max-w-[640px] lg:max-w-[680px] bg-white dark:bg-[#0F172A] opacity-100 rounded-none sm:rounded-2xl shadow-2xl sm:border sm:border-[#64748B] dark:sm:border-[#94A3B8] overflow-hidden"
+        className={`relative flex flex-col w-full h-[100dvh] max-h-[100dvh] ${
+          isFullOrXl ? 'sm:h-[95dvh] sm:max-h-[95dvh]' : 'sm:h-auto sm:max-h-[94dvh]'
+        } ${sizeWidthClass} bg-white dark:bg-[#0F172A] opacity-100 rounded-none sm:rounded-2xl shadow-2xl sm:border sm:border-[#64748B] dark:sm:border-[#94A3B8] overflow-hidden`}
       >
-        {/* En-tête fixe : Titre à gauche (flex-1 min-w-0), bouton Annuler/Fermer à droite (flex-none), sous-titre sur sa propre ligne en dessous */}
-        <div className="shrink-0 flex flex-col gap-1.5 px-4 md:px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F172A]">
-          <div className="flex items-center justify-between gap-3 w-full min-w-0">
-            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+        {/* En-tête fixe ultra-compact sur mobile et tablette : laisse le maximum de hauteur au formulaire */}
+        <div className="shrink-0 flex flex-col gap-0.5 px-3 sm:px-4 py-1.5 sm:py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F172A]">
+          <div className="flex items-center justify-between gap-2 w-full min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
               {icon && <div className="shrink-0">{icon}</div>}
-              <h2 className="flex-1 min-w-0 text-base font-bold text-[#0F172A] dark:text-[#F8FAFC] whitespace-normal [overflow-wrap:anywhere] break-words leading-snug">
+              <h2 className="flex-1 min-w-0 text-sm sm:text-base font-bold text-[#0F172A] dark:text-[#F8FAFC] whitespace-normal [overflow-wrap:anywhere] break-words leading-tight">
                 {title}
               </h2>
             </div>
@@ -277,39 +291,39 @@ export const FormModal: React.FC<FormModalProps> = ({
             <button
               type="button"
               onClick={handleRequestClose}
-              className="flex-none shrink-0 w-auto min-h-[44px] h-auto py-2 px-4 rounded-[12px] border-[1.5px] border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] font-semibold text-sm transition-colors cursor-pointer focus-visible:outline-none"
+              className="flex-none shrink-0 w-auto min-h-[32px] sm:min-h-[38px] h-auto py-1 px-2.5 sm:px-3 rounded-[8px] sm:rounded-[10px] border border-[#64748B] dark:border-[#94A3B8] bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] hover:bg-[#E2E8F0] dark:hover:bg-[#334155] font-semibold text-xs transition-colors cursor-pointer focus-visible:outline-none"
             >
               {cancelLabel}
             </button>
           </div>
 
           {subtitle && (
-            <div className="w-full min-w-0 text-xs text-[#475569] dark:text-[#CBD5E1] whitespace-normal [overflow-wrap:anywhere] break-words leading-snug">
+            <div className="hidden lg:block w-full min-w-0 text-xs text-[#475569] dark:text-[#CBD5E1] whitespace-normal [overflow-wrap:anywhere] break-words leading-snug">
               {subtitle}
             </div>
           )}
         </div>
 
-        {/* Corps défilant */}
+        {/* Corps défilant avec espace maximal de manœuvre */}
         <div
           ref={bodyRef}
           onBlurCapture={handleBlurCapture}
           onInputCapture={handleInputCapture}
-          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 md:px-6 py-5 space-y-5 text-sm bg-white dark:bg-[#0F172A] text-[#0F172A] dark:text-[#F8FAFC]"
+          className="@container flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden px-2.5 sm:px-4 py-2 sm:py-3.5 space-y-2.5 sm:space-y-3.5 text-sm bg-white dark:bg-[#0F172A] text-[#0F172A] dark:text-[#F8FAFC]"
         >
           {children}
         </div>
 
-        {/* Pied fixe avec zone sûre */}
+        {/* Pied fixe compact avec zone sûre */}
         {!hideFooter && (
-          <div className="shrink-0 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F172A] px-4 md:px-6 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
+          <div className="shrink-0 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F172A] px-2.5 sm:px-4 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px))]">
             {footerContent ? (
               footerContent
             ) : (
               <button
                 type="submit"
                 disabled={submitDisabled}
-                className="w-full min-w-0 min-h-[48px] h-auto py-3 px-4 rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] text-[var(--marque-texte-sur-plein)] font-bold text-sm leading-snug text-center whitespace-normal [overflow-wrap:anywhere] break-words shadow-sm transition flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full min-w-0 min-h-[42px] sm:min-h-[46px] h-auto py-2 px-3.5 rounded-[10px] sm:rounded-[12px] bg-[var(--marque-fonce)] hover:bg-[#00586B] active:bg-[#004A5A] text-[var(--marque-texte-sur-plein)] font-bold text-xs sm:text-sm leading-snug text-center whitespace-normal [overflow-wrap:anywhere] break-words shadow-sm transition flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marque-fonce)] dark:focus-visible:ring-[var(--marque-eclaircie)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitLabel}
               </button>

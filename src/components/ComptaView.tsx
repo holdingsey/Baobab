@@ -88,6 +88,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
 }) => {
   const isAdmin = currentRole === 'Administrateur';
   const isComptable =
+    currentRole === 'Facturation' ||
     currentRole === 'Comptable' ||
     currentRole === 'Directeur des opérations de vente' ||
     currentRole === 'Sales Admin' ||
@@ -98,7 +99,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
     if (initialTab === 'versements' || initialTab === 'versements-lecture' || initialTab === 'mes-versements' || initialTab === 'caisse') {
       return 'versements';
     }
-    if (initialTab === 'factures' || initialTab === 'mes-factures') {
+    if (!isVendeur && (initialTab === 'factures' || initialTab === 'mes-factures')) {
       return 'factures';
     }
     if (initialTab === 'rapports') {
@@ -137,14 +138,14 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
   React.useEffect(() => {
     if (initialTab === 'versements' || initialTab === 'versements-lecture' || initialTab === 'mes-versements' || initialTab === 'caisse') {
       setActiveTab('versements');
-    } else if (initialTab === 'factures' || initialTab === 'mes-factures') {
+    } else if (!isVendeur && (initialTab === 'factures' || initialTab === 'mes-factures')) {
       setActiveTab('factures');
     } else if (initialTab === 'rapports') {
       setActiveTab('bons-cadeaux');
-    } else if (initialTab === 'soldes-vendeurs' || initialTab === 'mon-solde') {
+    } else if (initialTab === 'soldes-vendeurs' || initialTab === 'mon-solde' || (isVendeur && (initialTab === 'factures' || initialTab === 'mes-factures'))) {
       setActiveTab('soldes');
     }
-  }, [initialTab]);
+  }, [initialTab, isVendeur]);
 
   const handleExportBonsCSV = () => {
     const headers = [
@@ -299,6 +300,9 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       tvaRate: withTva ? 18 : 0,
       tvaAmount,
       totalTtc,
+      buyerType: sale.buyer_type || sale.buyerType || null,
+      wholesaleDiscountAmount: Number(sale.wholesale_discount_amount ?? sale.wholesaleDiscountAmount ?? 0),
+      cajoucyBoxesCount: Number(sale.cajoucy_boxes_count ?? sale.cajoucyBoxesCount ?? 0),
       items,
       total: totalTtc,
       paymentMethod: sale.payment_type || 'Comptant (Versement)',
@@ -800,6 +804,8 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         vendorLabel: `${s.vendor_name} (${s.vendor_code})`,
         vendorTeam: s.vendor_team,
         paymentMode: s.payment_type || 'Comptant',
+        buyerType: s.buyer_type || s.buyerType || null,
+        wholesaleDiscountAmount: Number(s.wholesale_discount_amount ?? s.wholesaleDiscountAmount ?? 0),
         subtotalHt,
         withTva,
         tvaAmount,
@@ -1162,19 +1168,19 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
               {isAdmin
-                ? 'Comptabilité, Caisse, Versements & Factures'
+                ? 'Facturation, Caisse, Versements & Factures'
                 : isVendeur
-                ? 'Mon Solde, Mes Versements & Mes Factures'
-                : 'Comptabilité, Caisse & Dépôt-Vente'}
+                ? 'Mon Solde & Mes Versements'
+                : 'Facturation, Caisse & Dépôt-Vente'}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[var(--marque-fonce)] text-white">
-              {isAdmin ? 'Administrateur' : isVendeur ? 'Vendeur' : 'Comptable'}
+              {isAdmin ? 'Administrateur' : isVendeur ? 'Vendeur' : 'Facturation'}
             </span>
           </div>
           <div className="flex items-center gap-1.5 mt-1">
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
               {isVendeur
-                ? 'Votre solde, vos versements et vos factures.'
+                ? 'Votre solde dépôt-vente et vos versements de caisse.'
                 : 'Caisse : versements, soldes et factures.'}
             </p>
             <InfoTooltip
@@ -1182,7 +1188,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 isAdmin
                   ? 'Suivi des soldes vendeurs en dépôt-vente, validation des encaissements, création et rectification des factures et reçus officiels.'
                   : isVendeur
-                  ? 'Consultez uniquement votre solde dépôt-vente personnel, votre journal de versements de caisse et vos propres factures et reçus imprimables.'
+                  ? 'Consultez uniquement votre solde dépôt-vente personnel et votre journal de versements de caisse. Les tickets thermiques sont disponibles dans Mes Ventes.'
                   : 'Suivi des soldes des vendeurs en dépôt-vente (ventes réalisées - versements reçus), encaissements et factures officielles.'
               }
             />
@@ -1258,8 +1264,8 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
               <Lock className="w-4 h-4 text-[#008DA9]" />
               <span>
                 {isVendeur
-                  ? `Consultation & Impression seule (${currentUser?.code || 'Vendeur'}) • Création de factures réservée au Comptable`
-                  : 'Lecture seule • Encaissement et facturation réservés au Comptable'}
+                  ? `Consultation seule (${currentUser?.code || 'Vendeur'}) • Factures réservées au service Facturation`
+                  : 'Lecture seule • Encaissement et facturation réservés au service Facturation'}
               </span>
             </div>
           )}
@@ -1315,8 +1321,8 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {isVendeur
-              ? 'Vos versements déjà validés par le Comptable'
-              : 'Fonds déjà réceptionnés et validés par le Comptable'}
+              ? 'Vos versements déjà validés par la Facturation'
+              : 'Fonds déjà réceptionnés et validés par la Facturation'}
           </p>
         </div>
 
@@ -1336,7 +1342,7 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
       </div>
 
       {/* Sub Tabs — Grille de boutons en rangées et colonnes sans débordement */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 ${!isVendeur ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-4`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${!isVendeur ? 'lg:grid-cols-4' : 'lg:grid-cols-2'} gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-4`}>
         <button
           onClick={() => setActiveTab('soldes')}
           className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
@@ -1383,28 +1389,30 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
           </span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('factures')}
-          className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
-            activeTab === 'factures'
-              ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-          }`}
-        >
-          <span className="flex items-center gap-2 min-w-0">
-            <Printer className="w-4 h-4 shrink-0" />
-            <span className="leading-snug">Factures &amp; Reçus Imprimables</span>
-          </span>
-          <span
-            className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${
+        {!isVendeur && (
+          <button
+            onClick={() => setActiveTab('factures')}
+            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer border text-left ${
               activeTab === 'factures'
-                ? 'bg-white/20 text-white'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                ? 'bg-[#008DA9] text-white border-[#008DA9] shadow-xs'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
-            {printableDocuments.length}
-          </span>
-        </button>
+            <span className="flex items-center gap-2 min-w-0">
+              <Printer className="w-4 h-4 shrink-0" />
+              <span className="leading-snug">Factures &amp; Reçus Imprimables</span>
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${
+                activeTab === 'factures'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {printableDocuments.length}
+            </span>
+          </button>
+        )}
 
         {!isVendeur && (
           <button
@@ -1726,18 +1734,18 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
               );
               return (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedVersementForInvoicing(v)}
-                    className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition cursor-pointer"
-                  >
-                    <FileText className="w-4 h-4 shrink-0" />
-                    <span>
-                      {isComptable
-                        ? `Factures PDV (${vendorSalesForVersement.length})`
-                        : `Mes Factures (${vendorSalesForVersement.length})`}
-                    </span>
-                  </button>
+                  {!isVendeur && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedVersementForInvoicing(v)}
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-4 py-2.5 rounded-xl bg-[#008DA9] hover:bg-[#00748C] text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span>
+                        {`Factures PDV (${vendorSalesForVersement.length})`}
+                      </span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() =>
@@ -1801,8 +1809,8 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
         </div>
       )}
 
-      {/* 3. Factures & Reçus Imprimables */}
-      {activeTab === 'factures' && (
+      {/* 3. Factures & Reçus Imprimables (masqué pour le Vendeur : uniquement ticket thermique) */}
+      {!isVendeur && activeTab === 'factures' && (
         <div className="space-y-4">
           {/* Autorisation & Règles Banner */}
           <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2220,6 +2228,27 @@ export const ComptaView: React.FC<ComptaViewProps> = ({
                 label: 'Régime TVA',
                 value: (doc) =>
                   doc.docKind === 'facture' && doc.withTva ? 'TVA 18 %' : 'Sans TVA',
+              },
+              {
+                key: 'buyerType',
+                label: "Type d'acheteur",
+                hidden: (doc) => !doc.buyerType,
+                value: (doc) => (
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {doc.buyerType}
+                  </span>
+                ),
+              },
+              {
+                key: 'wholesaleDiscountAmount',
+                label: 'Remise grossiste',
+                hidden: (doc) => !(Number(doc.wholesaleDiscountAmount || 0) > 0),
+                isAmount: true,
+                value: (doc) => (
+                  <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                    - {Number(doc.wholesaleDiscountAmount || 0).toLocaleString('fr-FR')} FCFA
+                  </span>
+                ),
               },
               {
                 key: 'subtotalHt',
