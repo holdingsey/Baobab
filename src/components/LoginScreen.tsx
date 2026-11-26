@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShieldCheck, Package, CreditCard, ShoppingBag, ArrowRight, UserCheck, KeyRound, AlertCircle, ClipboardCheck, Briefcase } from 'lucide-react';
 import { BaobabLogo } from './BaobabLogo';
 import { FieldError, FORM_FIELD_CLASS } from './FormControls';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export interface UserSession {
   id: string;
@@ -280,8 +281,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, logoUrl, user
             </>
           )}
 
-          <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 text-center text-[11px] text-slate-400">
-            Baobab Distribution SARL &bull; Serveur Express &amp; Base SQLite &bull; Bamako
+          <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <PWAInstallButton fullWidth />
+            <div className="text-center text-[11px] text-slate-400">
+              Baobab Distribution SARL &bull; Serveur Express &amp; Base SQLite &bull; Bamako
+            </div>
           </div>
         </div>
 

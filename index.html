@@ -25,6 +25,14 @@
       rel="stylesheet"
     />
     <script>
+      window.__baobabDeferredPwaPrompt = null;
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window.__baobabDeferredPwaPrompt = e;
+        window.dispatchEvent(new Event('baobab-pwa-prompt-ready'));
+      });
+    </script>
+    <script>
       (function() {
         try {
           var currentFetch = window.fetch;

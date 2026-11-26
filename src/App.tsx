@@ -25,6 +25,7 @@ import { GrossisteView } from './components/GrossisteView';
 import { ExtractionsView } from './components/ExtractionsView';
 import { AlertesView } from './components/AlertesView';
 import { RoutineVrsView } from './components/RoutineVrsView';
+import { PWAInstallPromptBanner } from './components/PWAInstallButton';
 import { isAppOnline, syncPendingOfflineData } from './utils/offlineSync';
 import {
   clearAppBadge,
@@ -722,6 +723,7 @@ export default function App() {
             setActiveTab('dashboard');
           }}
         />
+        <PWAInstallPromptBanner />
       </>
     );
   }
@@ -1191,6 +1193,9 @@ export default function App() {
           }
         />
       )}
+
+      {/* Bannière de proposition d'installation PWA sur Mobile, Tablette, PC et Laptop */}
+      <PWAInstallPromptBanner />
     </div>
   );
 }

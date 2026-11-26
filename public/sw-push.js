@@ -17,6 +17,15 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Fetch listener requis par Chrome / Edge / Android / PC pour activer l'installation PWA (beforeinstallprompt)
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  // Pass-through network fetch pour garantir la fraîcheur des données en direct
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(event.request))
+  );
+});
+
 self.addEventListener('push', (event) => {
   // Aucune requête réseau avant l'affichage : lecture synchrone du payload léger
   let payload = {

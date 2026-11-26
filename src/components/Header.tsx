@@ -880,6 +880,9 @@ export const Header: React.FC<HeaderProps> = ({
               </kbd>
             </button>
 
+            {/* Bouton d'installation de l'application sur Mobile, Tablette, PC & Laptop */}
+            <PWAInstallButton compact />
+
             {/* 2. Point de connexion (Tablette >= 768 px et PC ; sur Mobile il passe dans le menu de l'avatar) */}
             <button
               type="button"
@@ -1193,7 +1196,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     </div>
 
-                    <PWAInstallButton />
+                    <PWAInstallButton fullWidth />
 
                     {/* Sélecteur de rôles unique : uniquement dans le menu de l'avatar et seulement si DEMO_MODE est actif */}
                     {isDemoMode && (
