@@ -210,7 +210,7 @@ export default function App() {
         // ignore
       }
     }
-    return usersList[0];
+    return null;
   });
 
   const [activeTab, setActiveTab] = useState<string>(() => {
@@ -402,7 +402,7 @@ export default function App() {
         }));
         setUsersList(normalizedUsers);
         setCurrentUser((prev) => {
-          if (!prev) return normalizedUsers[0];
+          if (!prev) return null;
           const isPrevDov =
             prev.role === 'Directeur des opérations de vente' ||
             /directeur|op[eé]ration|dov/i.test(prev.role || '') ||
